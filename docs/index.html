@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GEML — one operator, tested honestly</title>
+<meta name="description" content="GEML is a controlled representation study: does collapsing every math operator into eml(x,y) = exp(x) − ln(y) help graph neural networks learn symbolic reasoning?">
+<style>
+  :root{
+    --paper:#f7f9f8;
+    --grid:rgba(27,36,55,.055);
+    --ink:#1b2437;
+    --ink-soft:#4a5468;
+    --rule:#c9cfd9;
+    --red:#c03b2d;        /* correction pen */
+    --red-soft:rgba(192,59,45,.08);
+    --blue:#2b5bb8;       /* links, structure */
+    --green:#2f7d4f;      /* done / gates */
+    --card:#ffffff;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"URW Palladio L","Book Antiqua",Georgia,serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --paper:#101520;
+      --grid:rgba(232,236,242,.045);
+      --ink:#e8ecf2;
+      --ink-soft:#a3adc2;
+      --rule:#323c50;
+      --red:#e06055;
+      --red-soft:rgba(224,96,85,.12);
+      --blue:#7ba3e8;
+      --green:#5faf7f;
+      --card:#161d2c;
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto} }
+  body{
+    margin:0;
+    font-family:var(--serif);
+    font-size:1.0625rem;
+    line-height:1.65;
+    color:var(--ink);
+    background:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+      var(--paper);
+    background-size:28px 28px, 28px 28px, auto;
+  }
+  a{color:var(--blue)}
+  a:hover{text-decoration-thickness:2px}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:3px;border-radius:2px}
+  .wrap{max-width:46rem;margin:0 auto;padding:0 1.25rem}
+  .mono{font-family:var(--mono)}
+
+  /* ---------- header ---------- */
+  header.site{padding:1.1rem 0 0}
+  .masthead{
+    display:flex;justify-content:space-between;align-items:baseline;gap:1rem;
+    border-bottom:1px solid var(--rule);padding-bottom:.7rem;
+    font-family:var(--mono);font-size:.78rem;letter-spacing:.04em;color:var(--ink-soft);
+  }
+  .masthead a{color:inherit;text-decoration:none}
+  .masthead a:hover{color:var(--blue)}
+
+  /* ---------- hero ---------- */
+  .hero{padding:4.5rem 0 3.2rem;text-align:left}
+  .hero h1{
+    font-size:clamp(2rem, 5.4vw, 3.15rem);
+    line-height:1.12;font-weight:600;letter-spacing:-.01em;margin:0 0 1.4rem;
+    text-wrap:balance;
+  }
+  .hero h1 em{font-style:italic;color:var(--red)}
+  /* displayed equation, TeX-style: centered, roman functions, italic variables */
+  .eqn{
+    font-family:var(--serif);
+    font-size:clamp(1.2rem, 3.4vw, 1.75rem);
+    text-align:center;
+    padding:.9rem 0;margin:.4rem 0 1.6rem;
+    overflow-x:auto;white-space:nowrap;
+  }
+  .eqn i{font-style:italic}
+  .eqn .rm{font-style:normal}
+  .hero p.dek{font-size:1.15rem;color:var(--ink-soft);max-width:38rem;margin:0}
+  .hero p.dek strong{color:var(--ink)}
+
+  /* ---------- sections ---------- */
+  section{padding:2.6rem 0 1rem}
+  h2{font-size:1.65rem;font-weight:600;letter-spacing:-.005em;margin:0 0 1rem;line-height:1.2}
+  h2 .no{font-weight:400;color:var(--red);margin-right:.6rem;font-variant-numeric:oldstyle-nums}
+  h3{font-size:1.12rem;margin:1.8rem 0 .5rem}
+  p{margin:.85rem 0}
+  .note{color:var(--ink-soft);font-size:.95rem}
+
+  /* ---------- corrections (signature) ---------- */
+  ol.corrections{list-style:none;margin:1.6rem 0;padding:0;counter-reset:corr}
+  ol.corrections li{
+    counter-increment:corr;
+    margin:0 0 1.35rem;padding:0 0 1.35rem 2.4rem;position:relative;
+    border-bottom:1px dashed var(--rule);
+  }
+  ol.corrections li:last-child{border-bottom:none}
+  ol.corrections li::before{
+    content:counter(corr);
+    position:absolute;left:0;top:.15rem;
+    font-family:var(--mono);font-size:.8rem;color:var(--red);
+    border:1px solid var(--red);border-radius:50%;
+    width:1.5rem;height:1.5rem;display:flex;align-items:center;justify-content:center;
+  }
+  .was{display:block;color:var(--ink-soft)}
+  .was del{text-decoration-color:var(--red);text-decoration-thickness:1.5px}
+  .now{display:block;margin-top:.3rem;color:var(--red);font-weight:600}
+  .now::before{content:"→ ";font-family:var(--mono);font-weight:400}
+  .why{display:block;margin-top:.3rem;font-size:.9rem;color:var(--ink-soft);font-family:var(--mono)}
+
+  /* ---------- figure ---------- */
+  figure{margin:2rem 0;background:var(--card);border:1px solid var(--rule);padding:1.2rem 1.2rem .9rem}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{font-size:.88rem;color:var(--ink-soft);margin-top:.8rem;line-height:1.5}
+  .svg-ink{stroke:var(--ink)} .svg-ink-f{fill:var(--ink)}
+  .svg-soft{fill:var(--ink-soft)} .svg-soft-s{stroke:var(--ink-soft)}
+  .svg-red{stroke:var(--red)} .svg-red-f{fill:var(--red)}
+  .svg-green-f{fill:var(--green)}
+  .svg-card{fill:var(--card)}
+
+  /* ---------- tables ---------- */
+  .tblwrap{overflow-x:auto;margin:1.4rem 0;border:1px solid var(--rule);background:var(--card)}
+  table{border-collapse:collapse;width:100%;font-size:.92rem;min-width:34rem}
+  th,td{padding:.55rem .8rem;text-align:left;vertical-align:top;border-bottom:1px solid var(--rule)}
+  tr:last-child td{border-bottom:none}
+  th{font-family:var(--mono);font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);font-weight:500}
+  td.num{font-family:var(--mono);white-space:nowrap}
+  .win{color:var(--green);font-weight:600}
+  .null{color:var(--red)}
+
+  /* ---------- timeline ---------- */
+  .timeline{margin:2rem 0 0;padding:0;list-style:none;position:relative}
+  .timeline::before{
+    content:"";position:absolute;left:.55rem;top:.4rem;bottom:.4rem;
+    width:1px;background:var(--rule);
+  }
+  .timeline li{position:relative;padding:0 0 2rem 2.2rem}
+  .timeline li::before{
+    content:"";position:absolute;left:.22rem;top:.42rem;
+    width:.7rem;height:.7rem;border-radius:50%;
+    background:var(--paper);border:2px solid var(--blue);
+  }
+  .timeline li.done::before{background:var(--green);border-color:var(--green)}
+  .timeline .g{
+    font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--blue);
+  }
+  .timeline li.done .g{color:var(--green)}
+  .timeline h3{margin:.15rem 0 .35rem;font-size:1.15rem}
+  .timeline p{margin:.3rem 0;font-size:.97rem;color:var(--ink-soft)}
+  /* gate set like a theorem statement */
+  .gate{display:block;margin-top:.55rem;font-size:.92rem;color:var(--ink);font-style:italic}
+  .gate b{font-style:normal;font-variant:small-caps;letter-spacing:.05em;color:var(--red);font-weight:600}
+
+  /* ---------- channels ---------- */
+  .channels{display:grid;grid-template-columns:repeat(3,1fr);gap:.8rem;margin:1.5rem 0}
+  .channels div{background:var(--card);border:1px solid var(--rule);padding:.9rem 1rem;font-size:.9rem}
+  .channels b{display:block;font-family:var(--mono);font-size:.76rem;letter-spacing:.06em;text-transform:uppercase;margin-bottom:.35rem;color:var(--blue)}
+  .channels div:nth-child(2) b{color:var(--green)}
+  .channels div:nth-child(3) b{color:var(--ink-soft)}
+  .channels p{margin:0;color:var(--ink-soft);line-height:1.5}
+  @media (max-width:38rem){.channels{grid-template-columns:1fr}}
+
+  /* ---------- team ---------- */
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1.4rem 0}
+  .twocol>div{background:var(--card);border:1px solid var(--rule);padding:1rem 1.1rem;font-size:.95rem}
+  .twocol b.tag{font-family:var(--mono);font-size:.76rem;letter-spacing:.08em;text-transform:uppercase;color:var(--blue)}
+  @media (max-width:38rem){.twocol{grid-template-columns:1fr}}
+  ul.plain{padding-left:1.1rem;margin:.6rem 0}
+  ul.plain li{margin:.4rem 0}
+
+  footer{
+    margin-top:3.5rem;border-top:1px solid var(--rule);
+    padding:1.6rem 0 2.6rem;font-family:var(--mono);font-size:.82rem;color:var(--ink-soft);
+  }
+  footer p{margin:.35rem 0}
+
+  /* ---------- reveal ---------- */
+  .reveal{opacity:0;transform:translateY(14px);transition:opacity .6s ease,transform .6s ease}
+  .reveal.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion: reduce){
+    .reveal{opacity:1;transform:none;transition:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap masthead">
+    <span><a href="https://github.com/saidlaboratory/GEML">saidlaboratory / GEML</a></span>
+    <span>target · <a href="https://sites.google.com/view/mathnlp2026">MathNLP 2026</a></span>
+  </div>
+</header>
+
+<div class="wrap hero">
+  <h1>Every operation in mathematics, replaced by one. <em>Does that help a neural network?</em></h1>
+  <p class="eqn">eml(<i>x</i>, <i>y</i>) = exp(<i>x</i>) − ln(<i>y</i>)</p>
+  <p class="dek">
+    Odrzywołek (2026) proved that all elementary functions, and the constants π, e, and i, can be
+    built from the constant 1 and this single operator. GEML tests whether that uniformity helps a
+    graph neural network learn symbolic reasoning, <strong>knowing that it makes the trees ~11× bigger.</strong>
+    This page is the plan, with the claims corrected to match the evidence.
+  </p>
+</div>
+
+<main class="wrap">
+
+<section id="idea" class="reveal">
+  <h2><span class="no">§1</span>Topology instead of vocabulary</h2>
+  <p>
+    Language models read mathematics as a flat token sequence like
+    <span class="mono">[sin, (, x, +, 1, )]</span>, and must memorize precedence rules and
+    distinct behaviors for dozens of operators. In EML form, any continuous expression becomes a
+    strict binary tree where <strong>every internal node is the exact same gate</strong>. A graph
+    neural network reading that tree never has to learn <em>what</em> an operator is, only
+    <em>where things connect</em>: purely topological routing, three token types
+    (<span class="mono">eml</span>, <span class="mono">1</span>, variables) instead of an open
+    vocabulary.
+  </p>
+  <figure aria-label="Diagram comparing a token sequence to a homogeneous EML tree">
+    <svg viewBox="0 0 640 190" role="img">
+      <!-- left: token sequence -->
+      <text x="8" y="18" class="svg-soft" font-family="monospace" font-size="11">token sequence (LLM)</text>
+      <g font-family="monospace" font-size="13">
+        <rect x="8"   y="34" width="38" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="27"  y="51" text-anchor="middle" class="svg-ink-f">sin</text>
+        <rect x="50"  y="34" width="26" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="63"  y="51" text-anchor="middle" class="svg-ink-f">(</text>
+        <rect x="80"  y="34" width="26" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="93"  y="51" text-anchor="middle" class="svg-ink-f">x</text>
+        <rect x="110" y="34" width="26" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="123" y="51" text-anchor="middle" class="svg-ink-f">+</text>
+        <rect x="140" y="34" width="26" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="153" y="51" text-anchor="middle" class="svg-ink-f">1</text>
+        <rect x="170" y="34" width="26" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="183" y="51" text-anchor="middle" class="svg-ink-f">)</text>
+      </g>
+      <text x="8" y="92" class="svg-soft" font-family="monospace" font-size="11">every token a different rule</text>
+
+      <!-- arrow -->
+      <path d="M240 60 h60" fill="none" class="svg-red" stroke-width="1.5"/>
+      <path d="M300 60 l-8 -5 v10 z" class="svg-red-f"/>
+
+      <!-- right: EML tree -->
+      <text x="340" y="18" class="svg-soft" font-family="monospace" font-size="11">homogeneous EML tree (GNN)</text>
+      <g font-family="monospace" font-size="12">
+        <line x1="470" y1="52" x2="410" y2="102" class="svg-ink" stroke-width="1.2"/>
+        <line x1="470" y1="52" x2="530" y2="102" class="svg-ink" stroke-width="1.2"/>
+        <line x1="410" y1="102" x2="375" y2="152" class="svg-ink" stroke-width="1.2"/>
+        <line x1="410" y1="102" x2="445" y2="152" class="svg-ink" stroke-width="1.2"/>
+        <line x1="530" y1="102" x2="495" y2="152" class="svg-ink" stroke-width="1.2"/>
+        <line x1="530" y1="102" x2="565" y2="152" class="svg-ink" stroke-width="1.2"/>
+        <circle cx="470" cy="44"  r="17" class="svg-card svg-ink" stroke-width="1.4"/><text x="470" y="48"  text-anchor="middle" class="svg-ink-f">eml</text>
+        <circle cx="410" cy="102" r="17" class="svg-card svg-ink" stroke-width="1.4"/><text x="410" y="106" text-anchor="middle" class="svg-ink-f">eml</text>
+        <circle cx="530" cy="102" r="17" class="svg-card svg-ink" stroke-width="1.4"/><text x="530" y="106" text-anchor="middle" class="svg-ink-f">eml</text>
+        <text x="375" y="168" text-anchor="middle" class="svg-soft">x</text>
+        <text x="445" y="168" text-anchor="middle" class="svg-soft">1</text>
+        <text x="495" y="168" text-anchor="middle" class="svg-soft">1</text>
+        <text x="565" y="168" text-anchor="middle" class="svg-soft">y</text>
+      </g>
+    </svg>
+    <figcaption>Illustrative shape, not a specific identity: in EML form the only thing that varies is the wiring.</figcaption>
+  </figure>
+</section>
+
+<section id="corrections" class="reveal">
+  <h2><span class="no">§2</span>What the original proposal got wrong</h2>
+  <p>
+    The first proposal pitched “EML-native foundation models for universal mathematical
+    reasoning.” A 10k-expression prototype (<a href="https://github.com/sahilsinghthefirst/geml_experiments">Goals 1–5, complete</a>)
+    measured the premises. Where the data disagreed, the claim was rewritten in red, with the
+    evidence attached. GEML is now a <strong>controlled representation study</strong>, not a moonshot.
+  </p>
+  <ol class="corrections">
+    <li>
+      <span class="was"><del>Shrinking the vocabulary to one operator shrinks the math.</del></span>
+      <span class="now">Raw EML trees are ~11–12× larger than ASTs. Compression makes EML trainable; whether homogeneity then generalizes better is the hypothesis under test.</span>
+      <span class="why">evidence: mean α ≈ 10.6, median ≈ 11.4, vs threshold ≈ 1.56 (Goal 2)</span>
+    </li>
+    <li>
+      <span class="was"><del>GPT-4-level mathematical competency at a fraction of the parameters.</del></span>
+      <span class="now">Competitive accuracy with fewer parameters, on a bounded algebraic domain.</span>
+      <span class="why">unfalsifiable as stated → explicit parameter-efficiency experiment (Goal 11.2)</span>
+    </li>
+    <li>
+      <span class="was"><del>A leap toward universal, zero-shot automated theorem proving.</del></span>
+      <span class="now">Verified equational rewrite-proofs on a bounded domain, with a verifier gating every step.</span>
+      <span class="why">GEML operates on a bounded algebraic fragment (Goal 8)</span>
+    </li>
+    <li>
+      <span class="was"><del>Equivalence as graph isomorphism.</del></span>
+      <span class="now">Equivalence is semantic, not structural: learned from e-graph-generated pairs with rule provenance, never assumed from shape.</span>
+      <span class="why">equivalent expressions are generally not isomorphic graphs (Goal 6.1)</span>
+    </li>
+    <li>
+      <span class="was"><del>EML as the universal “machine code” all AIs use to think about mathematics.</del></span>
+      <span class="now">Removed from claims. At most a speculative closing remark for future work.</span>
+      <span class="why">claim discipline, agreed for the release (Goal 12.2)</span>
+    </li>
+  </ol>
+</section>
+
+<section id="evidence" class="reveal">
+  <h2><span class="no">§3</span>The α threshold, and the race to get under it</h2>
+  <p>
+    Let <span class="mono">α = |T<sub>EML</sub>| / |T<sub>AST</sub>|</span>, the factor by which the
+    tree grows when rewritten in pure EML. Counting representable expressions
+    (Catalan shapes × operator labels × leaf choices) gives a break-even point: the single-operator
+    representation wins only if
+  </p>
+  <p class="eqn">α &lt; 1 + log<sub>4<i>L</i></sub>(<i>K</i>) ≈ 1.56&ensp;<span style="font-size:.6em;color:var(--ink-soft)">(current grammar)</span></p>
+  <p>
+    Raw EML misses that by an order of magnitude. Three families of compression (exact DAG
+    sharing, semantic e-graph rewriting, and motif dictionaries) close the gap. All figures below
+    are measured on the v1 corpus (10k expressions), converted with the official EML compiler, no
+    abbreviations, no hidden leaves.
+  </p>
+
+  <figure aria-label="Number line showing measured alpha values against the 1.56 threshold">
+    <svg viewBox="0 0 640 178" role="img">
+      <!-- log-ish scale axis: alpha 0.5 .. 12 -->
+      <line x1="30" y1="120" x2="610" y2="120" class="svg-ink" stroke-width="1.2"/>
+      <!-- ticks: positions hand-placed on log scale: 0.5→30, 1→155, 2→280, 4→405, 8→530, 12→603 -->
+      <g class="svg-soft" font-family="monospace" font-size="11" text-anchor="middle">
+        <line x1="30"  y1="120" x2="30"  y2="127" class="svg-soft-s"/><text x="30"  y="142">0.5</text>
+        <line x1="155" y1="120" x2="155" y2="127" class="svg-soft-s"/><text x="155" y="142">1</text>
+        <line x1="280" y1="120" x2="280" y2="127" class="svg-soft-s"/><text x="280" y="142">2</text>
+        <line x1="405" y1="120" x2="405" y2="127" class="svg-soft-s"/><text x="405" y="142">4</text>
+        <line x1="530" y1="120" x2="530" y2="127" class="svg-soft-s"/><text x="530" y="142">8</text>
+        <line x1="603" y1="120" x2="603" y2="127" class="svg-soft-s"/><text x="603" y="142">12</text>
+        <text x="320" y="166">α (log scale), smaller is better</text>
+      </g>
+      <!-- threshold at 1.56 → x = 155 + 125*log2(1.56)=155+125*0.641≈235 -->
+      <line x1="235" y1="28" x2="235" y2="120" class="svg-red" stroke-width="1.4" stroke-dasharray="5 4"/>
+      <text x="235" y="18" text-anchor="middle" class="svg-red-f" font-family="monospace" font-size="11">threshold 1.56</text>
+      <!-- points: raw 11.4 → 155+125*log2(11.4)=155+125*3.511≈594 -->
+      <g font-family="monospace" font-size="11">
+        <circle cx="594" cy="120" r="5" class="svg-red-f"/>
+        <text x="594" y="100" text-anchor="middle" class="svg-ink-f">raw EML</text>
+        <text x="594" y="86"  text-anchor="middle" class="svg-soft">11.4</text>
+        <!-- DAG 3.5 → 155+125*1.807≈381 -->
+        <circle cx="381" cy="120" r="5" class="svg-ink-f"/>
+        <text x="381" y="100" text-anchor="middle" class="svg-ink-f">EML-DAG</text>
+        <text x="381" y="86"  text-anchor="middle" class="svg-soft">3.5</text>
+        <!-- e-graph 3.36 → 155+125*1.748≈373; nudge label lower to avoid overlap -->
+        <circle cx="373" cy="120" r="3" class="svg-soft" opacity=".9"/>
+        <text x="352" y="62" text-anchor="middle" class="svg-soft">+e-graph 3.36</text>
+        <!-- macro 0.78 → 155+125*log2(0.78)=155-44.8≈110 -->
+        <circle cx="110" cy="120" r="5" class="svg-green-f"/>
+        <text x="110" y="100" text-anchor="middle" class="svg-ink-f">macro graph</text>
+        <text x="110" y="86"  text-anchor="middle" class="svg-soft">0.78</text>
+      </g>
+      <!-- sweep arrow -->
+      <path d="M586 50 C 480 -6, 220 -6, 118 74" fill="none" stroke="var(--green)" stroke-width="1.2" stroke-dasharray="3 4" opacity=".8"/>
+      <path d="M118 74 l9 -7 -3 11 z" class="svg-green-f"/>
+    </svg>
+    <figcaption>
+      Median α on the v1 corpus. Exact DAG sharing brings 11.4 → 3.5; e-graph rewriting (positive-real rules)
+      reaches ≈ 3.36 but pushes only ~5% of expressions below threshold; frequent-motif compression is the
+      strongest step, 7.4× smaller than the EML-DAG baseline. Macro graphs (shown) reach α ≈ 0.78 but are
+      structurally close to an AST-DAG, so they double as the interpretable control.
+    </figcaption>
+  </figure>
+
+  <div class="tblwrap"><table>
+    <thead><tr><th>Method</th><th>What it does</th><th>Median gain vs EML-DAG</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Pure EML-DAG</td><td>exact subtree sharing</td><td class="num">1.0× (baseline)</td><td>lossless control; every claim traces to it</td></tr>
+      <tr><td>E-graph (positive-real)</td><td>semantic rewrites + extract</td><td class="num">~1.2×</td><td>optional pre-pass; needs positivity assumptions</td></tr>
+      <tr><td>Macro graph</td><td>relabeled compact AST-DAG</td><td class="num">5.25×</td><td>validated; ≈ AST-DAG structurally</td></tr>
+      <tr><td>Frequent motif</td><td>dictionary of common subgraphs</td><td class="num win">7.40×</td><td class="win">best simple compressor, reconstruction-verified</td></tr>
+      <tr><td>Learned motif</td><td>scored dictionary</td><td class="num">7.11×</td><td class="null">null result, no edge over frequency; dropped</td></tr>
+      <tr><td>Neural e-graph ranker</td><td>fast candidate selection</td><td class="num">~1.0×</td><td class="null">109× scoring speedup only; not a compression win</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">
+    Null results are recorded with the same prominence as wins: the learned methods that didn’t pay off
+    are documented and off the critical path. 262/262 tests green on a fresh clone of the prototype.
+  </p>
+
+  <h3>Three channels carry forward into every experiment</h3>
+  <div class="channels">
+    <div><b>pure EML-DAG</b><p>The canonical, assumption-free control. Non-negotiable.</p></div>
+    <div><b>motif-EML-DAG</b><p>The practical channel: 7.4× smaller, lossless, cheap to compute.</p></div>
+    <div><b>AST-DAG</b><p>The fairness baseline: separates “graphs help” from “EML helps.”</p></div>
+  </div>
+</section>
+
+<section id="plan" class="reveal">
+  <h2><span class="no">§4</span>Goals 6–12, each behind a gate</h2>
+  <p>
+    Goals 1–5 (data, expansion study, DAG, e-graph, ML compression) are done in the prototype and will be
+    <strong>rebuilt from scratch at scale</strong> in this repository, not copied. Every learning goal ends at a
+    gate: an explicit pass/fail criterion that decides whether the next goal proceeds, proceeds narrowed, or stops.
+  </p>
+  <ol class="timeline">
+    <li class="done">
+      <span class="g">Goals 1–5 · complete (prototype)</span>
+      <h3>Representation &amp; compression pipeline</h3>
+      <p>Generator, AST/EML converters, expansion study, DAG, e-graphs, motifs; to be re-implemented at 10–100× scale with full review.</p>
+    </li>
+    <li>
+      <span class="g">Goal 6</span>
+      <h3>Equivalence learning grid</h3>
+      <p>Can a GNN learn E₁ ≡ E₂, and under which representation? Trace-rich pair dataset (≥50k pairs with rule provenance), GIN + compute-matched transformer + trivial baseline, 6-arm grid, depth- and family-OOD.</p>
+      <span class="gate"><b>Gate G6.</b> All GNN arms beat the trivial baseline, else stop and fix the dataset; the EML-vs-AST verdict is recorded either way.</span>
+    </li>
+    <li>
+      <span class="g">Goal 7</span>
+      <h3>Rewrite-step prediction</h3>
+      <p>From a state graph, predict (rule, application site). The sharpest EML test: does homogeneous topology help rule application transfer across contexts?</p>
+      <span class="gate"><b>Gate G7.</b> Learned policy beats uniform-random valid steps by a wide margin; no dead rules.</span>
+    </li>
+    <li>
+      <span class="g">Goal 8</span>
+      <h3>Verified proof-path generation</h3>
+      <p>Best-first search over rewrites with a verifier on every step; value head guides search; simplification mode reuses exact-cost machinery; frontier LLMs run as a reference ceiling through the same verifier.</p>
+      <span class="gate"><b>Gate G8.</b> Guided search beats uniform on nodes-expanded at equal success; zero invalid steps emitted.</span>
+    </li>
+    <li>
+      <span class="g">Goal 9</span>
+      <h3>Symbolic regression track</h3>
+      <p>EML’s predicted native home: recover f(x) from samples. EML-space vs AST-space search, against PySR/GP and transformer-SR baselines.</p>
+      <span class="gate"><b>Gate G9.</b> Exact recovery above the GP baseline at matched budget, or a documented negative.</span>
+    </li>
+    <li>
+      <span class="g">Goal 10</span>
+      <h3>Domain expansion: trig</h3>
+      <p>The stress test: trig may explode EML size. Extend compiler and rules, rebuild the corpus, re-measure α, re-run any grid whose verdict could flip.</p>
+      <span class="gate"><b>Gate G10.</b> Expanded compiler passes purity and numeric audits; α behavior for trig documented.</span>
+    </li>
+    <li>
+      <span class="g">Goal 11</span>
+      <h3>Scale-up &amp; final comparison</h3>
+      <p>Corpus at 10–100×, scaling curves per channel, the parameter-efficiency hypothesis tested explicitly, frontier-LLM comparison normalized by the verifier.</p>
+      <span class="gate"><b>Gate G11.</b> Every headline number ships with denominators, multi-seed variance, and scaling caveats resolved or stated.</span>
+    </li>
+    <li>
+      <span class="g">Goal 12</span>
+      <h3>Consolidation &amp; release</h3>
+      <p>Findings report (positive or null, equal prominence), one-command reproducibility package, paper under the agreed claim discipline.</p>
+    </li>
+  </ol>
+
+  <h3>Predictions on record</h3>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Task</th><th>Prediction (falsifiable)</th></tr></thead>
+    <tbody>
+      <tr><td>Direct expression evaluation</td><td class="null">weak: nested exp/ln trees explode</td></tr>
+      <tr><td>Equivalence classification</td><td>decent at depths 1–6, degrading beyond</td></tr>
+      <tr><td>Symbolic regression</td><td class="win">strongest track, EML’s native home</td></tr>
+      <tr><td>Proof generation</td><td>needs a different architecture for complex proofs; weakest in geometry</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="team" class="reveal">
+  <h2><span class="no">§5</span>Who does what</h2>
+  <div class="twocol">
+    <div>
+      <b class="tag">Group A · pipeline rebuild</b>
+      <p>Re-implements Goals 1–5 from scratch at large scale: bigger corpus, agent-assisted development with thorough human + agent review. Compute: H100 hours if available, RTX 5090 over SSH otherwise.</p>
+    </div>
+    <div>
+      <b class="tag">Group B · architecture &amp; learning</b>
+      <p>GNN/ML-experienced members build the model zoo (Siamese GIN is a candidate) and drive Goals 6–12, the compute-heavy half.</p>
+    </div>
+  </div>
+  <ul class="plain">
+    <li><strong>2–3 people bridge both groups</strong> as supervisors with end-to-end visibility.</li>
+    <li><strong>Documentation is continuous:</strong> every member documents their work as it lands, with no end-of-project crunch. This is what makes the paper writable.</li>
+    <li><strong>Paper:</strong> 5–7 days before the deadline, two members start writing; the rest become reviewers once code is frozen.</li>
+    <li><strong>Open decision:</strong> which constants to implement. π and e are candidates; <em>i</em> is likely out (it would change the pipeline fundamentally).</li>
+    <li><strong>Agent policy:</strong> the prototype repo is for understanding, not for templating; agents rebuild here from specs, never copy its structure.</li>
+  </ul>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>GEML · saidlaboratory · lead: Quang Bui (duckyquang) · Muhammad Rayyan (Mray229) · Sibi Gokul (Sisigoks) · Daksh Jain (Daksh-QE) · Sahil Singh (gensahilsingh)</p>
+    <p>
+      <a href="https://github.com/saidlaboratory/GEML">production repo</a> ·
+      <a href="https://github.com/sahilsinghthefirst/geml_experiments">v0 prototype (Goals 1–5)</a> ·
+      <a href="https://sites.google.com/view/mathnlp2026">MathNLP 2026</a>
+    </p>
+    <p>eml(x, y) = exp(x) − ln(y). Odrzywołek, 2026. Claims corrected July 2026.</p>
+  </div>
+</footer>
+
+<script>
+  const els = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const io = new IntersectionObserver(entries => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    }, { rootMargin: '0px 0px -8% 0px' });
+    els.forEach(el => io.observe(el));
+  } else {
+    els.forEach(el => el.classList.add('in'));
+  }
+</script>
+</body>
+</html>
