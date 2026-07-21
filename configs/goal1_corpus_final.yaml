@@ -1,0 +1,29 @@
+# configs/goal1_corpus_final.yaml
+# owned by 1-5
+#
+# config for the real 250k corpus run. this file's own contents get
+# hashed into the manifest (config_hash) so it's traceable exactly
+# which settings produced a given corpus - not committed as production
+# output itself, just the settings used to produce it.
+
+corpus:
+  total_expressions: 250000
+  seed: 42
+
+splits:
+  train: 175000
+  validation: 25000
+  iid_test: 25000
+  ood_test: 25000
+
+shards:
+  format: parquet          # primary format; jsonl available for debugging
+  min_rows: 10000
+  max_rows: 25000
+  resume: true             # skip shards that already exist on re-run
+
+dedup:
+  method: srepr_hash        # canonical srepr, sha256-hashed for the seen-set
+
+manifest:
+  include_git_commit: true  # best-effort; falls back to null if unavailable
