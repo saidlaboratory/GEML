@@ -1,0 +1,215 @@
+schema_version: geml-generator-config-v1
+run_seed: 20260721
+planned_total_count: 250000
+
+family_quotas:
+  algebraic_core: 70000
+  powers_division_rationals: 40000
+  exp_log: 40000
+  trig_hyperbolic: 40000
+  mixed_elementary: 35000
+  ood_stress: 25000
+
+difficulty_profiles:
+  ordinary:
+    size_buckets:
+      - {minimum: 2, maximum: 8, weight: 0.28}
+      - {minimum: 9, maximum: 16, weight: 0.27}
+      - {minimum: 17, maximum: 32, weight: 0.25}
+      - {minimum: 33, maximum: 64, weight: 0.15}
+      - {minimum: 65, maximum: 128, weight: 0.05}
+    depth_weights:
+      1: 0.08
+      2: 0.14
+      3: 0.18
+      4: 0.18
+      5: 0.14
+      6: 0.10
+      7: 0.06
+      8: 0.04
+      9: 0.02
+      10: 0.01
+      11: 0.005
+      12: 0.005
+    variable_count_weights:
+      1: 0.25
+      2: 0.25
+      3: 0.20
+      4: 0.15
+      5: 0.10
+      6: 0.05
+    intermediate_leaf_probability: 0.40
+
+  ood_stress:
+    size_buckets:
+      - {minimum: 17, maximum: 32, weight: 0.15}
+      - {minimum: 33, maximum: 64, weight: 0.35}
+      - {minimum: 65, maximum: 128, weight: 0.50}
+    depth_weights:
+      4: 0.05
+      5: 0.08
+      6: 0.12
+      7: 0.16
+      8: 0.18
+      9: 0.16
+      10: 0.12
+      11: 0.08
+      12: 0.05
+    variable_count_weights:
+      1: 0.05
+      2: 0.10
+      3: 0.15
+      4: 0.20
+      5: 0.25
+      6: 0.25
+    intermediate_leaf_probability: 0.55
+
+families:
+  algebraic_core:
+    difficulty_profile: ordinary
+    minimum_target_size: 2
+    domain_weights: {safe_real: 0.50, positive_real: 0.25, nonzero_real: 0.25}
+    operator_weights:
+      symbol: 3.0
+      one: 0.6
+      integer: 1.4
+      add: 1.8
+      subtract: 1.5
+      multiply: 1.8
+      negate: 0.8
+    required_any_operators: [add, subtract, multiply, negate]
+
+  powers_division_rationals:
+    difficulty_profile: ordinary
+    minimum_target_size: 3
+    domain_weights: {safe_real: 0.35, positive_real: 0.35, nonzero_real: 0.30}
+    operator_weights:
+      symbol: 2.8
+      one: 0.4
+      integer: 1.0
+      rational: 1.8
+      add: 1.1
+      subtract: 1.0
+      multiply: 1.2
+      divide: 1.5
+      negate: 0.5
+      power: 1.5
+    required_any_operators: [rational, divide, power]
+
+  exp_log:
+    difficulty_profile: ordinary
+    minimum_target_size: 2
+    domain_weights: {safe_real: 0.30, positive_real: 0.45, nonzero_real: 0.25}
+    operator_weights:
+      symbol: 2.6
+      one: 0.35
+      integer: 0.9
+      rational: 0.9
+      add: 1.0
+      subtract: 0.8
+      multiply: 1.0
+      divide: 0.8
+      negate: 0.5
+      power: 0.7
+      exp: 1.8
+      log: 1.8
+    required_any_operators: [exp, log]
+
+  trig_hyperbolic:
+    difficulty_profile: ordinary
+    minimum_target_size: 2
+    domain_weights: {safe_real: 0.40, positive_real: 0.30, nonzero_real: 0.30}
+    operator_weights:
+      symbol: 2.5
+      one: 0.5
+      integer: 1.0
+      add: 1.0
+      subtract: 0.8
+      multiply: 1.0
+      negate: 0.5
+      sin: 1.0
+      cos: 1.0
+      tan: 0.6
+      sinh: 0.8
+      cosh: 0.8
+      tanh: 0.8
+    required_any_operators: [sin, cos, tan, sinh, cosh, tanh]
+
+  mixed_elementary:
+    difficulty_profile: ordinary
+    minimum_target_size: 2
+    domain_weights: {safe_real: 0.35, positive_real: 0.40, nonzero_real: 0.25}
+    operator_weights:
+      symbol: 2.5
+      one: 0.4
+      integer: 0.8
+      rational: 0.8
+      add: 1.0
+      subtract: 0.8
+      multiply: 1.0
+      divide: 0.8
+      negate: 0.5
+      power: 0.7
+      exp: 1.2
+      log: 1.2
+      sin: 0.8
+      cos: 0.8
+      tan: 0.5
+      sinh: 0.6
+      cosh: 0.6
+      tanh: 0.6
+    required_any_operators: [exp, log, sin, cos, tan, sinh, cosh, tanh]
+
+  ood_stress:
+    difficulty_profile: ood_stress
+    minimum_target_size: 17
+    stress_criterion: held_out_size_depth_variable_count_and_composition_profile
+    domain_weights: {safe_real: 0.30, positive_real: 0.40, nonzero_real: 0.30}
+    operator_weights:
+      symbol: 2.5
+      integer: 1.0
+      rational: 1.0
+      add: 1.0
+      subtract: 0.8
+      multiply: 1.0
+      divide: 0.9
+      negate: 0.5
+      power: 0.8
+      exp: 1.1
+      log: 1.1
+    required_any_operators: []
+
+grammar:
+  integer_minimum: -9
+  integer_maximum: 9
+  rational_numerator_minimum: -9
+  rational_numerator_maximum: 9
+  rational_denominator_minimum: 2
+  rational_denominator_maximum: 9
+  power_exponents: [-3, -2, -1, 2, 3, 4]
+  variable_names: [x, y, z, u, v, w]
+  shape_attempts: 48
+
+triviality:
+  per_expression_caps:
+    multiplication_by_one: 4
+    log_one: 4
+    constant_only_subtrees: 64
+    exp_log: 16
+    log_exp: 16
+  corpus_rate_caps:
+    multiplication_by_one: 0.20
+    log_one: 0.08
+    constant_only_subtrees: 0.70
+    exp_log: 0.35
+    log_exp: 0.40
+
+maximum_attempts_per_record: 64
+
+smoke:
+  split: train
+  family_counts:
+    algebraic_core: 2500
+    powers_division_rationals: 2500
+    exp_log: 2500
+    ood_stress: 2500
