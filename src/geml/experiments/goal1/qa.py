@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from fractions import Fraction
 from heapq import nsmallest
@@ -31,6 +31,7 @@ from geml.data.generation.grammar import (
     GrammarPolicy,
 )
 from geml.data.storage.manifests import (
+    ManifestIntegrityError,
     load_corpus_manifest,
     validate_manifest,
 )
@@ -519,13 +520,39 @@ def _expected_shard_paths(manifest: CorpusManifest) -> set[Path]:
     }
 
 
+def _lexical_descendants(root: Path, *, boundary: Path) -> Iterator[Path]:
+    """Walk lexical paths through directory redirects without following cycles."""
+
+    resolved_boundary = boundary.resolve()
+    pending: list[tuple[Path, frozenset[tuple[int, int]]]] = [(root, frozenset())]
+    while pending:
+        directory, ancestor_ids = pending.pop()
+        try:
+            directory.resolve().relative_to(resolved_boundary)
+        except ValueError as error:
+            raise ManifestIntegrityError(
+                f"artifact scan directory escapes its root: {directory}"
+            ) from error
+
+        directory_stat = directory.stat()
+        directory_id = directory_stat.st_dev, directory_stat.st_ino
+        if directory_id in ancestor_ids:
+            continue
+
+        descendant_ancestors = ancestor_ids | {directory_id}
+        for candidate in directory.iterdir():
+            yield candidate
+            if candidate.is_dir():
+                pending.append((candidate, descendant_ancestors))
+
+
 def _actual_shard_paths(artifact_root: Path) -> set[Path]:
     data_root = artifact_root / "data"
     if not data_root.exists():
         return set()
     return {
         path.relative_to(artifact_root)
-        for path in data_root.rglob("*")
+        for path in _lexical_descendants(data_root, boundary=artifact_root)
         if (path.is_file() or path.is_symlink())
         and (path.suffix == ".parquet" or path.name.endswith(".jsonl.gz"))
     }

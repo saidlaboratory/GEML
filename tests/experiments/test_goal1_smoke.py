@@ -390,6 +390,30 @@ def test_nested_shard_redirect_remains_lexically_visible_and_is_rejected(tmp_pat
         goal1_run._require_safe_artifact_layout(run_root)
 
 
+def test_external_shard_redirect_is_rejected_before_descent(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    alias_root = run_root / "data" / "validation" / "external"
+    external_root = tmp_path / "external"
+    alias_root.parent.mkdir(parents=True)
+    external_root.mkdir()
+    (external_root / "outside.parquet").write_bytes(b"not-a-real-parquet-file")
+    _create_directory_redirect(alias_root, external_root)
+
+    with pytest.raises(ManifestIntegrityError, match="escapes its root"):
+        _actual_shard_paths(run_root)
+
+
+def test_shard_redirect_cycle_terminates_without_duplicate_paths(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    train_root = run_root / "data" / "train"
+    train_root.mkdir(parents=True)
+    shard_path = train_root / "train-00000.parquet"
+    shard_path.write_bytes(b"not-a-real-parquet-file")
+    _create_directory_redirect(train_root / "loop", train_root)
+
+    assert _actual_shard_paths(run_root) == {Path("data/train/train-00000.parquet")}
+
+
 def test_redirected_dedup_state_is_rejected_without_deleting_target(tmp_path: Path) -> None:
     run_root = tmp_path / "run"
     external_state = tmp_path / "external-state"
