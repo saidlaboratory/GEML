@@ -9,7 +9,6 @@ API; it does not claim byte identity with upstream whole-source normalization.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from types import MappingProxyType
 
 from geml.eml.compiler_arithmetic import (
@@ -101,7 +100,6 @@ def eml_tan(
     )
 
 
-TrigCompiler = Callable[[EMLTerm], EMLTerm]
 TRIG_COMPILERS = MappingProxyType(
     {
         "sin": eml_sin,

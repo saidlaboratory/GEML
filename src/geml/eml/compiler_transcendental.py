@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from types import MappingProxyType
 
 from geml.eml.compiler_arithmetic import eml_divide, eml_integer, eml_multiply
@@ -68,7 +67,6 @@ def eml_tanh(
     )
 
 
-HyperbolicCompiler = Callable[[EMLTerm], EMLTerm]
 HYPERBOLIC_COMPILERS = MappingProxyType(
     {
         "sinh": eml_sinh,
