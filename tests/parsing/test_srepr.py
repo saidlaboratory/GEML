@@ -19,6 +19,8 @@ from geml.parsing.srepr import (
 )
 from geml.spec.operators import OPERATOR_REGISTRY
 
+_TRIG_HYPERBOLIC_CONSTRUCTORS = ("sin", "cos", "tan", "sinh", "cosh", "tanh")
+
 
 def _record(sympy_srepr: str) -> ExpressionRecord:
     return ExpressionRecord(
@@ -51,9 +53,13 @@ def test_parser_reads_authoritative_contract_field() -> None:
     )
 
 
-def test_parser_supports_every_enabled_syntax_constructor() -> None:
+def test_parser_supports_every_expected_syntax_constructor() -> None:
     source = (
-        "Add(Mul(Integer(-1), Symbol('x', real=True)), Pow(exp(log(Rational(3, 2))), Integer(2)))"
+        "Add(Mul(Integer(-1), Symbol('x', real=True)), "
+        "Pow(exp(log(Rational(3, 2))), Integer(2)), "
+        "sin(Symbol('x', real=True)), cos(Symbol('x', real=True)), "
+        "tan(Symbol('x', real=True)), sinh(Symbol('x', real=True)), "
+        "cosh(Symbol('x', real=True)), tanh(Symbol('x', real=True)))"
     )
     parsed = parse_srepr(source)
     constructors: set[str] = set()
@@ -72,11 +78,18 @@ def test_parser_supports_every_enabled_syntax_constructor() -> None:
         "Pow",
         "exp",
         "log",
+        "sin",
+        "cos",
+        "tan",
+        "sinh",
+        "cosh",
+        "tanh",
         "Rational",
     }
-    assert {
+    enabled_operators = {
         name for name, operator in OPERATOR_REGISTRY.items() if operator.enabled_for_generation
-    } == {
+    }
+    assert enabled_operators == {
         "symbol",
         "one",
         "integer",
@@ -89,7 +102,39 @@ def test_parser_supports_every_enabled_syntax_constructor() -> None:
         "power",
         "exp",
         "log",
+        "sin",
+        "cos",
+        "tan",
+        "sinh",
+        "cosh",
+        "tanh",
     }
+
+
+@pytest.mark.parametrize("constructor", _TRIG_HYPERBOLIC_CONSTRUCTORS)
+def test_trig_and_hyperbolic_constructors_preserve_their_argument(constructor: str) -> None:
+    parsed = parse_srepr(f"{constructor}(Symbol('x', real=True))")
+
+    assert parsed == ParsedSreprNode(
+        constructor=constructor,
+        children=(
+            ParsedSreprNode(
+                constructor="Symbol",
+                value="x",
+                assumptions=(("real", True),),
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize("constructor", _TRIG_HYPERBOLIC_CONSTRUCTORS)
+@pytest.mark.parametrize("arguments", ["", "Symbol('x', real=True), Integer(1)"])
+def test_trig_and_hyperbolic_constructors_require_exactly_one_argument(
+    constructor: str,
+    arguments: str,
+) -> None:
+    with pytest.raises(SreprParseError, match="exactly one"):
+        parse_srepr(f"{constructor}({arguments})")
 
 
 def test_parser_never_evaluates_input(tmp_path: Path) -> None:
@@ -104,12 +149,7 @@ def test_parser_never_evaluates_input(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("source", "constructor"),
     [
-        ("sin(Symbol('x', real=True))", "sin"),
-        ("cos(Symbol('x', real=True))", "cos"),
-        ("tan(Symbol('x', real=True))", "tan"),
-        ("sinh(Symbol('x', real=True))", "sinh"),
-        ("cosh(Symbol('x', real=True))", "cosh"),
-        ("tanh(Symbol('x', real=True))", "tanh"),
+        ("erf(Symbol('x', real=True))", "erf"),
         ("Float('1.25')", "Float"),
         ("pi", "pi"),
         ("E", "E"),

@@ -25,12 +25,15 @@ from geml.data.generation.difficulty import (
 )
 from geml.data.generation.grammar import (
     LOG_ARGUMENT_CLASSES,
+    TAN_ARGUMENT_CLASSES,
     TRIVIALITY_FEATURES,
     GrammarGenerationError,
     GrammarPolicy,
     TrivialityPolicy,
     generate_tree,
     maximum_leaves_with_arity,
+    maximum_leaves_with_arity_count,
+    target_is_label_feasible,
     triviality_violations,
 )
 from geml.spec.corpus_families import (
@@ -126,6 +129,7 @@ class FamilyGenerationPolicy(BaseModel):
     domain_weights: Mapping[str, NonNegativeWeight] = Field(min_length=1)
     operator_weights: Mapping[str, NonNegativeWeight] = Field(min_length=1)
     required_any_operators: tuple[str, ...]
+    required_operator_groups: tuple[tuple[str, ...], ...] = ()
     stress_criterion: str | None = None
 
     @model_validator(mode="after")
@@ -140,6 +144,22 @@ class FamilyGenerationPolicy(BaseModel):
             self.operator_weights.get(operator, 0.0) > 0 for operator in self.required_any_operators
         ):
             raise ValueError("at least one required-any operator must have positive weight")
+        if any(not group for group in self.required_operator_groups):
+            raise ValueError("required operator groups must be nonempty")
+        if any(len(group) != len(set(group)) for group in self.required_operator_groups):
+            raise ValueError("operators within each required group must be unique")
+        all_groups = (
+            *((self.required_any_operators,) if self.required_any_operators else ()),
+            *self.required_operator_groups,
+        )
+        flattened = tuple(operator for group in all_groups for operator in group)
+        if len(flattened) != len(set(flattened)):
+            raise ValueError("an operator may belong to only one required group")
+        if any(
+            not any(self.operator_weights.get(operator, 0.0) > 0 for operator in group)
+            for group in self.required_operator_groups
+        ):
+            raise ValueError("every required operator group needs a positively weighted operator")
         if self.operator_weights.get("symbol", 0.0) <= 0:
             raise ValueError("symbol must have positive weight because every target has variables")
         if self.stress_criterion is not None:
@@ -205,6 +225,11 @@ class GeneratorConfig(BaseModel):
                 raise ValueError(f"operator weight outside frozen family {family_id!r}")
             if not set(policy.required_any_operators) <= set(policy.operator_weights):
                 raise ValueError(f"required operator lacks a weight in family {family_id!r}")
+            grouped_required = {
+                operator for group in policy.required_operator_groups for operator in group
+            }
+            if not grouped_required <= set(policy.operator_weights):
+                raise ValueError(f"required operator group lacks a weight in family {family_id!r}")
             if (
                 policy.operator_weights.get("power", 0.0) > 0
                 and policy.operator_weights.get("integer", 0.0) <= 0
@@ -270,6 +295,18 @@ def _require_nonnegative_integer(value: object, *, name: str) -> int:
     return value
 
 
+def _require_integer(value: object, *, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer")
+    return value
+
+
+def _require_nonblank_string(value: object, *, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a nonblank string")
+    return value
+
+
 def derive_expression_seed(
     *,
     run_seed: int,
@@ -285,6 +322,15 @@ def derive_expression_seed(
         expression_index,
         name="expression index",
     )
+    run_seed = _require_integer(run_seed, name="run seed")
+    family_id = _require_nonblank_string(family_id, name="family id")
+    profile_name = _require_nonblank_string(profile_name, name="profile name")
+    domain_mode = _require_nonblank_string(domain_mode, name="domain mode")
+    stable_stress_criterion = (
+        ""
+        if stress_criterion is None
+        else _require_nonblank_string(stress_criterion, name="stress criterion")
+    )
     return _digest_int(
         _SEED_PREFIX,
         run_seed,
@@ -292,13 +338,15 @@ def derive_expression_seed(
         family_id,
         profile_name,
         domain_mode,
-        stress_criterion or "",
+        stable_stress_criterion,
     )
 
 
 def derive_expression_id(*, domain_mode: str, sympy_srepr: str) -> str:
     """Return the project-authoritative lowercase SHA-256 expression identity."""
 
+    domain_mode = _require_nonblank_string(domain_mode, name="domain mode")
+    sympy_srepr = _require_nonblank_string(sympy_srepr, name="SymPy srepr")
     canonical_payload = f"{_EXPRESSION_ID_PREFIX}\0{domain_mode}\0{sympy_srepr}"
     payload = canonical_payload.encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
@@ -436,9 +484,16 @@ def _rejection_key(error: GrammarGenerationError) -> str:
     return f"grammar:{error.code}"
 
 
-def _active_required_operators(policy: FamilyGenerationPolicy) -> tuple[str, ...]:
+def _active_required_operator_groups(
+    policy: FamilyGenerationPolicy,
+) -> tuple[tuple[str, ...], ...]:
+    configured_groups = (
+        *((policy.required_any_operators,) if policy.required_any_operators else ()),
+        *policy.required_operator_groups,
+    )
     return tuple(
-        name for name in policy.required_any_operators if policy.operator_weights.get(name, 0.0) > 0
+        tuple(operator for operator in group if policy.operator_weights.get(operator, 0.0) > 0)
+        for group in configured_groups
     )
 
 
@@ -484,22 +539,90 @@ def _target_supports_required_operator(
     )
 
 
-def _minimum_leaves_for_required_operator(
+def _target_supports_required_operator_groups(
+    target: DifficultyTarget,
+    required_groups: tuple[tuple[str, ...], ...],
+    domain_mode: str,
+    *,
+    allowed_operators: tuple[str, ...],
+    operator_weights: Mapping[str, float],
+    grammar_policy: GrammarPolicy,
+) -> bool:
+    if not all(
+        _target_supports_required_operator(target, group, domain_mode) for group in required_groups
+    ):
+        return False
+
+    uniform_arity_groups: dict[int, list[tuple[str, ...]]] = {}
+    for group in required_groups:
+        arities = {OPERATOR_REGISTRY[operator].arity for operator in group}
+        if len(arities) == 1:
+            uniform_arity_groups.setdefault(arities.pop(), []).append(group)
+    for arity, groups in uniform_arity_groups.items():
+        minimum_leaves = max(
+            min(
+                _minimum_leaves_for_operator(
+                    operator,
+                    variable_count=target.variable_count,
+                    domain_mode=domain_mode,
+                )
+                for operator in group
+            )
+            for group in groups
+        )
+        if (
+            maximum_leaves_with_arity_count(
+                size=target.target_size,
+                depth=target.target_depth,
+                arity=arity,
+                minimum_count=len(groups),
+            )
+            < minimum_leaves
+        ):
+            return False
+    return target_is_label_feasible(
+        target=target,
+        domain_mode=domain_mode,
+        allowed_operators=allowed_operators,
+        operator_weights=operator_weights,
+        policy=grammar_policy,
+        required_operator_groups=required_groups,
+    )
+
+
+def _minimum_leaves_for_required_groups(
     *,
     variable_count: int,
-    required_operators: tuple[str, ...],
+    required_groups: tuple[tuple[str, ...], ...],
     domain_mode: str,
 ) -> int:
-    if not required_operators:
+    if not required_groups:
         return variable_count
-    return min(
-        _minimum_leaves_for_operator(
-            operator_name,
-            variable_count=variable_count,
-            domain_mode=domain_mode,
-        )
-        for operator_name in required_operators
+    return max(
+        variable_count,
+        *(
+            min(
+                _minimum_leaves_for_operator(
+                    operator_name,
+                    variable_count=variable_count,
+                    domain_mode=domain_mode,
+                )
+                for operator_name in group
+            )
+            for group in required_groups
+        ),
     )
+
+
+def _minimum_required_arity_counts(
+    required_groups: tuple[tuple[str, ...], ...],
+) -> dict[int, int]:
+    counts: Counter[int] = Counter()
+    for group in required_groups:
+        arities = {OPERATOR_REGISTRY[operator].arity for operator in group}
+        if len(arities) == 1:
+            counts[arities.pop()] += 1
+    return dict(sorted(counts.items()))
 
 
 def generate_expression(
@@ -564,7 +687,7 @@ def generate_expression(
         family_id,
         domain_mode=selected_domain,
     )
-    required_operators = _active_required_operators(family_policy)
+    required_groups = _active_required_operator_groups(family_policy)
 
     expression_seed = derive_expression_seed(
         run_seed=config.run_seed,
@@ -581,10 +704,13 @@ def generate_expression(
                 config.difficulty_profiles[selected_profile],
                 difficulty_rng,
                 minimum_size=family_policy.minimum_target_size,
-                target_predicate=lambda candidate: _target_supports_required_operator(
+                target_predicate=lambda candidate: _target_supports_required_operator_groups(
                     candidate,
-                    required_operators,
+                    required_groups,
                     selected_domain,
+                    allowed_operators=approved_operators,
+                    operator_weights=family_policy.operator_weights,
+                    grammar_policy=config.grammar,
                 ),
             )
         except ValueError as error:
@@ -593,12 +719,26 @@ def generate_expression(
             ) from error
     else:
         selected_target = target
+        if not _target_supports_required_operator_groups(
+            selected_target,
+            required_groups,
+            selected_domain,
+            allowed_operators=approved_operators,
+            operator_weights=family_policy.operator_weights,
+            grammar_policy=config.grammar,
+        ):
+            raise GeneratorConfigurationError(
+                f"target size={selected_target.target_size}, "
+                f"depth={selected_target.target_depth} cannot realize every required "
+                f"operator group for family {family_id!r}"
+            )
     variable_names = config.grammar.variable_names[: selected_target.variable_count]
-    minimum_leaf_count = _minimum_leaves_for_required_operator(
+    minimum_leaf_count = _minimum_leaves_for_required_groups(
         variable_count=selected_target.variable_count,
-        required_operators=required_operators,
+        required_groups=required_groups,
         domain_mode=selected_domain,
     )
+    minimum_arity_counts = _minimum_required_arity_counts(required_groups)
     rejection_reasons: Counter[str] = Counter()
     labeling_attempts = 0
     labeling_rejection_reasons: Counter[str] = Counter()
@@ -615,6 +755,7 @@ def generate_expression(
                 policy=config.grammar,
                 rng=Random(attempt_seed),
                 minimum_leaf_count=minimum_leaf_count,
+                minimum_operator_arity_counts=minimum_arity_counts,
             )
         except GrammarGenerationError as error:
             rejection_reasons[_rejection_key(error)] += 1
@@ -625,10 +766,15 @@ def generate_expression(
         operator_counts = dict(tree.operator_counts)
         labeling_attempts += tree.labeling_attempts
         labeling_rejection_reasons.update(dict(tree.labeling_rejection_reasons))
-        if required_operators and not any(
-            operator_counts.get(operator, 0) > 0 for operator in required_operators
-        ):
-            rejection_reasons["missing_family_distinguishing_operator"] += 1
+        missing_groups = tuple(
+            group
+            for group in required_groups
+            if not any(operator_counts.get(operator, 0) > 0 for operator in group)
+        )
+        if missing_groups:
+            for group in missing_groups:
+                group_name = "|".join(group)
+                rejection_reasons[f"missing_required_operator_group:{group_name}"] += 1
             continue
 
         triviality_counts = dict(tree.triviality_counts)
@@ -643,6 +789,7 @@ def generate_expression(
             domain_mode=selected_domain,
             sympy_srepr=authoritative_srepr,
         )
+        tan_argument_classes = dict(tree.tan_argument_classes)
         metadata = {
             "generator": "geml.data.generation.generator",
             "generator_schema_version": config.schema_version,
@@ -664,13 +811,18 @@ def generate_expression(
             "metric_status": "generator_logical_targets_not_parser_verified",
             "sympy_printer_order": "none",
             "operator_counts": operator_counts,
+            "required_operator_groups": [list(group) for group in required_groups],
             "log_argument_classes": dict(tree.log_argument_classes),
+            "tan_argument_classes": {
+                name: tan_argument_classes.get(name, 0) for name in TAN_ARGUMENT_CLASSES
+            },
             "triviality_counts": triviality_counts,
             "corpus_triviality_rate_caps": dict(config.triviality.corpus_rate_caps),
             "domain_guards": {
                 "log_arguments": "positive_expression_grammar",
                 "division_denominators": "positive_expression_grammar",
                 "negative_power_bases": "positive_expression_grammar",
+                "tan_arguments": "closed_unit_interval_structural_grammar",
             },
         }
         return ExpressionRecord(
@@ -812,6 +964,7 @@ def run_smoke(
     stress_criteria: Counter[str] = Counter()
     operator_usage: Counter[str] = Counter()
     log_argument_classes: Counter[str] = Counter()
+    tan_argument_classes: Counter[str] = Counter()
     triviality_events: Counter[str] = Counter({name: 0 for name in TRIVIALITY_FEATURES})
     triviality_records: Counter[str] = Counter({name: 0 for name in TRIVIALITY_FEATURES})
     generation_attempts = 0
@@ -891,6 +1044,7 @@ def run_smoke(
                     stress_criteria[stress_criterion_value] += 1
                 operator_usage.update(metadata["operator_counts"])
                 log_argument_classes.update(metadata["log_argument_classes"])
+                tan_argument_classes.update(metadata["tan_argument_classes"])
                 counts = metadata["triviality_counts"]
                 for feature in TRIVIALITY_FEATURES:
                     count_value = int(counts[feature])
@@ -940,6 +1094,9 @@ def run_smoke(
         "operator_usage": _sorted_counter(operator_usage),
         "log_argument_class_distribution": {
             name: log_argument_classes[name] for name in LOG_ARGUMENT_CLASSES
+        },
+        "tan_argument_class_distribution": {
+            name: tan_argument_classes[name] for name in TAN_ARGUMENT_CLASSES
         },
         "triviality_event_counts": _sorted_counter(triviality_events),
         "triviality_record_rates": rates,

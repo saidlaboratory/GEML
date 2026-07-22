@@ -18,6 +18,12 @@ def test_complex_domain_is_reserved_and_disabled() -> None:
     assert complex_policy.numeric_probe_policy is None
 
 
+def test_every_real_domain_requires_the_structural_tan_guard() -> None:
+    expected = "Every tan argument must be structurally certified in the closed interval [-1, 1]."
+    for name in ("safe_real", "positive_real", "nonzero_real"):
+        assert expected in DOMAIN_REGISTRY[name].operation_constraints
+
+
 def test_domain_records_and_registry_are_immutable() -> None:
     with pytest.raises(ValidationError):
         DOMAIN_REGISTRY["safe_real"].name = "renamed"  # type: ignore[misc]

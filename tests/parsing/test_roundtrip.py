@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
 
 import pytest
-from sympy import Add, Integer, Pow, Symbol, sin
+from sympy import Add, Basic, Integer, Pow, Symbol, cos, cosh, erf, sin, sinh, tan, tanh
 
 from geml.ast.builder import build_ast_from_parsed
 from geml.contracts.ast import ASTEdge, ASTNode, ASTStatistics, ASTTree
@@ -36,6 +37,15 @@ from geml.parsing.roundtrip import (
 from geml.parsing.srepr import parse_srepr
 from geml.spec.operators import OPERATOR_REGISTRY, EMLConstructionStatus
 
+TRIG_HYPERBOLIC_FUNCTIONS: dict[str, Callable[..., Basic]] = {
+    "sin": sin,
+    "cos": cos,
+    "tan": tan,
+    "sinh": sinh,
+    "cosh": cosh,
+    "tanh": tanh,
+}
+
 
 def _tree(source: str, *, expression_id: str = "fixture") -> ASTTree:
     return build_ast_from_parsed(parse_srepr(source), expression_id=expression_id)
@@ -62,7 +72,7 @@ def _record(source: str) -> ExpressionRecord:
     )
 
 
-APPROVED_OPERATOR_FIXTURES = {
+SUPPORTED_OPERATOR_FIXTURES = {
     "symbol": "Symbol('x', real=True)",
     "one": "Integer(1)",
     "integer": "Integer(2)",
@@ -75,6 +85,12 @@ APPROVED_OPERATOR_FIXTURES = {
     "power": "Pow(Symbol('x', real=True), Integer(2))",
     "exp": "exp(Symbol('x', real=True))",
     "log": "log(Symbol('x', real=True))",
+    "sin": "sin(Symbol('x', real=True))",
+    "cos": "cos(Symbol('x', real=True))",
+    "tan": "tan(Symbol('x', real=True))",
+    "sinh": "sinh(Symbol('x', real=True))",
+    "cosh": "cosh(Symbol('x', real=True))",
+    "tanh": "tanh(Symbol('x', real=True))",
 }
 
 
@@ -87,26 +103,22 @@ def _approved_enabled_operators() -> set[str]:
     }
 
 
-def test_renderer_coverage_tracks_every_approved_enabled_source_operator() -> None:
+def test_renderer_coverage_tracks_supported_and_approved_source_operators() -> None:
     approved = _approved_enabled_operators()
-    assert set(APPROVED_OPERATOR_FIXTURES) == approved
-    assert approved == DISPLAY_SOURCE_OPERATORS
-    assert approved == LATEX_SOURCE_OPERATORS
-    for source in APPROVED_OPERATOR_FIXTURES.values():
+    supported = set(SUPPORTED_OPERATOR_FIXTURES)
+    assert approved == supported
+    assert supported == DISPLAY_SOURCE_OPERATORS
+    assert supported == LATEX_SOURCE_OPERATORS
+    for source in SUPPORTED_OPERATOR_FIXTURES.values():
         tree = _tree(source)
         assert render_display(tree)
         assert render_latex(tree)
 
 
-def test_pending_and_reserved_operators_are_not_falsely_covered() -> None:
-    excluded = {
-        name
-        for name, operator in OPERATOR_REGISTRY.items()
-        if not operator.enabled_for_generation
-        or operator.eml_construction_status is not EMLConstructionStatus.APPROVED
-    }
-    assert excluded.isdisjoint(DISPLAY_SOURCE_OPERATORS)
-    assert excluded.isdisjoint(LATEX_SOURCE_OPERATORS)
+def test_other_pending_and_reserved_operators_are_not_falsely_covered() -> None:
+    unsupported = set(OPERATOR_REGISTRY) - _approved_enabled_operators()
+    assert unsupported.isdisjoint(DISPLAY_SOURCE_OPERATORS)
+    assert unsupported.isdisjoint(LATEX_SOURCE_OPERATORS)
 
 
 @pytest.mark.parametrize(
@@ -130,6 +142,12 @@ def test_pending_and_reserved_operators_are_not_falsely_covered() -> None:
         ("Pow(Symbol('x', real=True), Integer(2))", "x**2"),
         ("exp(Symbol('x', real=True))", "exp(x)"),
         ("log(Symbol('x', real=True))", "log(x)"),
+        ("sin(Symbol('x', real=True))", "sin(x)"),
+        ("cos(Symbol('x', real=True))", "cos(x)"),
+        ("tan(Symbol('x', real=True))", "tan(x)"),
+        ("sinh(Symbol('x', real=True))", "sinh(x)"),
+        ("cosh(Symbol('x', real=True))", "cosh(x)"),
+        ("tanh(Symbol('x', real=True))", "tanh(x)"),
     ],
 )
 def test_display_operator_forms(source: str, expected: str) -> None:
@@ -196,6 +214,12 @@ def test_display_precedence_and_associativity(source: str, expected: str) -> Non
         ("Pow(Symbol('x', real=True), Integer(2))", "x^{2}"),
         ("exp(Symbol('x', real=True))", r"\exp\left(x\right)"),
         ("log(Symbol('x', real=True))", r"\log\left(x\right)"),
+        ("sin(Symbol('x', real=True))", r"\sin\left(x\right)"),
+        ("cos(Symbol('x', real=True))", r"\cos\left(x\right)"),
+        ("tan(Symbol('x', real=True))", r"\tan\left(x\right)"),
+        ("sinh(Symbol('x', real=True))", r"\sinh\left(x\right)"),
+        ("cosh(Symbol('x', real=True))", r"\cosh\left(x\right)"),
+        ("tanh(Symbol('x', real=True))", r"\tanh\left(x\right)"),
     ],
 )
 def test_latex_operator_forms(source: str, expected: str) -> None:
@@ -287,7 +311,7 @@ def test_renderers_do_not_delegate_to_simplification_or_string_authority() -> No
 
 
 def _unsupported_tree() -> ASTTree:
-    node = ASTNode(node_id="n0", node_kind="operator", label="sin", arity=1)
+    node = ASTNode(node_id="n0", node_kind="operator", label="erf", arity=1)
     child = ASTNode(
         node_id="n1",
         node_kind="leaf",
@@ -312,9 +336,9 @@ def _unsupported_tree() -> ASTTree:
 
 def test_unsupported_nodes_raise_typed_renderer_errors() -> None:
     tree = _unsupported_tree()
-    with pytest.raises(UnsupportedDisplayNodeError, match="sin"):
+    with pytest.raises(UnsupportedDisplayNodeError, match="erf"):
         render_display(tree)
-    with pytest.raises(UnsupportedLatexNodeError, match="sin"):
+    with pytest.raises(UnsupportedLatexNodeError, match="erf"):
         render_latex(tree)
 
 
@@ -462,6 +486,15 @@ def test_authoritative_source_roundtrip_is_exact() -> None:
     assert result.latex_text is None
 
 
+@pytest.mark.parametrize("constructor", TRIG_HYPERBOLIC_FUNCTIONS)
+def test_trig_and_hyperbolic_source_roundtrips_are_exact(constructor: str) -> None:
+    result = audit_source_roundtrip(_record(f"{constructor}(Symbol('x', real=True))"))
+
+    assert result.status is RoundTripStatus.EXACT
+    assert result.exact_structural_equal is True
+    assert result.parse_supported is None
+
+
 def test_source_roundtrip_can_compare_an_expected_ast() -> None:
     record = _record("Add(Symbol('x', real=True), Integer(1))")
     expected = _tree("Add(Symbol('x', real=True), Integer(2))")
@@ -473,11 +506,11 @@ def test_source_roundtrip_can_compare_an_expected_ast() -> None:
 
 
 def test_source_roundtrip_retains_parse_failures() -> None:
-    result = audit_source_roundtrip(_record("sin(Symbol('x', real=True))"))
+    result = audit_source_roundtrip(_record("erf(Symbol('x', real=True))"))
     assert result.status is RoundTripStatus.OPERATOR_UNSUPPORTED
     assert result.parse_supported is False
     assert result.error_type == "UnsupportedNodeError"
-    assert "sin" in (result.error_message or "")
+    assert "erf" in (result.error_message or "")
 
 
 def test_comparison_distinguishes_commutative_normalization() -> None:
@@ -633,6 +666,38 @@ def test_latex_roundtrip_can_report_exact_structural_and_semantic_equality(
     assert result.semantic_equal is True
 
 
+@pytest.mark.parametrize(("constructor", "function"), TRIG_HYPERBOLIC_FUNCTIONS.items())
+def test_trig_and_hyperbolic_ast_labels_map_to_the_matching_sympy_function(
+    constructor: str,
+    function: Callable[..., Basic],
+) -> None:
+    expression = roundtrip._ast_to_sympy(_tree(f"{constructor}(Symbol('x', real=True))"))
+    assert expression.func is function
+
+
+@pytest.mark.parametrize(("constructor", "function"), TRIG_HYPERBOLIC_FUNCTIONS.items())
+def test_trig_and_hyperbolic_latex_roundtrips_support_semantic_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    constructor: str,
+    function: Callable[..., Basic],
+) -> None:
+    def parser(_latex: str) -> Basic:
+        return function(Symbol("x"), evaluate=False)
+
+    monkeypatch.setattr(
+        roundtrip,
+        "_load_latex_backend",
+        lambda: roundtrip._LatexBackend(parser),
+    )
+    result = audit_latex_roundtrip(_tree(f"{constructor}(Symbol('x', real=True))"))
+
+    assert result.status is RoundTripStatus.EXACT
+    assert result.parser_available is True
+    assert result.parse_supported is True
+    assert result.exact_structural_equal is True
+    assert result.semantic_equal is True
+
+
 def test_latex_roundtrip_allows_normalization_to_eliminate_symbols(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -705,8 +770,8 @@ def test_latex_roundtrip_retains_unsupported_and_malformed_results(
 def test_latex_roundtrip_does_not_silently_accept_unsupported_parser_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def parser(_latex: str) -> sin:
-        return sin(Symbol("x"))
+    def parser(_latex: str) -> Basic:
+        return erf(Symbol("x"))
 
     monkeypatch.setattr(
         roundtrip,
@@ -717,7 +782,7 @@ def test_latex_roundtrip_does_not_silently_accept_unsupported_parser_output(
     assert result.status is RoundTripStatus.OPERATOR_UNSUPPORTED
     assert result.parse_supported is False
     assert result.error_type == "UnsupportedNodeError"
-    assert "sin" in (result.error_message or "")
+    assert "erf" in (result.error_message or "")
 
 
 def test_views_and_audits_preserve_authority_metrics_identity_and_files(tmp_path: Path) -> None:

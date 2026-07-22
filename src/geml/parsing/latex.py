@@ -21,6 +21,16 @@ from geml.parsing.display import (
 LATEX_SOURCE_OPERATORS = DISPLAY_SOURCE_OPERATORS
 
 _SINGLE_LETTER_SYMBOL = re.compile(r"[A-Za-z]\Z")
+_LATEX_FUNCTION_COMMANDS = {
+    "exp": "exp",
+    "log": "log",
+    "sin": "sin",
+    "cos": "cos",
+    "tan": "tan",
+    "sinh": "sinh",
+    "cosh": "cosh",
+    "tanh": "tanh",
+}
 _LATEX_ESCAPES = {
     "\\": r"\backslash{}",
     "{": r"\{",
@@ -79,10 +89,11 @@ class _LatexRenderer:
             return self._render_multiply(node)
         if node.label == "power":
             return self._render_power(node)
-        if node.label in {"exp", "log"}:
+        if node.label in _LATEX_FUNCTION_COMMANDS:
             argument = self.render(self.view.children(node)[0])
+            command = _LATEX_FUNCTION_COMMANDS[node.label]
             return _Rendered(
-                rf"\{node.label}\left({argument.text}\right)",
+                rf"\{command}\left({argument.text}\right)",
                 _Precedence.FUNCTION,
             )
         raise UnsupportedLatexNodeError(node)

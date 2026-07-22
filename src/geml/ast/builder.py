@@ -21,6 +21,12 @@ _OPERATOR_LABELS = {
     "Pow": "power",
     "exp": "exp",
     "log": "log",
+    "sin": "sin",
+    "cos": "cos",
+    "tan": "tan",
+    "sinh": "sinh",
+    "cosh": "cosh",
+    "tanh": "tanh",
 }
 _DEFAULT_LIMITS = ParserLimits()
 

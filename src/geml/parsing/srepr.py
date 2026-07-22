@@ -10,8 +10,9 @@ from math import gcd
 from geml.contracts.expression import ExpressionRecord
 from geml.spec.operators import OPERATOR_REGISTRY
 
-_SUPPORTED_CONSTRUCTORS = frozenset(
-    {"Symbol", "Integer", "Rational", "Add", "Mul", "Pow", "exp", "log"}
+_UNARY_CONSTRUCTORS = frozenset({"exp", "log", "sin", "cos", "tan", "sinh", "cosh", "tanh"})
+_SUPPORTED_CONSTRUCTORS = (
+    frozenset({"Symbol", "Integer", "Rational", "Add", "Mul", "Pow"}) | _UNARY_CONSTRUCTORS
 )
 _SUPPORTED_REGISTRY_OPERATORS = frozenset(
     {
@@ -27,6 +28,12 @@ _SUPPORTED_REGISTRY_OPERATORS = frozenset(
         "power",
         "exp",
         "log",
+        "sin",
+        "cos",
+        "tan",
+        "sinh",
+        "cosh",
+        "tanh",
     }
 )
 _SYMBOL_ASSUMPTIONS = frozenset({"real", "positive", "nonzero"})
@@ -220,7 +227,7 @@ class _SafeParser:
             raise SreprParseError(f"{constructor} requires at least two operands")
         if constructor == "Pow" and arity != 2:
             raise SreprParseError("Pow requires base and exponent")
-        if constructor in {"exp", "log"} and arity != 1:
+        if constructor in _UNARY_CONSTRUCTORS and arity != 1:
             raise SreprParseError(f"{constructor} requires exactly one argument")
         return ParsedSreprNode(
             constructor=constructor,
