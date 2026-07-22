@@ -11,8 +11,9 @@ artifacts are:
 - `outputs/final/goal1/final/run/run.metadata.json`
 - `outputs/final/goal1/final/run/stage.result.json`
 
-The final artifact is provisional because it was generated from an uncommitted working tree. The
-counts and hashes below are measured results, not planned values.
+The final artifact is authoritative: it was generated with a clean working tree from reviewed
+implementation commit `1a4def7e45cb0e987fee57d91d5f35c905df3f0d`. This documentation-only
+follow-up records measured results and does not alter the pipeline fingerprint or corpus.
 
 ## Manifest, checksums, counts, and identity
 
@@ -75,8 +76,8 @@ Shard checksums:
 
 The canonical final-corpus hash is
 `d591706fb52c13bb15de96f36538f09b34178ee3faa0527ed38100cd4544cc5f`. The corpus-manifest file
-hash is `24db8100aafcfc98fc35eb370d302224bf15ebd5d22bfdf81c1a652e2b5ddecb`, and the QA-report file
-hash is `19bf891499aa78e2ce69ade696a2f04a6180e90291cfbfca0311d21f51c1721a`.
+hash is `77fce5779b3d2c2f3cdf2b9f49da54cd14474d37ab128337bdf4fcc52afd4f0d`, and the QA-report file
+hash is `979cd3b73041ea5453135fabadc71302c5bb97f7100167a4c30ef80912698118`.
 
 ## Structural distributions
 
@@ -263,8 +264,8 @@ Two independently materialized 10,000-row pilot runs matched exactly:
 | Digest | Run-a | Run-b | Match |
 |---|---|---|---|
 | canonical corpus | `df4f3d74157cea022d0b335669c619ab16291372a3c0542dbcc06289cdbfb90c` | `df4f3d74157cea022d0b335669c619ab16291372a3c0542dbcc06289cdbfb90c` | yes |
-| normalized manifest/checksums | `3a356ba60e46059a796bfc00b356e33dcd1d8f485fa43cfdde9d7eace9816e61` | `3a356ba60e46059a796bfc00b356e33dcd1d8f485fa43cfdde9d7eace9816e61` | yes |
-| combined deterministic payload | `54e40382406b0d033fc5ecb089ca98268e1a678b577b0bd78727a36467d8e682` | `54e40382406b0d033fc5ecb089ca98268e1a678b577b0bd78727a36467d8e682` | yes |
+| normalized manifest/checksums | `02252cf48820e5acf4ea47316c7dab0fbcf18ac699b6adb1dba2020b5d847609` | `02252cf48820e5acf4ea47316c7dab0fbcf18ac699b6adb1dba2020b5d847609` | yes |
+| combined deterministic payload | `82c85eae1a91e915f8d07c88ad350b66cd82a2119a2480fa9c46269291028cfb` | `82c85eae1a91e915f8d07c88ad350b66cd82a2119a2480fa9c46269291028cfb` | yes |
 
 The comparison reported no differences. Each pilot attempted 10,726 candidates, finalized 10,000
 rows, retained 726 duplicates, and had zero corpus-cap, adapter, unsupported, policy, or storage
@@ -275,30 +276,33 @@ Final reproducibility metadata:
 | Field | Value |
 |---|---|
 | generator seed | `20260721` |
-| integration config hash | `bc227d9a39c7f47f16086643d41cc06beff40e74179be84c62a58b61d5639d1b` |
-| generator config checksum | `79f3a78ddd411250a9cd507f21ce74e8ffd0a90c274eef6f4afc63f7223347b8` |
+| integration config hash | `2a8381a53fd4a69473d2ddf0fda3860885c80976f5fdd9fca465bfede8223538` |
+| generator config checksum | `3e3e3b885ea180c8a81538b340c4f04921633811ec338da54b38cf549e691837` |
 | corpus config checksum | `8eb74e44f99fe5594176caaa07638eb79c4fdd1fafee8b123f260c59902d10d5` |
-| policy fingerprint | `1544a8cf808554c2da1d5c47c5d42b9033f2ab3d01be120eff07dedddaf6d001` |
-| Git HEAD | `47e4053d5f5906f901348f40fba9de78b8520b8c` |
-| working tree | dirty/provisional |
-| captured working-tree fingerprint | `a7c19e0cd00df6ba735aa0d7f404de36d511940925445512a2c1ad281f185e1a` |
+| policy fingerprint | `cdd1328b1a6b93fc863ee71ac95c4849f577f0095eb707d237f9009debbb7b9e` |
+| Git HEAD | `1a4def7e45cb0e987fee57d91d5f35c905df3f0d` |
+| working tree | clean / authoritative |
+| working-tree status entries | `0` |
+| captured working-tree fingerprint | `374708fff7719dd5979ec875d56cd2286f6d3cf7ec317a3b25632aab28ec37bb` |
 | Python | `3.12.13` |
 | platform | `Windows-11-10.0.26200-SP0` |
-| primary packages | `geml 0.1.0`, `sympy 1.14.0`, `pyarrow 25.0.0`, `pydantic 2.13.4`, `numpy 2.3.5`, `mpmath 1.3.0`, `psutil 7.2.2` |
+| primary packages | `geml 0.1.0`, `sympy 1.14.0`, `pyarrow 25.0.0`, `pydantic 2.13.4`, `numpy 2.5.1`, `mpmath 1.3.0`, `psutil 7.2.2` |
 
 ## Performance and storage
 
 | Stage | Elapsed | Accepted throughput | Generation throughput | Peak RSS |
 |---|---:|---:|---:|---:|
-| development | 28.275 s | 35.37 rows/s | 36.36 rows/s | 248,791,040 B |
-| pilot run-a | 73.938 s | 135.25 rows/s | 145.07 rows/s | 471,089,152 B |
-| pilot run-b | 31.001 s | 322.57 rows/s | 345.98 rows/s | 518,287,360 B |
-| final | 912.419 s | 274.00 rows/s | 313.91 rows/s | 2,949,906,432 B |
+| development | 27.735 s | 36.06 rows/s | 37.06 rows/s | 245,137,408 B |
+| pilot run-a | 72.745 s | 137.47 rows/s | 147.45 rows/s | 462,680,064 B |
+| pilot run-b | 30.178 s | 331.37 rows/s | 355.43 rows/s | 484,073,472 B |
+| final | 899.249 s | 278.01 rows/s | 318.50 rows/s | 3,044,659,200 B |
 
-The final run spent 118.731 seconds in AST construction, 101.365 seconds parsing, 25.853 seconds
-rendering display text, 24.196 seconds rendering LaTeX, 6.057 seconds writing shards, 2.902 seconds
-assigning splits, and 265.380 seconds in final QA. The complete final run directory occupies
-633,974,116 bytes.
+The final run spent 113.649 seconds in AST construction, 102.237 seconds parsing, 25.294 seconds
+rendering display text, 23.915 seconds rendering LaTeX, 4.826 seconds writing shards, 2.721 seconds
+assigning splits, and 264.133 seconds in final QA. The stable publishable final payload occupies
+81,050,479 bytes, including 68,753,910 bytes of Parquet data. Resumable SQLite state occupies
+552,923,136 bytes separately; the zero-byte immutable lease and mutable owner metadata are not
+publication payloads.
 
 ## Exact commands
 
@@ -313,8 +317,6 @@ memory/disk preflight, production generation, manifest/checksum validation, and 
 
 ## Caveats
 
-- The current artifacts are provisional because the working tree was dirty. Regenerate from the
-  reviewed clean commit before archival or publication.
 - The optional LaTeX parser was unavailable; its 64 deterministic audit rows remain explicitly
   unavailable. This does not affect successful LaTeX generation and validation for all rows.
 - The configured multiplication-by-one rate is exactly at its cap. The runner retained 645 rejected

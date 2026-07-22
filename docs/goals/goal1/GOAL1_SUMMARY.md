@@ -7,9 +7,9 @@ The final family quotas were generated without redistribution, and all six appro
 trigonometric and hyperbolic operators occur in the accepted corpus. There is no remaining Goal 1
 operator or family blocker.
 
-The current artifacts were produced from an uncommitted working tree and are therefore
-**provisional**. They are suitable for local integration and review, but the same deterministic
-pipeline should be rerun from the reviewed clean commit before archival or publication.
+The authoritative artifacts were generated with a clean working tree from reviewed implementation
+commit `1a4def7e45cb0e987fee57d91d5f35c905df3f0d`. This documentation-only follow-up records the
+measured results without changing the pipeline fingerprint or corpus.
 
 ## Objective and clean-room boundary
 
@@ -114,15 +114,23 @@ final/run/
   duplicates.jsonl
   errors.jsonl
   qa.report.json
+  run.lease
+  run.lock.json
   run.metadata.json
   stage.result.json
 archive/
 ```
 
 The final run contains ten 25,000-row Zstandard-compressed Parquet shards: seven train shards and
-one shard for each other split. Its complete local footprint is 633,974,116 bytes, including
-68,753,910 bytes of Parquet data and 552,923,136 bytes of resumable SQLite state. Superseded runs
-are retained under `archive/` and are not authoritative.
+one shard for each other split. Its stable publishable payload is 81,050,479 bytes, including
+68,753,910 bytes of Parquet data. Resumable SQLite state occupies 552,923,136 bytes separately;
+the zero-byte immutable lease and mutable owner metadata are excluded from publication bundles.
+Superseded runs are retained under `archive/` and are not authoritative.
+
+The last provisional active artifact is preserved at
+`archive/pre-final-integrity-hardening-20260722/final/run/`. It has the same canonical corpus
+content but predates the final provenance, cap-history, redirect, and lease-safety audit and is not
+an accepted publication artifact.
 
 The first complete 250,000-row attempt is retained at
 `archive/pre-corpus-cap-enforcement-20260722/final/run/`. Its corpus hash was
@@ -136,12 +144,12 @@ hidden.
 
 | Stage | Attempted | Finalized | Duplicates | Corpus-cap rejections | QA | Elapsed | Accepted throughput | Peak RSS |
 |---|---:|---:|---:|---:|---|---:|---:|---:|
-| development | 1,028 | 1,000 | 28 | 0 | pass | 28.275 s | 35.37 rows/s | 248,791,040 B |
-| pilot run-a | 10,726 | 10,000 | 726 | 0 | pass | 73.938 s | 135.25 rows/s | 471,089,152 B |
-| pilot run-b | 10,726 | 10,000 | 726 | 0 | pass | 31.001 s | 322.57 rows/s | 518,287,360 B |
-| final | 286,413 | 250,000 | 35,768 | 645 | pass | 912.419 s | 274.00 rows/s | 2,949,906,432 B |
+| development | 1,028 | 1,000 | 28 | 0 | pass | 27.735 s | 36.06 rows/s | 245,137,408 B |
+| pilot run-a | 10,726 | 10,000 | 726 | 0 | pass | 72.745 s | 137.47 rows/s | 462,680,064 B |
+| pilot run-b | 10,726 | 10,000 | 726 | 0 | pass | 30.178 s | 331.37 rows/s | 484,073,472 B |
+| final | 286,413 | 250,000 | 35,768 | 645 | pass | 899.249 s | 278.01 rows/s | 3,044,659,200 B |
 
-The final stage spent 628.988 seconds before manifest completion and 265.380 seconds in complete
+The final stage spent 620.293 seconds before manifest completion and 264.133 seconds in complete
 manifest-backed QA. It recorded zero unsupported, policy, parse, AST, display, LaTeX-render,
 round-trip, or storage failures. The exact candidate conservation equation is
 `286,413 = 250,000 accepted + 35,768 duplicates + 645 cap rejections`.
@@ -152,11 +160,11 @@ round-trip, or storage failures. The exact candidate conservation equation is
 |---|---|
 | development canonical corpus | `8218c02f037790ada351ed073dd4c6a19a332d5156d591e9ad1c4a0f2738709c` |
 | pilot canonical corpus, both runs | `df4f3d74157cea022d0b335669c619ab16291372a3c0542dbcc06289cdbfb90c` |
-| pilot normalized manifest/checksum payload, both runs | `3a356ba60e46059a796bfc00b356e33dcd1d8f485fa43cfdde9d7eace9816e61` |
-| pilot combined deterministic payload, both runs | `54e40382406b0d033fc5ecb089ca98268e1a678b577b0bd78727a36467d8e682` |
+| pilot normalized manifest/checksum payload, both runs | `02252cf48820e5acf4ea47316c7dab0fbcf18ac699b6adb1dba2020b5d847609` |
+| pilot combined deterministic payload, both runs | `82c85eae1a91e915f8d07c88ad350b66cd82a2119a2480fa9c46269291028cfb` |
 | final canonical corpus | `d591706fb52c13bb15de96f36538f09b34178ee3faa0527ed38100cd4544cc5f` |
-| final corpus-manifest file | `24db8100aafcfc98fc35eb370d302224bf15ebd5d22bfdf81c1a652e2b5ddecb` |
-| final QA-report file | `19bf891499aa78e2ce69ade696a2f04a6180e90291cfbfca0311d21f51c1721a` |
+| final corpus-manifest file | `77fce5779b3d2c2f3cdf2b9f49da54cd14474d37ab128337bdf4fcc52afd4f0d` |
+| final QA-report file | `979cd3b73041ea5453135fabadc71302c5bb97f7100167a4c30ef80912698118` |
 
 The pilot comparison reported no differences. The final manifest validates all ten shard checksums,
 250,000 unique expression IDs, 250,000 unique authoritative sources, and no cross-split identity.
@@ -185,9 +193,7 @@ rejected and retained to enforce that ceiling. Full distributions and rejection 
   verification evidence.
 - Corpus-level triviality caps are enforced in deterministic candidate order. The 645 rejected
   candidates and their replacement outcomes remain auditable rather than being hidden.
-- A run created from an uncommitted working tree is provisional. The final frozen corpus should be
-  regenerated from the reviewed clean commit before archival/publication.
 
-Goals 2 and 3 may use the QA-passing local final manifest for integration work. Archival,
-publication, and long-lived scientific references should use the deterministic regeneration from
-the reviewed clean commit, not this provisional artifact.
+Goals 2 and 3 may use the QA-passing final manifest for integration work. Archival, publication,
+and long-lived scientific references should use this clean-commit deterministic artifact and its
+published checksums.
