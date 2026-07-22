@@ -14,7 +14,60 @@ from geml.eml.compiler_core import (
     eml_zero,
     require_compiler_mode,
 )
-from geml.eml.ir import EMLTerm, One
+from geml.eml.ir import EML, EMLTerm, One, Variable
+from geml.eml.validate import validate_pure_eml
+
+__all__ = (
+    "eml_decimal",
+    "eml_divide",
+    "eml_integer",
+    "eml_inverse",
+    "eml_multiply",
+    "eml_power",
+    "eml_rational",
+)
+
+
+def _clone_tree(root: EMLTerm) -> EMLTerm:
+    """Copy every syntactic occurrence without preserving object sharing."""
+
+    copies: list[EMLTerm] = []
+    events: list[tuple[EMLTerm, bool]] = [(root, False)]
+    while events:
+        node, leaving = events.pop()
+        if leaving:
+            right = copies.pop()
+            left = copies.pop()
+            copies.append(EML(left, right))
+        elif isinstance(node, One):
+            copies.append(One())
+        elif isinstance(node, Variable):
+            copies.append(Variable(node.name))
+        else:
+            events.append((node, True))
+            events.append((node.right, False))
+            events.append((node.left, False))
+    return copies[0]
+
+
+def _fresh_tree(root: EMLTerm) -> EMLTerm:
+    """Validate a public operand and expand it into a strict tree."""
+
+    validate_pure_eml(root)
+    return _clone_tree(root)
+
+
+def _inverse_formula(value: EMLTerm, *, mode: CompilerMode) -> EMLTerm:
+    return eml_exp(eml_negate(eml_log(value), mode=mode))
+
+
+def _multiply_formula(
+    left: EMLTerm,
+    right: EMLTerm,
+    *,
+    mode: CompilerMode,
+) -> EMLTerm:
+    return eml_exp(eml_add(eml_log(left), eml_log(right), mode=mode))
 
 
 def eml_inverse(
@@ -25,7 +78,7 @@ def eml_inverse(
     """Compile ``1 / value`` with the official construction."""
 
     require_compiler_mode(mode)
-    return eml_exp(eml_negate(eml_log(value), mode=mode))
+    return _inverse_formula(_fresh_tree(value), mode=mode)
 
 
 def eml_multiply(
@@ -37,7 +90,7 @@ def eml_multiply(
     """Compile ordered binary multiplication."""
 
     require_compiler_mode(mode)
-    return eml_exp(eml_add(eml_log(left), eml_log(right), mode=mode))
+    return _multiply_formula(_fresh_tree(left), _fresh_tree(right), mode=mode)
 
 
 def eml_divide(
@@ -49,7 +102,13 @@ def eml_divide(
     """Compile ordered division."""
 
     require_compiler_mode(mode)
-    return eml_multiply(numerator, eml_inverse(denominator, mode=mode), mode=mode)
+    numerator_tree = _fresh_tree(numerator)
+    denominator_tree = _fresh_tree(denominator)
+    return _multiply_formula(
+        numerator_tree,
+        _inverse_formula(denominator_tree, mode=mode),
+        mode=mode,
+    )
 
 
 def eml_power(
@@ -66,7 +125,9 @@ def eml_power(
     """
 
     require_compiler_mode(mode)
-    return eml_exp(eml_multiply(exponent, eml_log(base), mode=mode))
+    base_tree = _fresh_tree(base)
+    exponent_tree = _fresh_tree(exponent)
+    return eml_exp(_multiply_formula(exponent_tree, eml_log(base_tree), mode=mode))
 
 
 def eml_integer(
@@ -92,8 +153,11 @@ def eml_integer(
     while remaining > 0:
         if remaining & 1:
             accumulator = term if accumulator is None else eml_add(accumulator, term, mode=mode)
-        term = eml_add(term, term, mode=mode)
         remaining >>= 1
+        # The pinned loop computes one final double that can never reach the
+        # result. Omit only that discarded expansion; returned trees are exact.
+        if remaining:
+            term = eml_add(_clone_tree(term), _clone_tree(term), mode=mode)
     if accumulator is None:  # pragma: no cover - positive input always sets it
         raise RuntimeError("integer compiler failed to initialize its accumulator")
     return accumulator
@@ -123,7 +187,11 @@ def eml_rational(
 
     absolute = eml_integer(abs(numerator), mode=mode)
     divisor = eml_integer(denominator, mode=mode)
-    result = eml_multiply(absolute, eml_inverse(divisor, mode=mode), mode=mode)
+    result = _multiply_formula(
+        absolute,
+        _inverse_formula(divisor, mode=mode),
+        mode=mode,
+    )
     return result if numerator >= 0 else eml_negate(result, mode=mode)
 
 
@@ -139,8 +207,8 @@ def eml_decimal(
     """
 
     require_compiler_mode(mode)
-    if isinstance(value, bool):
-        raise TypeError("decimal value cannot be bool")
+    if isinstance(value, bool) or not isinstance(value, (str, Decimal, float)):
+        raise TypeError("decimal value must be str, Decimal, or float")
     try:
         decimal = value if isinstance(value, Decimal) else Decimal(str(value))
     except (InvalidOperation, ValueError) as error:

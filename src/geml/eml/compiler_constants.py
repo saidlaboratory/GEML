@@ -1,12 +1,19 @@
-"""Internal official constants fully lowered to primitive ``1``.
+"""Exact-number facade and internal compiler constants.
 
-These helpers support official compiler formulas.  They do not approve ``E``,
-``pi``, or ``I`` as source-corpus leaves; that remains registry policy.
+The public exact-number constructors are authoritative re-exports from
+``compiler_arithmetic``.  The internal helpers support existing official
+compiler formulas; they do not approve ``E``, ``pi``, or ``I`` as source leaves.
 """
 
 from __future__ import annotations
 
-from geml.eml.compiler_arithmetic import eml_divide, eml_integer, eml_multiply
+from geml.eml.compiler_arithmetic import (
+    eml_decimal,
+    eml_divide,
+    eml_integer,
+    eml_multiply,
+    eml_rational,
+)
 from geml.eml.compiler_core import (
     CompilerMode,
     eml_exp,
@@ -15,6 +22,15 @@ from geml.eml.compiler_core import (
     require_compiler_mode,
 )
 from geml.eml.ir import EMLTerm, One
+
+__all__ = (
+    "eml_decimal",
+    "eml_integer",
+    "eml_internal_e",
+    "eml_internal_i_branch",
+    "eml_internal_pi",
+    "eml_rational",
+)
 
 
 def eml_internal_e() -> EMLTerm:
