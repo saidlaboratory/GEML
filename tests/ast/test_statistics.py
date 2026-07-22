@@ -1,57 +1,121 @@
-"""tests/ast/test_statistics.py - owned by [1-6]."""
-import sympy as sp
-from geml.parsing.srepr import ExpressionRecord
-from geml.ast.builder import to_ast
-from geml.ast.statistics import ast_stats, structural_signature
+"""Exact statistics, invariant, and structural-signature tests."""
+
+from __future__ import annotations
+
+import re
+
+import pytest
+
+from geml.ast.builder import build_ast
+from geml.ast.statistics import (
+    ASTStructureError,
+    calculate_statistics,
+    recompute_statistics,
+    structural_signature,
+)
+from geml.contracts.ast import ASTEdge, ASTNode, ASTStatistics
+from geml.contracts.corpus import CorpusSplit
+from geml.contracts.expression import ExpressionRecord
 
 
-def test_spec_example_add_stats():
-    """Spec sec 2.2/2.3: x+y -> 3 nodes, depth 1, 2 edges."""
-    x, y = sp.symbols("x y")
-    ast = to_ast(ExpressionRecord.from_expr("e1", x + y).parse())
-    assert ast_stats(ast) == {
-        "node_count": 3, "edge_count": 2, "leaf_count": 2,
-        "operator_count": 1, "depth": 1,
-    }
+def _record(source: str, expression_id: str = "c" * 64) -> ExpressionRecord:
+    return ExpressionRecord(
+        expression_id=expression_id,
+        sympy_srepr=source,
+        display_text="fixture",
+        split=CorpusSplit.TRAIN,
+        operator_family="fixture",
+        domain_mode="safe_real",
+        variables=("x",),
+        target_ast_size=1,
+        target_depth=0,
+        generator_seed=1,
+        generator_metadata={},
+    )
 
 
-def test_leaf_depth_is_zero():
-    x = sp.Symbol("x")
-    ast = to_ast(ExpressionRecord.from_expr("e2", x).parse())
-    assert ast_stats(ast)["depth"] == 0
+def test_leaf_depth_is_zero_and_statistics_use_frozen_contract() -> None:
+    tree = build_ast(_record("Symbol('x', real=True)"))
+    assert tree.statistics == ASTStatistics(
+        node_count=1,
+        edge_count=0,
+        leaf_count=1,
+        operator_count=0,
+        depth=0,
+    )
+    assert recompute_statistics(tree) == tree.statistics
 
 
-def test_duplicate_subtree_stats_match_spec():
-    """Spec sec 2.2: (x+1)(x+1) -> 7 nodes, depth 2, 6 edges."""
-    x = sp.Symbol("x")
-    e = sp.Mul(x + 1, x + 1, evaluate=False)
-    ast = to_ast(ExpressionRecord.from_expr("e3", e).parse())
-    stats = ast_stats(ast)
-    assert stats["node_count"] == 7
-    assert stats["depth"] == 2
-    assert stats["edge_count"] == 6
+def test_nested_statistics_are_exact() -> None:
+    tree = build_ast(_record("Add(Symbol('x', real=True), Mul(Rational(1, 2), exp(Integer(1))))"))
+    assert tree.statistics == ASTStatistics(
+        node_count=6,
+        edge_count=5,
+        leaf_count=3,
+        operator_count=3,
+        depth=3,
+    )
 
 
-def test_same_srepr_same_signature():
-    """Acceptance criterion: same srepr always produces the same structural signature."""
-    x = sp.Symbol("x")
-    rec = ExpressionRecord.from_expr("e4", sp.Mul(x + 1, x + 1, evaluate=False))
-    sig_a = structural_signature(to_ast(rec.parse()))
-    sig_b = structural_signature(to_ast(rec.parse()))
-    assert sig_a == sig_b
+def test_signature_is_stable_ordered_and_expression_id_independent() -> None:
+    first = build_ast(_record("Pow(Symbol('x', real=True), Integer(2))", "a" * 64))
+    same_structure = build_ast(_record("Pow(Symbol('x', real=True), Integer(2))", "b" * 64))
+    reversed_operands = build_ast(_record("Pow(Integer(2), Symbol('x', real=True))", "a" * 64))
+
+    signature = structural_signature(first)
+    assert re.fullmatch(r"[0-9a-f]{64}", signature)
+    assert signature == "ff0049794fc6ce60573d71d35a785a65a10aa78c50365357e57ead6a2eda9bed"
+    assert signature == structural_signature(same_structure)
+    assert signature != structural_signature(reversed_operands)
 
 
-def test_different_structure_different_signature():
-    """Structurally different expressions must not collide on signature."""
-    x = sp.Symbol("x")
-    ast1 = to_ast(ExpressionRecord.from_expr("e5", x + 1).parse())
-    ast2 = to_ast(ExpressionRecord.from_expr("e6", x * 1).parse())
-    assert structural_signature(ast1) != structural_signature(ast2)
+def test_signature_preserves_symbol_assumptions_and_escaped_names() -> None:
+    real = build_ast(_record("Symbol('a,b', real=True)"))
+    positive = build_ast(_record("Symbol('a,b', positive=True)"))
+    other_name = build_ast(_record("Symbol('a', real=True)"))
+
+    assert structural_signature(real) != structural_signature(positive)
+    assert structural_signature(real) != structural_signature(other_name)
+
+    surrogate = build_ast(_record("Symbol('\\ud800', real=True)"))
+    surrogate_signature = structural_signature(surrogate)
+    assert re.fullmatch(r"[0-9a-f]{64}", surrogate_signature)
+    assert surrogate_signature == structural_signature(surrogate)
 
 
-def test_operand_order_affects_signature():
-    """Left/right operand order must be preserved - not canonicalized away."""
-    x = sp.Symbol("x")
-    pow1 = to_ast(ExpressionRecord.from_expr("e7", sp.Pow(x, 2, evaluate=False)).parse())
-    pow2 = to_ast(ExpressionRecord.from_expr("e8", sp.Pow(2, x, evaluate=False)).parse())
-    assert structural_signature(pow1) != structural_signature(pow2)
+def test_statistics_reject_missing_slots() -> None:
+    nodes = (
+        ASTNode(node_id="root", node_kind="operator", label="add", arity=2),
+        ASTNode(node_id="left", node_kind="leaf", label="integer", arity=0, value=1),
+        ASTNode(node_id="orphan", node_kind="leaf", label="integer", arity=0, value=2),
+    )
+    edges = (ASTEdge(source_id="root", target_id="left", child_slot=0),)
+    with pytest.raises(ASTStructureError, match="arity"):
+        calculate_statistics(nodes, edges, "root")
+
+
+def test_statistics_reject_unreachable_cyclic_component() -> None:
+    nodes = (
+        ASTNode(node_id="root", node_kind="leaf", label="integer", arity=0, value=1),
+        ASTNode(node_id="a", node_kind="operator", label="exp", arity=1),
+        ASTNode(node_id="b", node_kind="operator", label="log", arity=1),
+    )
+    edges = (
+        ASTEdge(source_id="a", target_id="b", child_slot=0),
+        ASTEdge(source_id="b", target_id="a", child_slot=0),
+    )
+    with pytest.raises(ASTStructureError, match="unreachable"):
+        calculate_statistics(nodes, edges, "root")
+
+
+def test_statistics_reject_multiple_parents() -> None:
+    repeated_nodes = (
+        ASTNode(node_id="root", node_kind="operator", label="add", arity=2),
+        ASTNode(node_id="leaf", node_kind="leaf", label="integer", arity=0, value=1),
+    )
+    repeated_edges = (
+        ASTEdge(source_id="root", target_id="leaf", child_slot=0),
+        ASTEdge(source_id="root", target_id="leaf", child_slot=1),
+    )
+    with pytest.raises(ASTStructureError, match="multiple parents"):
+        calculate_statistics(repeated_nodes, repeated_edges, "root")

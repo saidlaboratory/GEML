@@ -1,83 +1,154 @@
-"""
-builder.py - turns a parsed sympy expr into our tree format.
+"""Deterministic construction of frozen binary AST contracts from stored srepr."""
 
-owned by 1-6
-
-trig update from Sahil: 1-3's registry does include trig, but it's
-disabled for now, so we're NOT marking trig as approved or building
-fixtures for it yet. sticking with the current op list below until
-that flips.
-
-TODO(Sahil): once 1-2/1-3 actually merge, swap SUPPORTED_BINARY/UNARY
-and ASTNode below for the real frozen versions, this is still just a
-placeholder
-"""
 from __future__ import annotations
-import sympy as sp
-from geml.parsing.srepr import UnsupportedNodeError
 
-# placeholder op list, not the real registry yet
-SUPPORTED_BINARY = ("Add", "Mul")
-SUPPORTED_UNARY = ("Pow", "Log", "Exp", "Neg")
+from dataclasses import dataclass, field
 
+from pydantic import JsonValue
 
-class ASTNode:
-    # temp shape, will get replaced by whatever 1-2 locks in
-    __slots__ = ("op", "children", "value")
+from geml.ast.statistics import calculate_statistics
+from geml.contracts.ast import ASTEdge, ASTNode, ASTTree
+from geml.contracts.expression import ExpressionRecord
+from geml.parsing.srepr import (
+    ParsedSreprNode,
+    ParserLimits,
+    parse_expression_record,
+)
 
-    def __init__(self, op: str, children: tuple["ASTNode", ...] = (), value=None):
-        self.op = op
-        self.children = children
-        self.value = value
-
-    def __repr__(self):
-        # readable printing, e.g. Add(x, 1) instead of <object at 0x...>
-        if self.op in ("Var", "Const"):
-            return f"{self.value}"
-        return f"{self.op}({', '.join(repr(c) for c in self.children)})"
-
-
-def _fold_left(op_name: str, args: tuple[sp.Expr, ...]) -> ASTNode:
-    # sympy gives us x+y+z as one flat Add with 3 args, but our tree is
-    # strictly binary. fold left to right so it's always the same
-    # shape for the same input - (x+y) then +z, not the other way
-    nodes = [to_ast(a) for a in args]
-    acc = nodes[0]
-    for nxt in nodes[1:]:
-        acc = ASTNode(op_name, (acc, nxt))
-    return acc
+_OPERATOR_LABELS = {
+    "Add": "add",
+    "Mul": "multiply",
+    "Pow": "power",
+    "exp": "exp",
+    "log": "log",
+}
+_DEFAULT_LIMITS = ParserLimits()
 
 
-def to_ast(expr: sp.Expr) -> ASTNode:
-    if expr.is_Symbol:
-        return ASTNode("Var", value=str(expr))
+@dataclass(frozen=True)
+class _BinaryNode:
+    node_kind: str
+    label: str
+    value: JsonValue = None
+    children: tuple[_BinaryNode, ...] = ()
+    metadata: dict[str, JsonValue] = field(default_factory=dict)
 
-    if expr.is_Integer or expr.is_Number:
-        return ASTNode("Const", value=expr)
 
-    if expr.func == sp.Add:
-        return _fold_left("Add", expr.args)
+def _fold_left(constructor: str, children: tuple[_BinaryNode, ...]) -> _BinaryNode:
+    source_arity = len(children)
+    accumulated = children[0]
+    for fold_step, child in enumerate(children[1:], start=1):
+        accumulated = _BinaryNode(
+            node_kind="operator",
+            label=_OPERATOR_LABELS[constructor],
+            children=(accumulated, child),
+            metadata={
+                "sympy_constructor": constructor,
+                "binary_fold": "left",
+                "source_arity": source_arity,
+                "fold_step": fold_step,
+            },
+        )
+    return accumulated
 
-    if expr.func == sp.Mul:
-        # sympy stores -x as Mul(-1, x) under the hood. want this as
-        # an actual Neg node instead since that's in our op list
-        if len(expr.args) == 2 and expr.args[0] == sp.Integer(-1):
-            return ASTNode("Neg", (to_ast(expr.args[1]),))
-        return _fold_left("Mul", expr.args)
 
-    if expr.func == sp.Pow:
-        base, exponent = expr.args  # order matters, x^2 != 2^x
-        return ASTNode("Pow", (to_ast(base), to_ast(exponent)))
+def _to_binary(node: ParsedSreprNode) -> _BinaryNode:
+    if node.constructor == "Symbol":
+        return _BinaryNode(
+            node_kind="leaf",
+            label="symbol",
+            value={"name": node.value, "assumptions": dict(node.assumptions)},
+            metadata={"sympy_constructor": "Symbol"},
+        )
+    if node.constructor == "Integer":
+        return _BinaryNode(
+            node_kind="leaf",
+            label="one" if node.value == 1 else "integer",
+            value=node.value,
+            metadata={"sympy_constructor": "Integer"},
+        )
+    if node.constructor == "Rational":
+        numerator, denominator = node.value  # type: ignore[misc]
+        return _BinaryNode(
+            node_kind="leaf",
+            label="rational",
+            value={"numerator": numerator, "denominator": denominator},
+            metadata={"sympy_constructor": "Rational"},
+        )
 
-    if expr.func == sp.log:
-        (arg,) = expr.args
-        return ASTNode("Log", (to_ast(arg),))
+    children = tuple(_to_binary(child) for child in node.children)
+    if node.constructor in {"Add", "Mul"}:
+        return _fold_left(node.constructor, children)
+    return _BinaryNode(
+        node_kind="operator",
+        label=_OPERATOR_LABELS[node.constructor],
+        children=children,
+        metadata={"sympy_constructor": node.constructor},
+    )
 
-    if expr.func == sp.exp:
-        (arg,) = expr.args
-        return ASTNode("Exp", (to_ast(arg),))
 
-    # anything else = explicit error, not a guess
-    raise UnsupportedNodeError(
-        f"unsupported: {expr.func} in {expr} (not in the op list yet, pending 1-3)"
+def build_ast_from_parsed(parsed: ParsedSreprNode, *, expression_id: str) -> ASTTree:
+    """Build stable pre-order nodes and ordered edges from validated syntax."""
+
+    binary_root = _to_binary(parsed)
+    nodes: list[ASTNode] = []
+    edges: list[ASTEdge] = []
+    node_ids: dict[int, str] = {}
+    events: list[tuple[str, _BinaryNode, int, _BinaryNode | None]] = [
+        ("visit", binary_root, -1, None)
+    ]
+    while events:
+        action, node, child_slot, child = events.pop()
+        if action == "edge":
+            if child is None:  # pragma: no cover - internal event invariant
+                raise RuntimeError("edge event requires a child")
+            edges.append(
+                ASTEdge(
+                    source_id=node_ids[id(node)],
+                    target_id=node_ids[id(child)],
+                    child_slot=child_slot,
+                )
+            )
+            continue
+
+        node_id = f"n{len(nodes):06d}"
+        node_ids[id(node)] = node_id
+        nodes.append(
+            ASTNode(
+                node_id=node_id,
+                node_kind=node.node_kind,
+                label=node.label,
+                arity=len(node.children),
+                value=node.value,
+                metadata=node.metadata,
+            )
+        )
+        for slot in reversed(range(len(node.children))):
+            child = node.children[slot]
+            # LIFO events reproduce the former recursive ordering: the complete child subtree is
+            # emitted before its parent edge, with left slots preceding right slots.
+            events.append(("edge", node, slot, child))
+            events.append(("visit", child, -1, None))
+
+    root_id = node_ids[id(binary_root)]
+    statistics = calculate_statistics(nodes, edges, root_id)
+    return ASTTree(
+        expression_id=expression_id,
+        root_id=root_id,
+        nodes=tuple(nodes),
+        edges=tuple(edges),
+        statistics=statistics,
+    )
+
+
+def build_ast(
+    record: ExpressionRecord,
+    *,
+    limits: ParserLimits = _DEFAULT_LIMITS,
+) -> ASTTree:
+    """Parse and build one authoritative stored expression."""
+
+    return build_ast_from_parsed(
+        parse_expression_record(record, limits=limits),
+        expression_id=record.expression_id,
     )
