@@ -1,67 +1,153 @@
-"""
-splits.py - deterministic train/validation/IID-test/OOD-test assignment
+"""Deterministic semantic assignment to the four frozen corpus splits."""
 
-owned by 1-5
-
-real target counts are 175k/25k/25k/25k (250k total), but the actual
-function takes split_sizes as a param so tests can use tiny numbers
-instead of the real corpus size
-"""
 from __future__ import annotations
+
+import hashlib
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-import random
+from types import MappingProxyType
 
-from geml.data.storage.dedup import ExpressionRecord
+from geml.contracts.corpus import (
+    FINAL_CORPUS_SPLIT_COUNTS,
+    FINAL_CORPUS_TOTAL_COUNT,
+    CorpusSplit,
+)
+from geml.contracts.expression import ExpressionRecord
 
-# real corpus target - used by the actual 250k run, not by tests
-GOAL1_SPLIT_SIZES = {
-    "train": 175_000,
-    "validation": 25_000,
-    "iid_test": 25_000,
-    "ood_test": 25_000,
-}
-
-
-class SplitSizeMismatchError(ValueError):
-    """raised when the record count doesn't exactly match the sum of
-    split_sizes - per spec, this should fail loud, not silently drop or
-    pad rows to make the counts work"""
+GOAL1_SPLIT_SIZES = FINAL_CORPUS_SPLIT_COUNTS
+_IID_SPLIT_ORDER = (
+    CorpusSplit.TRAIN,
+    CorpusSplit.VALIDATION,
+    CorpusSplit.TEST_IID,
+)
 
 
-@dataclass
-class SplitResult:
-    splits: dict[str, list[ExpressionRecord]]
+class SplitAssignmentError(ValueError):
+    """Input records cannot satisfy the requested semantic split policy."""
+
+
+class SplitSizeMismatchError(SplitAssignmentError):
+    """Input population size differs from the exact requested split total."""
+
+
+@dataclass(frozen=True)
+class SplitAssignment:
+    """Immutable assigned records in canonical split order."""
+
+    records_by_split: Mapping[CorpusSplit, tuple[ExpressionRecord, ...]]
     seed: int
+
+    @property
+    def total_count(self) -> int:
+        return sum(len(records) for records in self.records_by_split.values())
+
+    def iter_records(self) -> Iterable[ExpressionRecord]:
+        for split in (*_IID_SPLIT_ORDER, CorpusSplit.TEST_OOD):
+            yield from self.records_by_split[split]
+
+
+def _validated_counts(
+    split_sizes: Mapping[CorpusSplit | str, int],
+) -> Mapping[CorpusSplit, int]:
+    counts: dict[CorpusSplit, int] = {}
+    for raw_split, count in split_sizes.items():
+        try:
+            split = raw_split if isinstance(raw_split, CorpusSplit) else CorpusSplit(raw_split)
+        except ValueError as error:
+            raise SplitAssignmentError(f"unknown corpus split: {raw_split!r}") from error
+        if split in counts:
+            raise SplitAssignmentError(f"duplicate split count for {split.value!r}")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise SplitAssignmentError(
+                f"split count for {split.value!r} must be a nonnegative integer"
+            )
+        counts[split] = count
+
+    required = set(CorpusSplit)
+    if set(counts) != required:
+        missing = sorted(split.value for split in required - set(counts))
+        raise SplitAssignmentError(f"split counts must name every frozen split; missing={missing}")
+    return MappingProxyType(counts)
+
+
+def _assignment_key(record: ExpressionRecord, seed: int) -> tuple[bytes, str]:
+    payload = f"geml-split-v1\0{seed}\0{record.expression_id}".encode()
+    return hashlib.sha256(payload).digest(), record.expression_id
 
 
 def assign_splits(
-    records: list[ExpressionRecord],
-    split_sizes: dict[str, int],
+    records: Iterable[ExpressionRecord],
+    split_sizes: Mapping[CorpusSplit | str, int] = GOAL1_SPLIT_SIZES,
+    *,
     seed: int = 42,
-) -> SplitResult:
+    ood_operator_families: tuple[str, ...] = ("ood_stress",),
+) -> SplitAssignment:
+    """Assign exact counts while keeping OOD-stress expressions out of IID splits.
+
+    Assignment depends only on the seed and stable expression identities, never input
+    order or Python's process-randomized ``hash()``.
     """
-    deterministically assigns every record to exactly one split, with
-    exact counts matching split_sizes. same records + same split_sizes
-    + same seed always produces the exact same assignment - shuffles a
-    COPY of the list (never touches the caller's original order) using
-    a seeded Random instance, then slices it up in a fixed split order.
-    """
-    total_requested = sum(split_sizes.values())
-    if total_requested != len(records):
+
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise SplitAssignmentError("split seed must be an integer")
+    if not ood_operator_families or any(not name.strip() for name in ood_operator_families):
+        raise SplitAssignmentError("ood_operator_families must contain nonblank names")
+    if len(set(ood_operator_families)) != len(ood_operator_families):
+        raise SplitAssignmentError("ood_operator_families must be unique")
+
+    counts = _validated_counts(split_sizes)
+    materialized = tuple(records)
+    requested_total = sum(counts.values())
+    if len(materialized) != requested_total:
         raise SplitSizeMismatchError(
-            f"got {len(records)} records but split_sizes wants exactly "
-            f"{total_requested} - these must match exactly, not "
-            f"approximately"
+            f"received {len(materialized)} records but exact split counts require {requested_total}"
+        )
+    expression_ids = [record.expression_id for record in materialized]
+    if len(set(expression_ids)) != len(expression_ids):
+        raise SplitAssignmentError("split input contains duplicate expression_id values")
+
+    ood_families = frozenset(ood_operator_families)
+    ood_records = tuple(record for record in materialized if record.operator_family in ood_families)
+    iid_records = tuple(
+        record for record in materialized if record.operator_family not in ood_families
+    )
+    if len(ood_records) != counts[CorpusSplit.TEST_OOD]:
+        raise SplitSizeMismatchError(
+            f"found {len(ood_records)} OOD records but test_ood requires "
+            f"{counts[CorpusSplit.TEST_OOD]}"
+        )
+    required_iid = sum(counts[split] for split in _IID_SPLIT_ORDER)
+    if len(iid_records) != required_iid:
+        raise SplitSizeMismatchError(
+            f"found {len(iid_records)} IID records but IID splits require {required_iid}"
         )
 
-    shuffled = list(records)
-    rng = random.Random(seed)
-    rng.shuffle(shuffled)
-
-    result: dict[str, list[ExpressionRecord]] = {}
+    sorted_iid = sorted(iid_records, key=lambda record: _assignment_key(record, seed))
+    sorted_ood = sorted(ood_records, key=lambda record: _assignment_key(record, seed))
+    assigned: dict[CorpusSplit, tuple[ExpressionRecord, ...]] = {}
     cursor = 0
-    for split_name, size in split_sizes.items():
-        result[split_name] = shuffled[cursor : cursor + size]
+    for split in _IID_SPLIT_ORDER:
+        size = counts[split]
+        assigned[split] = tuple(
+            record.model_copy(update={"split": split})
+            for record in sorted_iid[cursor : cursor + size]
+        )
         cursor += size
+    assigned[CorpusSplit.TEST_OOD] = tuple(
+        record.model_copy(update={"split": CorpusSplit.TEST_OOD}) for record in sorted_ood
+    )
+    return SplitAssignment(records_by_split=MappingProxyType(assigned), seed=seed)
 
-    return SplitResult(splits=result, seed=seed)
+
+def validate_final_split_counts(assignment: SplitAssignment) -> None:
+    """Raise when an assignment is not the frozen 250,000-record final layout."""
+
+    observed = {split: len(assignment.records_by_split.get(split, ())) for split in CorpusSplit}
+    if observed != dict(FINAL_CORPUS_SPLIT_COUNTS):
+        raise SplitSizeMismatchError(
+            f"final split counts must be {dict(FINAL_CORPUS_SPLIT_COUNTS)!r}; got {observed!r}"
+        )
+    if assignment.total_count != FINAL_CORPUS_TOTAL_COUNT:
+        raise SplitSizeMismatchError(
+            f"final corpus must contain exactly {FINAL_CORPUS_TOTAL_COUNT} records"
+        )

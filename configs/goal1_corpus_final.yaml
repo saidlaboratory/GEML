@@ -1,29 +1,47 @@
-# configs/goal1_corpus_final.yaml
-# owned by 1-5
-#
-# config for the real 250k corpus run. this file's own contents get
-# hashed into the manifest (config_hash) so it's traceable exactly
-# which settings produced a given corpus - not committed as production
-# output itself, just the settings used to produce it.
+schema_version: geml-corpus-v1
+corpus_id: geml-goal1-final-250k
+generator_seed: 20260721
 
 corpus:
   total_expressions: 250000
-  seed: 42
+  split_seed: 20260721
+  ood_operator_families:
+    - ood_stress
 
 splits:
   train: 175000
   validation: 25000
-  iid_test: 25000
-  ood_test: 25000
+  test_iid: 25000
+  test_ood: 25000
+
+deduplication:
+  identity_fields:
+    - domain_mode
+    - sympy_srepr
+  backend: sqlite
+  database_path: outputs/goal1/corpus/dedup.sqlite3
+  duplicate_audit_path: outputs/goal1/corpus/duplicates.jsonl
+  checkpoint_policy: after_atomic_shard_publication
 
 shards:
-  format: parquet          # primary format; jsonl available for debugging
-  min_rows: 10000
-  max_rows: 25000
-  resume: true             # skip shards that already exist on re-run
+  root: outputs/goal1/corpus
+  primary_format: parquet
+  debug_format: jsonl.gz
+  write_debug_shards: false
+  minimum_rows: 10000
+  maximum_rows: 25000
+  parquet_compression: zstd
+  checksum_algorithm: sha256
+  resume: true
 
-dedup:
-  method: srepr_hash        # canonical srepr, sha256-hashed for the seen-set
-
-manifest:
-  include_git_commit: true  # best-effort; falls back to null if unavailable
+manifests:
+  directory: outputs/goal1/corpus/manifests
+  corpus_filename: corpus.manifest.json
+  retain_duplicate_statistics: true
+  retain_rejection_statistics: true
+  include_git_commit_when_available: true
+  package_versions:
+    - geml
+    - pyarrow
+    - pydantic
+    - sympy
