@@ -1,8 +1,8 @@
 """Official primitive EML compiler constructions.
 
-``OFFICIAL_V4`` reproduces the pinned reference compiler byte for byte.
-``CLEAN_NEGATION`` applies the pinned companion compiler's corrected negation
-construction, which avoids the explicit ``Log[0]`` path in negation itself.
+``OFFICIAL_V4`` reproduces the seven pinned v4 construction formulas exactly.
+``CLEAN_NEGATION`` is a separately labeled, opt-in construction from the pinned
+companion compiler; it never changes the default official-v4 representation.
 """
 
 from __future__ import annotations
@@ -10,10 +10,11 @@ from __future__ import annotations
 from enum import StrEnum
 
 from geml.eml.ir import EML, EMLTerm, One
+from geml.eml.validate import validate_pure_eml
 
 
 class CompilerMode(StrEnum):
-    """Pinned official construction variant."""
+    """Explicitly labeled construction variant."""
 
     OFFICIAL_V4 = "official_v4"
     CLEAN_NEGATION = "clean_negation"
@@ -30,6 +31,8 @@ def require_compiler_mode(mode: CompilerMode) -> CompilerMode:
 def primitive(left: EMLTerm, right: EMLTerm) -> EML:
     """Construct the primitive ``eml(left, right)`` node."""
 
+    validate_pure_eml(left)
+    validate_pure_eml(right)
     return EML(left, right)
 
 
@@ -68,7 +71,7 @@ def eml_negate(
     *,
     mode: CompilerMode = CompilerMode.OFFICIAL_V4,
 ) -> EMLTerm:
-    """Compile negation under one explicit official construction mode."""
+    """Compile negation under one explicit, separately labeled mode."""
 
     require_compiler_mode(mode)
     if mode is CompilerMode.OFFICIAL_V4:
@@ -76,9 +79,10 @@ def eml_negate(
 
     # Official ``eml_compiler_clean_math_v0.py`` construction.  Its purpose is
     # specifically to remove the direct Log[0] route from the negation macro.
-    e = eml_exp(One())
-    e_minus_one = eml_subtract(e, One())
-    one_plus_value = eml_subtract(e, eml_subtract(e_minus_one, value))
+    e_for_offset = eml_exp(One())
+    e_minus_one = eml_subtract(e_for_offset, One())
+    e_for_sum = eml_exp(One())
+    one_plus_value = eml_subtract(e_for_sum, eml_subtract(e_minus_one, value))
     return eml_subtract(One(), one_plus_value)
 
 
@@ -88,7 +92,6 @@ def eml_add(
     *,
     mode: CompilerMode = CompilerMode.OFFICIAL_V4,
 ) -> EMLTerm:
-    """Compile ordered binary addition without adding an ``Add`` node."""
+    """Compile ordered addition without introducing an ``Add`` node."""
 
-    require_compiler_mode(mode)
     return eml_subtract(left, eml_negate(right, mode=mode))
