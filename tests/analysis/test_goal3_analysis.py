@@ -1,228 +1,723 @@
-"""tests/analysis/test_goal3_analysis.py - owned by 3-7. tiny fixtures only."""
-import inspect
+"""Tiny-fixture tests for reproducible Goal 3 artifact analysis."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import UTC, datetime
+from fractions import Fraction
+from pathlib import Path
+
+import pyarrow as pa
+import pytest
+import yaml
+
+import geml.analysis.goal3.metrics as goal3_metrics
+from geml.analysis.goal3.failures import OutcomeMiner
 from geml.analysis.goal3.metrics import (
-    AnalysisRow, stratify_by_family, stratify_by_split, analyze_reuse,
+    RATIO_NAMES,
+    AnalysisArtifactError,
+    AnalysisRow,
+    ReusePattern,
+    StratificationAxis,
+    analyze_goal3_artifacts,
+    save_analysis,
 )
-from geml.analysis.goal3.failures import (
-    top_by_compression_ratio, top_by_final_alpha, top_failures, classify_dual,
+from geml.contracts.corpus import CorpusSplit
+from geml.contracts.expression import ExpressionRecord
+from geml.data.storage.manifests import (
+    build_corpus_manifest,
+    build_split_manifest,
+    write_manifest_bundle,
 )
-from geml.plots.goal3 import ScalePoint, build_stability_curve, stability_delta, missing_checkpoints
-from geml.graph.schema import Graph, GraphNode, ChildRef
+from geml.data.storage.shards import write_shards
+from geml.experiments.goal3.run import (
+    Goal3Stage,
+    process_expression_record,
+    run_goal3_stage,
+)
+from geml.experiments.goal3.runtime import Goal3ArtifactError, sha256_file
+from geml.plots.goal3 import (
+    STANDARD_SCALE_CHECKPOINTS,
+    PlotDataError,
+    build_runtime_curve,
+    missing_checkpoints,
+    plot_data_payload,
+    stability_deltas,
+)
+
+_RATIO_ORIENTATION = (
+    "raw=eml_tree/ast_tree;dag_tree=eml_dag/ast_tree;"
+    "dag_dag=eml_dag/ast_dag;ast_compression=ast_tree/ast_dag;"
+    "eml_compression=eml_tree/eml_dag"
+)
 
 
-def _row(expr_id, status="success", family=None, split=None, **metric_overrides):
-    base_metrics = {
-        "raw_tree_alpha": 1.5, "dag_alpha_vs_ast_tree": 1.5, "dag_alpha_vs_ast_dag": 1.5,
-        "ast_compression": 1.0, "eml_compression": 1.0,
-    }
-    base_metrics.update(metric_overrides)
-    return AnalysisRow(
-        expression_id=expr_id, status=status, family=family, split=split,
-        metrics=base_metrics if status == "success" else None,
+def _expression_id(srepr: str, domain: str = "safe_real") -> str:
+    payload = f"geml-expression-v1\0{domain}\0{srepr}".encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _record(
+    index: int,
+    *,
+    split: CorpusSplit = CorpusSplit.TRAIN,
+    family: str = "algebraic_core",
+    domain: str = "safe_real",
+    srepr: str | None = None,
+    operator_counts: dict[str, int] | None = None,
+    target_ast_size: int = 3,
+    target_depth: int = 1,
+) -> ExpressionRecord:
+    source = srepr or f"Add(Symbol('x', real=True), Integer({index + 2}))"
+    return ExpressionRecord(
+        expression_id=_expression_id(source, domain),
+        sympy_srepr=source,
+        display_text=f"fixture-{index}",
+        latex_text=None,
+        split=split,
+        operator_family=family,
+        domain_mode=domain,
+        variables=("x",),
+        target_ast_size=target_ast_size,
+        target_depth=target_depth,
+        generator_seed=100 + index,
+        generator_metadata={
+            "operator_counts": operator_counts or {"add": 1, "integer": 1, "symbol": 1},
+            "fixture": "goal3-analysis",
+        },
     )
 
 
-# ---------------------------------------------------------------------
-# stratification + honest denominators
-# ---------------------------------------------------------------------
-
-def test_stratify_reports_both_denominators():
-    rows = [
-        _row("e1", family="exp"),
-        _row("e2", family="exp"),
-        _row("e3", status="failure", family="exp"),
-        _row("e4", family="ln"),
-    ]
-    by_family = stratify_by_family(rows)
-    assert by_family["exp"].all_processed_count == 3
-    assert by_family["exp"].valid_count == 2
-    assert by_family["ln"].all_processed_count == 1
-    assert by_family["ln"].valid_count == 1
+def _processed_mapping(
+    index: int,
+    **record_arguments: object,
+) -> dict[str, object]:
+    record = _record(index, **record_arguments)
+    return process_expression_record(
+        record,
+        shard_id=f"fixture-shard-{index}",
+        shard_path=f"data/fixture-{index}.parquet",
+        input_row_index=index,
+    )
 
 
-def test_stratify_mean_only_computed_over_valid_rows():
-    rows = [
-        _row("e1", family="exp", dag_alpha_vs_ast_tree=2.0),
-        _row("e2", family="exp", dag_alpha_vs_ast_tree=4.0),
-        _row("e3", status="failure", family="exp"),  # must not pull the mean toward 0/None
-    ]
-    stats = stratify_by_family(rows)["exp"]
-    assert stats.mean_dag_alpha_vs_ast_tree == 3.0  # (2.0+4.0)/2, not divided by 3
+def _set_ratio(
+    row: dict[str, object],
+    name: str,
+    numerator: int,
+    denominator: int,
+) -> None:
+    value = Fraction(numerator, denominator)
+    row[f"{name}_numerator"] = str(value.numerator)
+    row[f"{name}_denominator"] = str(value.denominator)
+    row[f"{name}_exact"] = f"{value.numerator}/{value.denominator}"
+    row[f"{name}_value"] = float(value)
 
 
-def test_stratify_group_with_no_valid_rows_reports_none_not_crash():
-    rows = [_row("e1", status="failure", family="broken")]
-    stats = stratify_by_family(rows)["broken"]
-    assert stats.valid_count == 0
-    assert stats.mean_dag_alpha_vs_ast_tree is None
+def _set_reuse(
+    row: dict[str, object],
+    prefix: str,
+    *,
+    nodes: int,
+    references: int,
+    overhead: int,
+    maximum: int,
+    depth_sum: int,
+    concentration_numerator: int,
+    concentration_denominator: int,
+) -> None:
+    row[f"{prefix}_reused_node_count"] = nodes
+    row[f"{prefix}_reused_reference_count"] = references
+    row[f"{prefix}_child_reference_overhead"] = overhead
+    row[f"{prefix}_max_reuse_count"] = maximum
+    row[f"{prefix}_reuse_depth_sum"] = depth_sum
+    row[f"{prefix}_reuse_depth_count"] = nodes
+    row[f"{prefix}_mean_reuse_depth"] = float(Fraction(depth_sum, nodes)) if nodes else None
+    _set_ratio(
+        row,
+        f"{prefix}_sharing_concentration",
+        concentration_numerator,
+        concentration_denominator,
+    )
 
 
-def test_stratify_by_split_groups_independently_of_family():
-    rows = [_row("e1", family="exp", split="train"), _row("e2", family="ln", split="train")]
-    by_split = stratify_by_split(rows)
-    assert by_split["train"].all_processed_count == 2
+def _analysis_rows() -> list[dict[str, object]]:
+    first = _processed_mapping(0)
+    second = _processed_mapping(
+        1,
+        split=CorpusSplit.VALIDATION,
+        family="exp_log",
+        domain="positive_real",
+        srepr="exp(Symbol('x', positive=True))",
+        operator_counts={"exp": 1, "symbol": 1},
+        target_ast_size=99,
+        target_depth=99,
+    )
+    third = _processed_mapping(
+        2,
+        split=CorpusSplit.TEST_IID,
+        family="trig_hyperbolic",
+        srepr="sin(Symbol('x', real=True))",
+        operator_counts={"sin": 1, "symbol": 1},
+    )
+    failure = _processed_mapping(
+        3,
+        split=CorpusSplit.TEST_OOD,
+        family="ood_stress",
+        domain="nonzero_real",
+        srepr="DefinitelyNotValid(",
+        operator_counts={"symbol": 1},
+    )
+    assert all(row["status"] == "success" for row in (first, second, third))
+    assert failure["status"] == "failure"
+
+    # Exact values make the compression and remaining-alpha winners diverge.
+    _set_ratio(first, "eml_compression", 10, 1)
+    _set_ratio(first, "dag_alpha_vs_ast_tree", 4, 1)
+    _set_ratio(second, "eml_compression", 6, 5)
+    _set_ratio(second, "dag_alpha_vs_ast_tree", 1, 1)
+    _set_ratio(third, "eml_compression", 3, 1)
+    _set_ratio(third, "dag_alpha_vs_ast_tree", 3, 2)
+
+    _set_reuse(
+        first,
+        "ast_dag",
+        nodes=0,
+        references=0,
+        overhead=0,
+        maximum=0,
+        depth_sum=0,
+        concentration_numerator=0,
+        concentration_denominator=1,
+    )
+    _set_reuse(
+        first,
+        "eml_dag",
+        nodes=2,
+        references=5,
+        overhead=3,
+        maximum=3,
+        depth_sum=7,
+        concentration_numerator=2,
+        concentration_denominator=3,
+    )
+    for row in (second, third):
+        for prefix in ("ast_dag", "eml_dag"):
+            _set_reuse(
+                row,
+                prefix,
+                nodes=0,
+                references=0,
+                overhead=0,
+                maximum=0,
+                depth_sum=0,
+                concentration_numerator=0,
+                concentration_denominator=1,
+            )
+    return [first, second, third, failure]
 
 
-# ---------------------------------------------------------------------
-# reuse/sharing analysis on real graphs
-# ---------------------------------------------------------------------
+def _telemetry() -> tuple[dict[str, object], ...]:
+    return (
+        {
+            "telemetry_scope": (
+                "input read excluded; direct row processing, Parquet construction, "
+                "and process-tree RSS sampling included"
+            ),
+            "processing_wall_seconds": 2.0,
+            "peak_resident_memory_bytes": 120,
+            "progress_samples": [
+                {
+                    "global_processed_count": 1,
+                    "shard_processed_count": 1,
+                    "processing_wall_seconds": 0.5,
+                    "peak_resident_memory_bytes": 90,
+                },
+                {
+                    "global_processed_count": 2,
+                    "shard_processed_count": 2,
+                    "processing_wall_seconds": 2.0,
+                    "peak_resident_memory_bytes": 120,
+                },
+            ],
+        },
+        {
+            "telemetry_scope": (
+                "input read excluded; direct row processing, Parquet construction, "
+                "and process-tree RSS sampling included"
+            ),
+            "processing_wall_seconds": 1.0,
+            "peak_resident_memory_bytes": 100,
+            "progress_samples": [
+                {
+                    "global_processed_count": 3,
+                    "shard_processed_count": 1,
+                    "processing_wall_seconds": 0.4,
+                    "peak_resident_memory_bytes": 100,
+                },
+                {
+                    "global_processed_count": 4,
+                    "shard_processed_count": 2,
+                    "processing_wall_seconds": 1.0,
+                    "peak_resident_memory_bytes": 100,
+                },
+            ],
+        },
+    )
 
-def _shared_graph() -> Graph:
-    """(x+1)*(x+1) as a DAG - mul's two children both point at the same add node."""
-    nodes = {
-        "mul": GraphNode("mul", family="ast", kind="Mul", children=(ChildRef(0, "add"), ChildRef(1, "add"))),
-        "add": GraphNode("add", family="ast", kind="Add", children=(ChildRef(0, "x"), ChildRef(1, "one"))),
-        "x": GraphNode("x", family="ast", kind="Var", value="x"),
-        "one": GraphNode("one", family="ast", kind="Const", value=1),
+
+def _patch_public_readers(
+    monkeypatch: pytest.MonkeyPatch,
+    manifest_path: Path,
+    rows: list[dict[str, object]],
+    *,
+    chunked: bool,
+) -> None:
+    success_count = sum(row["status"] == "success" for row in rows)
+    failure_count = len(rows) - success_count
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "stage": "final",
+                "processed_count": len(rows),
+                "success_count": success_count,
+                "failure_count": failure_count,
+                "summary": {"path": "summary.json"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifest_path.parent / "summary.json").write_text(
+        json.dumps({"science_fingerprint": "a" * 64}),
+        encoding="utf-8",
+    )
+
+    def tables(_path):
+        if chunked:
+            yield pa.Table.from_pylist(rows[:1])
+            yield pa.Table.from_pylist(rows[1:3])
+            yield pa.Table.from_pylist(rows[3:])
+        else:
+            yield pa.Table.from_pylist(rows)
+
+    monkeypatch.setattr(goal3_metrics, "iter_metric_tables", tables)
+    monkeypatch.setattr(
+        goal3_metrics,
+        "iter_shard_telemetry",
+        lambda _path: iter(_telemetry()),
+    )
+
+
+def test_row_adapter_uses_pinned_reuse_definitions() -> None:
+    mapping = _analysis_rows()[0]
+    row = AnalysisRow.from_mapping(mapping)
+
+    assert row.reuse_pattern is ReusePattern.EML_ONLY
+    assert row.metrics is not None
+    assert row.metrics.ast_reuse.reused_reference_count == 0
+    assert row.metrics.ast_reuse.max_reuse_indegree == 0
+    assert row.metrics.ast_reuse.sharing_concentration == 0
+    assert row.metrics.eml_reuse.reused_node_count == 2
+    assert row.metrics.eml_reuse.reused_reference_count == 5
+    assert row.metrics.eml_reuse.excess_reference_count == 3
+    assert row.metrics.eml_reuse.child_reference_overhead == 3
+    assert row.metrics.eml_reuse.max_reuse_indegree == 3
+    assert row.metrics.eml_reuse.reuse_depth_sum == 7
+    assert row.metrics.eml_reuse.sharing_concentration == Fraction(2, 3)
+
+
+def test_row_adapter_rejects_inconsistent_reuse_accounting() -> None:
+    mapping = _analysis_rows()[0]
+    mapping["eml_dag_child_reference_overhead"] = 4
+
+    with pytest.raises(AnalysisArtifactError, match="accounting disagree"):
+        AnalysisRow.from_mapping(mapping)
+
+
+def test_analysis_stratifies_exact_metrics_and_retains_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = _analysis_rows()
+    manifest = tmp_path / "manifest.json"
+    _patch_public_readers(monkeypatch, manifest, rows, chunked=True)
+
+    report = analyze_goal3_artifacts(
+        manifest,
+        scale_checkpoints=(2, 4),
+        ranking_limit=2,
+    )
+
+    assert report.overall.all_processed_count == 4
+    assert report.overall.valid_count == 3
+    assert report.overall.failure_count == 1
+    assert report.overall.ratio_mean("eml_compression").fraction == Fraction(71, 15)
+    assert {table.axis for table in report.strata} == set(StratificationAxis)
+    strata = {table.axis: table for table in report.strata}
+    assert {group.key for group in strata[StratificationAxis.FAMILY].groups} == {
+        "algebraic_core",
+        "exp_log",
+        "trig_hyperbolic",
+        "ood_stress",
     }
-    return Graph(nodes=nodes, roots=("mul",))
-
-
-def test_analyze_reuse_detects_shared_subtree():
-    stats = analyze_reuse(_shared_graph())
-    assert stats.reused_subtree_count == 1
-    assert stats.max_reuse_count == 2
-    assert stats.child_reference_overhead == 1
-
-
-def test_analyze_reuse_no_sharing_case():
-    nodes = {
-        "add": GraphNode("add", family="ast", kind="Add", children=(ChildRef(0, "x"), ChildRef(1, "y"))),
-        "x": GraphNode("x", family="ast", kind="Var", value="x"),
-        "y": GraphNode("y", family="ast", kind="Var", value="y"),
+    assert "2" in {group.key for group in strata[StratificationAxis.ACTUAL_AST_SIZE].groups}
+    assert "99" not in {group.key for group in strata[StratificationAxis.ACTUAL_AST_SIZE].groups}
+    assert "<unavailable>" in {
+        group.key for group in strata[StratificationAxis.ACTUAL_AST_SIZE].groups
     }
-    g = Graph(nodes=nodes, roots=("add",))
-    stats = analyze_reuse(g)
-    assert stats.reused_subtree_count == 0
-    assert stats.sharing_concentration == 0.0
-    assert stats.child_reference_overhead == 0
+    eml_only = next(
+        group
+        for group in strata[StratificationAxis.REUSE_PATTERN].groups
+        if group.key == "eml_only"
+    )
+    assert eml_only.eml_reuse is not None
+    assert eml_only.eml_reuse.total_reused_reference_count == 5
+    assert eml_only.eml_reuse.total_excess_reference_count == 3
+    assert eml_only.eml_reuse.mean_reuse_depth.fraction == Fraction(7, 2)
+    assert report.outcomes.failure_count == 1
+    assert report.outcomes.failure_stage_counts == (("ast_build", 1),)
+    assert report.outcomes.processing_failures[0].error_message
+    assert (
+        report.outcomes.highest_compression[0].expression_id
+        != report.outcomes.lowest_remaining_alpha[0].expression_id
+    )
+    assert report.outcomes.structurally_competitive_count == 1
 
 
-# ---------------------------------------------------------------------
-# acceptance criterion: distinguish "compresses well" from "structurally competitive"
-# ---------------------------------------------------------------------
+def test_analysis_is_independent_of_table_chunking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = _analysis_rows()
+    manifest = tmp_path / "manifest.json"
+    _patch_public_readers(monkeypatch, manifest, rows, chunked=True)
+    chunked = analyze_goal3_artifacts(manifest, scale_checkpoints=(2, 4))
+    _patch_public_readers(monkeypatch, manifest, rows, chunked=False)
+    combined = analyze_goal3_artifacts(manifest, scale_checkpoints=(2, 4))
 
-def test_compression_and_final_alpha_rankings_can_diverge():
-    """the actual proof the two claims are kept separate - constructs a
-    case where they give opposite verdicts"""
+    assert chunked.fingerprint == combined.fingerprint
+    assert chunked.as_dict() == combined.as_dict()
+
+
+def test_runtime_and_stability_use_exact_cumulative_prefixes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = _analysis_rows()
+    manifest = tmp_path / "manifest.json"
+    _patch_public_readers(monkeypatch, manifest, rows, chunked=True)
+    report = analyze_goal3_artifacts(manifest, scale_checkpoints=(2, 4))
+
+    assert [point.processed_count for point in report.stability_curve] == [2, 4]
+    first, second = report.stability_curve
+    assert first.processing_wall_seconds == 2.0
+    assert first.throughput_rows_per_second == 1.0
+    assert first.peak_resident_memory_bytes == 120
+    assert second.processing_wall_seconds == 3.0
+    assert second.throughput_rows_per_second == pytest.approx(4 / 3)
+    assert second.peak_resident_memory_bytes == 120
+    assert second.processing_time_scope.startswith("input read excluded")
+    assert "worker descendants" in second.peak_memory_scope
+    assert first.valid_count == 2
+    assert second.valid_count == 3
+    assert second.failure_count == 1
+    assert second.ratio_mean("eml_compression").fraction == Fraction(71, 15)
+    assert len(stability_deltas(report.stability_curve, "eml_compression")) == 1
+    assert plot_data_payload(report.stability_curve)["x_axis"]["values"] == [2, 4]
+    assert STANDARD_SCALE_CHECKPOINTS == (10_000, 50_000, 100_000, 250_000)
+
+
+def test_missing_exact_runtime_checkpoint_is_not_substituted() -> None:
+    payload = _telemetry()[0]
+    runtime = build_runtime_curve((payload,))
+
+    assert missing_checkpoints(runtime, (1, 2, 3)) == (3,)
+    assert {point.processed_count for point in runtime} == {1, 2}
+
+
+def test_missing_checkpoint_causes_a_retained_analysis_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = _analysis_rows()
+    manifest = tmp_path / "manifest.json"
+    _patch_public_readers(monkeypatch, manifest, rows, chunked=False)
+    monkeypatch.setattr(
+        goal3_metrics,
+        "iter_shard_telemetry",
+        lambda _path: iter(_telemetry()[:1]),
+    )
+
+    with pytest.raises(PlotDataError, match="runtime=\\[4\\]"):
+        analyze_goal3_artifacts(manifest, scale_checkpoints=(2, 4))
+
+
+def test_all_failure_run_preserves_denominators_and_plot_gaps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     rows = [
-        _row("big_but_compresses", raw_tree_alpha=40.0, dag_alpha_vs_ast_tree=4.0, eml_compression=10.0),
-        _row("small_stays_small", raw_tree_alpha=1.5, dag_alpha_vs_ast_tree=1.2, eml_compression=1.2),
+        _processed_mapping(
+            index,
+            srepr=f"DefinitelyNotValid{index}(",
+            operator_counts={"symbol": 1},
+        )
+        for index in range(4)
     ]
-    best_compression = top_by_compression_ratio(rows)[0].expression_id
-    best_alpha = top_by_final_alpha(rows)[0].expression_id
-    assert best_compression == "big_but_compresses"
-    assert best_alpha == "small_stays_small"
-    assert best_compression != best_alpha  # genuinely different winners, not the same thing twice
+    assert all(row["status"] == "failure" for row in rows)
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    manifest = source_root / "manifest.json"
+    _patch_public_readers(monkeypatch, manifest, rows, chunked=True)
+
+    report = analyze_goal3_artifacts(manifest, scale_checkpoints=(2, 4))
+    payload = plot_data_payload(report.stability_curve)
+
+    assert report.overall.all_processed_count == 4
+    assert report.overall.valid_count == 0
+    assert report.overall.failure_count == 4
+    assert report.overall.ratio_means == ()
+    assert payload["metric_stability"]["eml_compression"]["exact"] == [None, None]
+    assert payload["metric_stability"]["eml_compression"]["valid_denominator"] == [0, 0]
+    with pytest.raises(PlotDataError, match="no valid-only denominator"):
+        stability_deltas(report.stability_curve, "eml_compression")
+    assert save_analysis(report, tmp_path / "analysis").manifest_path.is_file()
 
 
-def test_classify_dual_surfaces_compresses_well_but_not_competitive():
-    rows = [_row("big_but_compresses", dag_alpha_vs_ast_tree=4.0, eml_compression=10.0)]
-    claim = classify_dual(rows)[0]
-    assert claim.compresses_well is True
-    assert claim.structurally_competitive is False
+def test_rankings_use_exact_values_and_deterministic_ties() -> None:
+    first, second, third, _ = _analysis_rows()
+    _set_ratio(first, "eml_compression", 3, 1)
+    _set_ratio(second, "eml_compression", 3, 1)
+    _set_ratio(third, "eml_compression", 1, 1)
+    first_row = AnalysisRow.from_mapping(first)
+    second_row = AnalysisRow.from_mapping(second)
+    third_row = AnalysisRow.from_mapping(third)
+    miner = OutcomeMiner(limit=3)
+    for row in (second_row, third_row, first_row):
+        miner.add(row)
+    report = miner.finish()
 
-
-def test_classify_dual_both_false_case():
-    rows = [_row("neither", dag_alpha_vs_ast_tree=8.0, eml_compression=1.1)]
-    claim = classify_dual(rows)[0]
-    assert claim.compresses_well is False
-    assert claim.structurally_competitive is False
-
-
-def test_top_failures_never_crashes_on_missing_metrics():
-    rows = [_row("e1", status="failure")]
-    results = top_failures(rows)
-    assert len(results) == 1
-    assert results[0].expression_id == "e1"
-
-
-# ---------------------------------------------------------------------
-# reproducibility
-# ---------------------------------------------------------------------
-
-def test_stratify_is_reproducible():
-    rows = [_row("e1", family="exp"), _row("e2", family="ln")]
-    first = stratify_by_family(rows)
-    second = stratify_by_family(rows)
-    assert first["exp"].mean_dag_alpha_vs_ast_tree == second["exp"].mean_dag_alpha_vs_ast_tree
-
-
-def test_classify_dual_is_reproducible():
-    rows = [_row("e1", dag_alpha_vs_ast_tree=2.0, eml_compression=5.0)]
-    assert classify_dual(rows) == classify_dual(rows)
-
-
-# ---------------------------------------------------------------------
-# stability curves
-# ---------------------------------------------------------------------
-
-def test_stability_curve_sorted_ascending():
-    points = [
-        ScalePoint(50_000, 2.1, 5.0, 10, 5000, 100_000),
-        ScalePoint(10_000, 2.5, 4.5, 2, 5000, 20_000),
+    tied = [
+        result.expression_id for result in report.highest_compression if result.eml_compression == 3
     ]
-    curve = build_stability_curve(points)
-    assert [p.corpus_size for p in curve] == [10_000, 50_000]
+    assert tied == sorted(tied)
+    assert report.lowest_compression[0].expression_id == third_row.expression_id
+    assert report.lowest_compression[0].eml_compression == 1
+    assert report.lowest_remaining_alpha[0].remaining_alpha == 1
 
 
-def test_stability_delta_shrinks_when_converging():
-    points = [
-        ScalePoint(10_000, 2.5, 4.5, 2, 5000, 20_000),
-        ScalePoint(50_000, 2.1, 5.0, 10, 5000, 100_000),
-        ScalePoint(100_000, 2.0, 5.1, 20, 5000, 200_000),
-    ]
-    deltas = stability_delta(points, "mean_dag_alpha_vs_ast_tree")
-    assert abs(deltas[1][1]) < abs(deltas[0][1])  # second delta smaller - converging
+def _artifact_checksums(root: Path) -> dict[str, str]:
+    return {
+        path.relative_to(root).as_posix(): sha256_file(path)
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
 
 
-def test_missing_checkpoints_detected():
-    points = [ScalePoint(10_000, 2.5, 4.5, 2, 5000, 20_000)]
-    assert missing_checkpoints(points) == [50_000, 100_000, 250_000]
+def test_saving_is_deterministic_and_never_edits_source_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = _analysis_rows()
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    manifest = source_root / "manifest.json"
+    _patch_public_readers(monkeypatch, manifest, rows, chunked=True)
+    report = analyze_goal3_artifacts(manifest, scale_checkpoints=(2, 4))
+    before = _artifact_checksums(source_root)
+
+    output = tmp_path / "analysis"
+    first = save_analysis(report, output)
+    first_checksums = _artifact_checksums(output)
+    second = save_analysis(report, output)
+
+    assert first == second
+    assert _artifact_checksums(output) == first_checksums
+    assert _artifact_checksums(source_root) == before
+    saved_manifest = json.loads(first.manifest_path.read_text(encoding="utf-8"))
+    assert saved_manifest["analysis_fingerprint"] == report.fingerprint
+    assert {product["path"] for product in saved_manifest["products"]} == {
+        "metrics.table.json",
+        "outcomes.table.json",
+        "stability.plot-data.json",
+    }
+
+    with pytest.raises(AnalysisArtifactError, match="outside"):
+        save_analysis(report, source_root / "analysis")
 
 
-def test_no_missing_checkpoints_when_complete():
-    points = [
-        ScalePoint(10_000, 0, 0, 0, 0, 0), ScalePoint(50_000, 0, 0, 0, 0, 0),
-        ScalePoint(100_000, 0, 0, 0, 0, 0), ScalePoint(250_000, 0, 0, 0, 0, 0),
-    ]
-    assert missing_checkpoints(points) == []
+def test_cli_reports_upstream_artifact_errors_as_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_analysis(*_args: object, **_kwargs: object) -> None:
+        raise Goal3ArtifactError("invalid saved run")
+
+    monkeypatch.setattr(goal3_metrics, "analyze_goal3_artifacts", fail_analysis)
+
+    exit_code = goal3_metrics.main(
+        [
+            "--manifest",
+            str(tmp_path / "manifest.json"),
+            "--output-dir",
+            str(tmp_path / "analysis"),
+        ]
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.err)
+
+    assert exit_code == 2
+    assert payload == {
+        "passed": False,
+        "error_type": "Goal3ArtifactError",
+        "message": "invalid saved run",
+    }
 
 
-# ---------------------------------------------------------------------
-# acceptance criterion: no e-graph or motif claims anywhere in this code
-# ---------------------------------------------------------------------
+def _write_fixture_corpus(root: Path) -> Path:
+    records = (
+        _record(
+            0,
+            split=CorpusSplit.TRAIN,
+            srepr="Symbol('x', real=True)",
+            operator_counts={"symbol": 1},
+            target_ast_size=1,
+            target_depth=0,
+        ),
+        _record(
+            1,
+            split=CorpusSplit.VALIDATION,
+            srepr="Add(Symbol('x', real=True), Symbol('x', real=True))",
+            operator_counts={"add": 1, "symbol": 2},
+        ),
+        _record(
+            2,
+            split=CorpusSplit.TEST_IID,
+            family="exp_log",
+            srepr="exp(Symbol('x', real=True))",
+            operator_counts={"exp": 1, "symbol": 1},
+            target_ast_size=2,
+        ),
+        _record(
+            3,
+            split=CorpusSplit.TEST_OOD,
+            family="ood_stress",
+            domain="nonzero_real",
+            srepr="DefinitelyNotValid(",
+            operator_counts={"symbol": 1},
+        ),
+    )
+    run_root = root / "corpus"
+    source_config = root / "generator.yaml"
+    source_config.write_text("fixture: goal3-analysis\n", encoding="utf-8")
+    split_manifests = []
+    for split in CorpusSplit:
+        split_records = [record for record in records if record.split is split]
+        shards = write_shards(
+            split_records,
+            run_root / "data" / split.value,
+            corpus_id="goal3-analysis-fixture",
+            split=split,
+            schema_version="geml-corpus-v1",
+            minimum_rows=1,
+            maximum_rows=4,
+            allow_small_fixture=True,
+            manifest_root=run_root,
+        )
+        split_manifests.append(build_split_manifest(shards))
+    manifest = build_corpus_manifest(
+        split_manifests,
+        corpus_id="goal3-analysis-fixture",
+        schema_version="geml-corpus-v1",
+        config_path=source_config,
+        generator_seed=20260723,
+        git_commit="fixture",
+        created_at=datetime(2026, 7, 23, tzinfo=UTC),
+        package_names=("geml",),
+    )
+    return write_manifest_bundle(
+        manifest,
+        run_root / "manifests",
+        artifact_root=run_root,
+        config_path=source_config,
+    ).corpus_manifest
 
-def test_no_egraph_or_motif_claims_in_source():
-    """
-    concrete check for an otherwise-subjective acceptance criterion:
-    scans this issue's own owned modules for any FUNCTION, CLASS, or
-    FIELD name referencing e-graph/motif concepts. that's the actual
-    thing that would constitute a "claim" - a metric or type that
-    implies this module computes something about e-graphs or motifs.
 
-    prose explaining "this is NOT about motifs" is explicitly fine and
-    expected (see failures.py's own docstring) - a disclaimer isn't a
-    claim, it's the opposite. only checking identifiers, not comments,
-    keeps this test meaningful without being fragile against how the
-    disclaimer happens to be worded.
-    """
-    import geml.analysis.goal3.metrics as metrics_mod
-    import geml.analysis.goal3.failures as failures_mod
-    import geml.plots.goal3 as plots_mod
+def _write_runner_config(root: Path, corpus_manifest: Path) -> Path:
+    config = {
+        "schema_version": "geml-goal3-config-v1",
+        "output_root": (root / "goal3-run").as_posix(),
+        "compiler_mode": "official_v4",
+        "construction_path": "direct_hashcons",
+        "stages": {
+            "smoke": {
+                "manifest": corpus_manifest.as_posix(),
+                "source_label": "tiny_analysis_fixture",
+                "expected_count": 4,
+                "row_limit": None,
+            }
+        },
+        "input_validation": {
+            "require_manifest_sidecars": True,
+            "require_qa_pass": False,
+            "require_unique_expression_ids": True,
+        },
+        "processing": {
+            "worker_processes": 1,
+            "worker_batch_size": 1,
+            "worker_chunksize": 1,
+            "parquet_row_group_size": 2,
+            "resume": True,
+            "atomic_finalization": True,
+        },
+        "audit": {"require_ready": True},
+        "telemetry": {
+            "package_versions": ["geml", "mpmath", "psutil", "pyarrow", "sympy"],
+            "scale_checkpoints": [2, 4],
+        },
+        "scientific_metrics": {
+            "ratio_orientation": _RATIO_ORIENTATION,
+            "reuse_depth": "minimum_root_distance",
+            "sharing_concentration": "max_excess_reference_share",
+            "reused_reference_count": "sum_indegrees_of_reused_nodes",
+            "max_reuse_count": "maximum_reused_node_indegree",
+            "child_reference_overhead": "sum_excess_references",
+        },
+    }
+    path = root / "goal3-analysis.yaml"
+    path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    return path
 
-    forbidden = ("egraph", "e_graph", "motif")
 
-    for module in (metrics_mod, failures_mod, plots_mod):
-        for name, obj in vars(module).items():
-            if name.startswith("_"):
-                continue
-            lowered = name.lower()
-            for term in forbidden:
-                assert term not in lowered, f"{module.__name__}.{name} references {term!r}"
-            if inspect.isclass(obj) and hasattr(obj, "__dataclass_fields__"):
-                for field_name in obj.__dataclass_fields__:
-                    for term in forbidden:
-                        assert term not in field_name.lower(), (
-                            f"{module.__name__}.{name}.{field_name} references {term!r}"
-                        )
+def test_analysis_reproduces_from_real_validated_tiny_artifacts(
+    tmp_path: Path,
+) -> None:
+    corpus_manifest = _write_fixture_corpus(tmp_path)
+    config = _write_runner_config(tmp_path, corpus_manifest)
+    run = run_goal3_stage(config, Goal3Stage.SMOKE)
+    before = _artifact_checksums(run.output_root)
+
+    first = analyze_goal3_artifacts(run.manifest_path, scale_checkpoints=(2, 4))
+    second = analyze_goal3_artifacts(run.manifest_path, scale_checkpoints=(2, 4))
+    saved = save_analysis(first, tmp_path / "analysis-output")
+
+    assert first.fingerprint == second.fingerprint
+    assert first.overall.all_processed_count == 4
+    assert first.overall.valid_count == 3
+    assert first.overall.failure_count == 1
+    assert [point.processed_count for point in first.stability_curve] == [2, 4]
+    assert len(first.outcomes.processing_failures) == 1
+    assert saved.manifest_path.is_file()
+    assert _artifact_checksums(run.output_root) == before
+
+
+def test_ratio_names_are_complete_and_claims_remain_separate() -> None:
+    assert RATIO_NAMES == (
+        "raw_tree_alpha",
+        "dag_alpha_vs_ast_tree",
+        "dag_alpha_vs_ast_dag",
+        "ast_compression",
+        "eml_compression",
+    )
