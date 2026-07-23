@@ -44,7 +44,6 @@ FORBIDDEN_IN_SAFE_MODE = ("log(exp", "exp(log", "log product", "exp sum")
 
 
 def _limits(**overrides: int) -> SaturationLimits:
-    """Return small deterministic saturation limits."""
     defaults = {"max_iterations": 12, "max_egraph_nodes": 2000, "timeout_seconds": 30}
     defaults.update(overrides)
     return SaturationLimits(resources=ResourceLimits(**defaults))
@@ -70,7 +69,6 @@ def _run(
 
 
 def _equivalent(graph: EGraph, root: EClassId, expression: Expr) -> bool:
-    """Return whether ``expression`` already lies in the same e-class as ``root``."""
     return graph.find(root) == graph.find(graph.add(expression))
 
 
@@ -405,6 +403,5 @@ class TestProvenanceAndTermination:
     ],
 )
 def test_bounded_exact_folding_table(expression: Expr, expected: Fraction):
-    """Small folding cases produce exact rational results."""
     graph, root, _ = _run(expression)
     assert constant_value(graph, root) == expected

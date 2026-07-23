@@ -1,24 +1,10 @@
 """Branch-insensitive rewrite rules for the GEML e-graph.
 
-Every rule in this module is valid for all real values of its pattern variables, with one
-explicitly fenced exception: the guarded power identities, which carry a nonzero-base
-assumption and are therefore disabled in ``SAFE_REAL`` mode.
-
-What is deliberately **absent** matters as much as what is present.  None of the following
-appear here, because each is branch sensitive or needs a domain assumption, and they belong
-to :mod:`geml.egraph.rules_domain`:
-
-* ``log(exp(x)) -> x``
-* ``exp(log(x)) -> x``
-* ``log(x*y) -> log(x) + log(y)``
-* ``exp(a + b) -> exp(a) * exp(b)``
-* ``x / x -> 1``
-
-Constant folding is *bounded exact*.  Folding uses :class:`fractions.Fraction` throughout,
-so ``1/3`` stays ``1/3`` and never becomes a binary float, and an applier refuses any
-result whose numerator or denominator exceeds a declared digit bound rather than letting a
-saturating e-graph grow unbounded integers.  A refusal is reported through the provenance
-log as an unsupported application, never dropped.
+Every rule is valid for all real values, except the guarded power identities (nonzero base),
+which are disabled in ``SAFE_REAL`` mode. The branch-sensitive identities log(exp(x)),
+exp(log(x)), log(x*y), exp(a+b), and x/x are deliberately absent; they live in
+:mod:`geml.egraph.rules_domain`. Constant folding is exact (Fraction) and bounded: a result
+past the digit bound or an undefined case is declined and recorded, never dropped.
 """
 
 from __future__ import annotations
@@ -64,28 +50,20 @@ _N = PatternVar("n", kind=VarKind.CONSTANT)
 
 
 def _literal(value: int | str) -> PatternNode:
-    """Return a pattern matching one exact constant."""
     return PatternNode(op=Operator.CONSTANT, payload=Fraction(value))
 
 
 def _node(op: Operator, *children: Pattern) -> PatternNode:
-    """Return an operator pattern node."""
     return PatternNode(op=op, children=children)
 
 
 @dataclass(frozen=True, slots=True)
 class ExactBound:
-    """A digit bound keeping constant folding finite.
-
-    Equality saturation applied to folding rules can otherwise manufacture arbitrarily
-    large exact rationals, so a fold whose result exceeds the bound is declined and
-    reported rather than stored.
-    """
+    """A digit bound keeping constant folding finite; oversize results are declined."""
 
     max_digits: int = 32
 
     def permits(self, value: Fraction) -> bool:
-        """Return whether ``value`` is small enough to store."""
         return (
             len(str(abs(value.numerator))) <= self.max_digits
             and len(str(value.denominator)) <= self.max_digits
@@ -108,22 +86,15 @@ _MAX_FOLDED_EXPONENT = 64
 
 @dataclass(frozen=True, slots=True)
 class NonZeroGuard:
-    """Guard requiring that a bound e-class is provably nonzero.
-
-    "Provably" means one of exactly two things: the class denotes a nonzero exact constant,
-    or it denotes a variable the caller explicitly declared nonzero.  Nothing is inferred
-    from syntax.
-    """
+    """Guard passing only for a nonzero exact constant or a variable declared nonzero."""
 
     variable: str
 
     @property
     def name(self) -> str:
-        """Return the guard identifier recorded on rejection."""
         return f"nonzero({self.variable})"
 
     def __call__(self, egraph: EGraph, substitution: Substitution, context: RewriteContext) -> bool:
-        """Return whether the bound class is known to be nonzero."""
         eclass = substitution[self.variable]
         value = constant_value(egraph, eclass)
         if value is not None:
@@ -138,12 +109,7 @@ class NonZeroGuard:
 
 @dataclass(frozen=True, slots=True)
 class ConstantFoldApplier:
-    """Replaces an operator applied to exact constants with the exact result.
-
-    The applier reads only the constants bound by the match, evaluates with
-    :class:`fractions.Fraction`, and refuses rather than approximating whenever the
-    operation is undefined, non-rational, or larger than :class:`ExactBound` allows.
-    """
+    """Replaces an operator over exact constants with the result, or declines with a reason."""
 
     operation: FoldOperation
     variables: tuple[str, ...]
@@ -151,13 +117,11 @@ class ConstantFoldApplier:
 
     @property
     def required_variables(self) -> frozenset[str]:
-        """Return the constant variables this applier reads."""
         return frozenset(self.variables)
 
     def __call__(
         self, egraph: EGraph, substitution: Substitution, context: RewriteContext
     ) -> ApplierResult:
-        """Fold the bound constants, or decline with a reason."""
         values: list[Fraction] = []
         for name in self.variables:
             value = constant_value(egraph, substitution[name])
@@ -201,7 +165,6 @@ def _evaluate(operation: FoldOperation, values: list[Fraction]) -> tuple[Fractio
 
 
 def _always_safe(rule_id: str, name: str, justification: str) -> RulePolicy:
-    """Return a policy for a universally valid identity."""
     return RulePolicy(
         rule_id=rule_id,
         name=name,
@@ -217,7 +180,6 @@ def _always_safe(rule_id: str, name: str, justification: str) -> RulePolicy:
 def _guarded(
     rule_id: str, name: str, justification: str, assumptions: frozenset[str]
 ) -> RulePolicy:
-    """Return a policy for an identity requiring a declared assumption."""
     return RulePolicy(
         rule_id=rule_id,
         name=name,
@@ -373,7 +335,6 @@ def _fold(
     operation: FoldOperation,
     variables: tuple[str, ...],
 ) -> RewriteRule:
-    """Build a bounded-exact constant folding rule."""
     return RewriteRule(
         policy=_always_safe(rule_id, name, justification),
         lhs=lhs,

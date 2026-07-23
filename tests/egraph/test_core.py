@@ -31,7 +31,6 @@ from geml.egraph.union_find import UnionFind, UnknownEClassError
 
 
 def _tiny_limits(**overrides: int) -> ResourceLimits:
-    """Return small deterministic limits suitable for unit tests."""
     defaults = {"max_iterations": 100, "max_egraph_nodes": 200, "timeout_seconds": 5}
     defaults.update(overrides)
     return ResourceLimits(**defaults)

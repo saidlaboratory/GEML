@@ -1,9 +1,4 @@
-"""Tests for the guarded, domain-restricted rule library.
-
-The central claim these tests defend is that safe mode is unaffected by this module and
-that positive-real formal mode changes behaviour only when the caller has declared the
-required assumption.
-"""
+"""Tests for the guarded, domain-restricted rule library."""
 
 from __future__ import annotations
 
@@ -48,7 +43,6 @@ SPEC_PATH = Path(__file__).resolve().parents[2] / "docs" / "specs" / "EGRAPH_DOM
 
 
 def _limits(**overrides: int) -> SaturationLimits:
-    """Return small deterministic saturation limits."""
     defaults = {"max_iterations": 8, "max_egraph_nodes": 3000, "timeout_seconds": 30}
     defaults.update(overrides)
     return SaturationLimits(resources=ResourceLimits(**defaults))
@@ -74,7 +68,6 @@ def _run(
 
 
 def _equivalent(graph: EGraph, root: EClassId, expression: Expr) -> bool:
-    """Return whether ``expression`` already lies in the same e-class as ``root``."""
     return graph.find(root) == graph.find(graph.add(expression))
 
 

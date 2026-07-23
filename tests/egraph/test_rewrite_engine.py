@@ -1,8 +1,4 @@
-"""Tests for pattern matching, provenance, and bounded saturation.
-
-The rules used here are deliberately artificial placeholders.  Real algebraic identities
-belong to the safe and domain rule libraries; this file only exercises the machinery.
-"""
+"""Tests for pattern matching, provenance, and bounded saturation, using placeholder rules."""
 
 from __future__ import annotations
 
@@ -73,14 +69,12 @@ BOTH_MODES = frozenset({RewriteMode.SAFE_REAL, RewriteMode.POSITIVE_REAL_FORMAL}
 
 
 def _limits(**overrides: int) -> SaturationLimits:
-    """Return small deterministic saturation limits."""
     defaults = {"max_iterations": 20, "max_egraph_nodes": 400, "timeout_seconds": 30}
     defaults.update(overrides)
     return SaturationLimits(resources=ResourceLimits(**defaults))
 
 
 def _policy(rule_id: str, **overrides: object) -> RulePolicy:
-    """Return a test rule policy enabled in every mode by default."""
     fields: dict[str, object] = {
         "rule_id": rule_id,
         "name": rule_id.lower(),
@@ -93,7 +87,6 @@ def _policy(rule_id: str, **overrides: object) -> RulePolicy:
 
 
 def _p(op: Operator, *children: object, payload: object = None) -> PatternNode:
-    """Build a pattern node concisely."""
     return PatternNode(op=op, children=tuple(children), payload=payload)  # type: ignore[arg-type]
 
 
@@ -573,11 +566,9 @@ class _AlwaysReject:
 
     @property
     def name(self) -> str:
-        """Return the guard identifier."""
         return "always-reject"
 
     def __call__(self, egraph: EGraph, substitution: Substitution, context: RewriteContext) -> bool:
-        """Refuse the match."""
         return False
 
 
@@ -586,11 +577,9 @@ class _AlwaysAccept:
 
     @property
     def name(self) -> str:
-        """Return the guard identifier."""
         return "always-accept"
 
     def __call__(self, egraph: EGraph, substitution: Substitution, context: RewriteContext) -> bool:
-        """Permit the match."""
         return True
 
 
@@ -599,7 +588,6 @@ class _AlwaysDecline:
 
     @property
     def required_variables(self) -> frozenset[str]:
-        """Return no requirements."""
         return frozenset()
 
     def __call__(
@@ -610,6 +598,5 @@ class _AlwaysDecline:
 
 
 def test_protocols_are_satisfied_by_the_test_doubles():
-    """The test doubles really do implement the engine protocols."""
     assert isinstance(_AlwaysReject(), Guard)
     assert isinstance(_AlwaysDecline(), Applier)

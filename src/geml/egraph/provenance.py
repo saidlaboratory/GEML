@@ -1,14 +1,7 @@
-"""Append-only provenance for every rewrite the engine considers.
+"""Append-only provenance for every rewrite the engine attempts.
 
-Goal 4 requires that an optimization run be reconstructable after the fact.  That is only
-possible if the log records *attempts*, not just successes: a rule that matched but was
-rejected by its guard, or that produced a term the e-graph already contained, is evidence
-about the run and must survive.  The reporting denominator defined by the rewrite policy
-is attempted rewrites, so this module never discards a record.
-
-Each record names the rule, its safety tier, the rewrite mode in force, the direction the
-rule was applied in, the guard outcome, the assumptions the rule depended on, whether the
-identity is branch sensitive, and the e-classes involved.
+The log records attempts, not just successes: guard rejections and no-op applications are
+retained so the reporting denominator stays "attempted rewrites". Nothing is discarded.
 """
 
 from __future__ import annotations
@@ -22,11 +15,7 @@ from geml.egraph.policy import RewriteMode, RuleTier
 
 
 class RewriteDirection(StrEnum):
-    """Which orientation of a rule was applied.
-
-    A bidirectional rule is expanded into two directed rules, so a record always names one
-    concrete orientation rather than an ambiguous "either way".
-    """
+    """Which orientation of a rule was applied."""
 
     FORWARD = "forward"
     BACKWARD = "backward"
@@ -43,9 +32,7 @@ class GuardOutcome(StrEnum):
 class ApplicationOutcome(StrEnum):
     """What happened once a match was found.
 
-    ``APPLIED`` means the rewrite equated two previously distinct e-classes.
-    ``NO_CHANGE`` means the right-hand side was built but the e-graph already knew the
-    equality, which is the normal signal that saturation is approaching a fixed point.
+    ``NO_CHANGE`` means the right-hand side was built but the equality was already known.
     """
 
     APPLIED = "applied"
@@ -77,7 +64,6 @@ class RewriteRecord:
 
     @property
     def applied(self) -> bool:
-        """Return whether this record changed the e-graph."""
         return self.outcome is ApplicationOutcome.APPLIED
 
 
@@ -87,11 +73,9 @@ class ProvenanceLog:
     __slots__ = ("_records",)
 
     def __init__(self) -> None:
-        """Create an empty log."""
         self._records: list[RewriteRecord] = []
 
     def __len__(self) -> int:
-        """Return how many attempts have been recorded."""
         return len(self._records)
 
     def record(
@@ -135,11 +119,9 @@ class ProvenanceLog:
 
     @property
     def records(self) -> tuple[RewriteRecord, ...]:
-        """Return every recorded attempt in order."""
         return tuple(self._records)
 
     def records_for(self, rule_id: str) -> tuple[RewriteRecord, ...]:
-        """Return every attempt made by one rule, in order."""
         return tuple(record for record in self._records if record.rule_id == rule_id)
 
     def attempt_counts(self) -> dict[str, int]:
@@ -159,14 +141,12 @@ class ProvenanceLog:
         return counts
 
     def outcome_counts(self) -> dict[ApplicationOutcome, int]:
-        """Return how many attempts ended in each outcome."""
         counts: dict[ApplicationOutcome, int] = dict.fromkeys(ApplicationOutcome, 0)
         for record in self._records:
             counts[record.outcome] += 1
         return counts
 
     def branch_sensitive_records(self) -> tuple[RewriteRecord, ...]:
-        """Return every attempt that involved a branch-sensitive identity."""
         return tuple(record for record in self._records if record.branch_sensitive)
 
     def assumptions_used(self) -> frozenset[str]:

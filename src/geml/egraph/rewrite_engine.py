@@ -1,22 +1,9 @@
 """Bounded equality saturation over the GEML e-graph.
 
-This module supplies the *machinery* for rewriting and deliberately contains no algebra:
-not one mathematical identity is defined here.  Rules are data supplied by
-:mod:`geml.egraph.rules_safe` and :mod:`geml.egraph.rules_domain`.
-
-The saturation loop is the standard two-phase algorithm.  Each iteration first *searches*
-every enabled rule against the current e-graph, collecting matches without mutating
-anything, and then *applies* the whole batch.  Separating the phases keeps an iteration's
-result independent of the order in which rules happen to grow the e-graph, which is what
-makes a run reproducible.
-
-An iteration ends with a congruence rebuild.  Saturation stops when a full iteration adds
-no new equality, or when a resource limit is reached.  Every stop is reported with an
-explicit status and a human-readable reason; the loop never returns quietly.
-
-Guards are optional predicates attached to a rule.  A guard that fails is a recorded
-outcome, not a dropped match: the provenance log keeps the rejection so that the reporting
-denominator stays "attempted rewrites" as the rewrite policy requires.
+Machinery only; no algebraic identity is defined here. Each iteration searches every
+enabled rule without mutating, applies the batch, then rebuilds congruence. Saturation
+stops at a fixed point or a resource limit, always with an explicit status and reason. A
+failed guard is a recorded outcome, not a dropped match.
 """
 
 from __future__ import annotations
@@ -62,12 +49,7 @@ class RuleConfigurationError(EGraphError):
 
 
 class Assumption(StrEnum):
-    """A domain assumption a caller may declare about a source variable.
-
-    These are *declared*, never inferred.  A rule that needs ``x > 0`` will not fire
-    unless the caller has said so, because inferring positivity from syntax is exactly the
-    kind of hidden reasoning Goal 4 forbids.
-    """
+    """A domain assumption a caller may declare about a source variable; never inferred."""
 
     REAL = "real"
     POSITIVE = "positive"
@@ -87,12 +69,7 @@ _ASSUMPTION_CLOSURE: dict[Assumption, frozenset[Assumption]] = {
 
 @dataclass(frozen=True, slots=True)
 class AssumptionEnvironment:
-    """Caller-declared assumptions, keyed by source variable name.
-
-    The environment is closed under the obvious implications (a positive real is also
-    nonnegative, nonzero, and real) so that a rule needing ``x != 0`` fires when the caller
-    declared ``x > 0``.  No other inference happens.
-    """
+    """Caller-declared assumptions per variable, closed under implication (positive => nonzero)."""
 
     declarations: tuple[tuple[str, frozenset[Assumption]], ...] = ()
 
@@ -109,14 +86,12 @@ class AssumptionEnvironment:
         return cls(declarations=tuple(rows))
 
     def assumptions_for(self, name: str) -> frozenset[Assumption]:
-        """Return the closed assumption set declared for ``name``."""
         for declared_name, assumptions in self.declarations:
             if declared_name == name:
                 return assumptions
         return frozenset()
 
     def holds(self, name: str, assumption: Assumption) -> bool:
-        """Return whether ``assumption`` was declared for ``name``."""
         return assumption in self.assumptions_for(name)
 
 
@@ -133,32 +108,26 @@ class Guard(Protocol):
     """A named predicate deciding whether a matched rule may fire."""
 
     @property
-    def name(self) -> str:
-        """Return a stable identifier recorded in provenance when the guard rejects."""
+    def name(self) -> str: ...
 
-    def __call__(self, egraph: EGraph, substitution: Substitution, context: RewriteContext) -> bool:
-        """Return whether the rule may be applied under this match."""
+    def __call__(
+        self, egraph: EGraph, substitution: Substitution, context: RewriteContext
+    ) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
 class ApplierResult:
-    """What an applier produced, or why it declined.
-
-    Declining is a first-class outcome.  A folding applier that refuses a constant beyond
-    its exactness bound reports that refusal rather than returning a wrong answer.
-    """
+    """What an applier produced, or why it declined; declining is a first-class outcome."""
 
     eclass: EClassId | None
     detail: str = ""
 
     @classmethod
     def produced(cls, eclass: EClassId) -> ApplierResult:
-        """Return a successful result."""
         return cls(eclass=eclass)
 
     @classmethod
     def declined(cls, detail: str) -> ApplierResult:
-        """Return a refusal carrying an explanation."""
         return cls(eclass=None, detail=detail)
 
 
@@ -167,13 +136,11 @@ class Applier(Protocol):
     """Builds the right-hand side of a rule for one match."""
 
     @property
-    def required_variables(self) -> frozenset[str]:
-        """Return the pattern variables this applier reads."""
+    def required_variables(self) -> frozenset[str]: ...
 
     def __call__(
         self, egraph: EGraph, substitution: Substitution, context: RewriteContext
-    ) -> ApplierResult:
-        """Insert the right-hand side and return the resulting e-class."""
+    ) -> ApplierResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,24 +151,17 @@ class PatternApplier:
 
     @property
     def required_variables(self) -> frozenset[str]:
-        """Return the variables occurring in the right-hand side."""
         return pattern_variables(self.rhs)
 
     def __call__(
         self, egraph: EGraph, substitution: Substitution, context: RewriteContext
     ) -> ApplierResult:
-        """Insert the right-hand side under ``substitution``."""
         return ApplierResult.produced(instantiate(egraph, self.rhs, substitution))
 
 
 @dataclass(frozen=True, slots=True)
 class RewriteRule:
-    """One directed, guarded rewrite together with its safety policy.
-
-    A rule never carries its own notion of safety: the tier, assumptions, justification,
-    and the modes it is enabled in all come from the :class:`RulePolicy` recorded in the
-    frozen policy module.
-    """
+    """One directed, guarded rewrite; its safety policy comes from the frozen policy module."""
 
     policy: RulePolicy
     lhs: Pattern
@@ -211,7 +171,6 @@ class RewriteRule:
     rhs: Pattern | None = None
 
     def __post_init__(self) -> None:
-        """Reject rules that could not be executed soundly."""
         if not isinstance(self.lhs, PatternNode):
             raise RuleConfigurationError(
                 f"rule {self.policy.rule_id}: the left-hand side must have an operator at its root"
@@ -230,7 +189,6 @@ class RewriteRule:
 
     @property
     def rule_id(self) -> str:
-        """Return the policy rule identifier."""
         return self.policy.rule_id
 
     def enabled_in(self, mode: RewriteMode) -> bool:
@@ -266,11 +224,7 @@ def bidirectional_rules(
     *,
     guard: Guard | None = None,
 ) -> tuple[RewriteRule, RewriteRule]:
-    """Build both orientations of an equivalence as two directed rules.
-
-    They share a rule identifier and are told apart by their recorded direction, so
-    provenance shows which way an equivalence was used.
-    """
+    """Build both orientations of an equivalence, sharing a rule id but differing in direction."""
     return (
         pattern_rule(policy, left, right, guard=guard, direction=RewriteDirection.FORWARD),
         pattern_rule(policy, right, left, guard=guard, direction=RewriteDirection.BACKWARD),
@@ -284,11 +238,9 @@ class RuleSet:
     rules: tuple[RewriteRule, ...] = ()
 
     def __iter__(self) -> Iterator[RewriteRule]:
-        """Iterate the rules in declaration order."""
         return iter(self.rules)
 
     def __len__(self) -> int:
-        """Return how many rules the set holds."""
         return len(self.rules)
 
     def enabled_for(self, mode: RewriteMode) -> RuleSet:
@@ -296,21 +248,15 @@ class RuleSet:
         return RuleSet(rules=tuple(rule for rule in self.rules if rule.enabled_in(mode)))
 
     def by_id(self, rule_id: str) -> tuple[RewriteRule, ...]:
-        """Return every orientation of the rule with ``rule_id``."""
         return tuple(rule for rule in self.rules if rule.rule_id == rule_id)
 
     def merged_with(self, other: RuleSet) -> RuleSet:
-        """Return the concatenation of two rule sets, preserving order."""
         return RuleSet(rules=self.rules + other.rules)
 
 
 @dataclass(frozen=True, slots=True)
 class SaturationLimits:
-    """Resource bounds for one saturation run.
-
-    Wraps the frozen :class:`~geml.egraph.policy.ResourceLimits` and adds the e-class bound
-    the rewrite engine needs, which the policy module does not carry.
-    """
+    """Resource bounds for one run: the frozen ResourceLimits plus an e-class bound."""
 
     resources: ResourceLimits = field(default_factory=ResourceLimits)
     max_eclasses: int | None = None
@@ -331,13 +277,7 @@ def saturate(
     context: RewriteContext | None = None,
     limits: SaturationLimits | None = None,
 ) -> SaturationOutcome:
-    """Run bounded equality saturation and return an explicit outcome.
-
-    Complexity is not bounded in general — equality saturation need not terminate, which is
-    precisely why every run is capped by iteration count, node count, e-class count, and
-    wall clock.  Within one iteration the cost is the search cost of every enabled rule
-    plus one congruence rebuild.
-    """
+    """Run bounded equality saturation, capped by iterations, node/e-class count, and wall clock."""
     active_context = context if context is not None else RewriteContext()
     active_limits = limits if limits is not None else SaturationLimits()
     resources = active_limits.resources
@@ -499,7 +439,6 @@ def _finish(
     status: ExtractionStatus,
     reason: str,
 ) -> SaturationOutcome:
-    """Assemble the final outcome."""
     return SaturationOutcome(
         report=SaturationReport(
             iterations=iterations,
@@ -515,7 +454,6 @@ def _finish(
 
 
 def _expired(started: float, timeout_seconds: int) -> bool:
-    """Return whether the wall-clock budget is exhausted."""
     return time.monotonic() - started >= timeout_seconds
 
 
@@ -545,7 +483,6 @@ def _evaluate_guard(
     substitution: Substitution,
     context: RewriteContext,
 ) -> GuardOutcome:
-    """Evaluate a rule's guard, if it has one."""
     if rule.guard is None:
         return GuardOutcome.NOT_REQUIRED
     return GuardOutcome.PASSED if rule.guard(egraph, substitution, context) else GuardOutcome.FAILED
@@ -563,11 +500,6 @@ def _record(
     guard: GuardOutcome = GuardOutcome.NOT_REQUIRED,
     result_eclass: EClassId | None = None,
 ) -> None:
-    """Append one attempt to the provenance log.
-
-    The recorded mode is the mode the run was executed under, not a property of the rule,
-    so a log row states the conditions the rewrite actually happened in.
-    """
     log.record(
         iteration=iteration,
         rule_id=rule.policy.rule_id,

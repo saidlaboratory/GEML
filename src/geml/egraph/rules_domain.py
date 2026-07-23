@@ -1,20 +1,10 @@
 """Guarded, domain-restricted rewrite rules for the GEML e-graph.
 
-Every identity in this module is **conditional**.  None of them is a universal identity of
-the complex logarithm or complex power, and none may run in ``SAFE_REAL`` mode.  They fire
-only when the rewrite mode is ``POSITIVE_REAL_FORMAL`` *and* a guard confirms that the
-caller explicitly declared the assumption the identity needs.
-
-See ``docs/specs/EGRAPH_DOMAIN_RULES.md`` for the mathematical statement of each
-restriction and the counterexamples that motivate it.
-
-Guards in this module are **local**.  A guard inspects only the e-class directly bound by
-the match and accepts on exactly two grounds: the class denotes an exact constant that
-satisfies the assumption, or it denotes a source variable the caller declared to satisfy
-it.  Nothing is inferred from the shape of a compound expression, so ``log(exp(x + y))``
-does not fire unless the bound class is itself a declared variable or a constant.  That
-conservatism can decline sound rewrites; every decline is recorded in the provenance log
-as a guard rejection rather than dropped.
+Every identity here is conditional, none is a universal complex identity, and none runs in
+``SAFE_REAL`` mode: they fire only in ``POSITIVE_REAL_FORMAL`` mode when a guard confirms
+the caller declared the needed assumption. Guards are local (they inspect only the bound
+e-class), so ``log(exp(x + y))`` does not fire even with x, y declared. See
+``docs/specs/EGRAPH_DOMAIN_RULES.md`` for the statement and counterexample of each rule.
 """
 
 from __future__ import annotations
@@ -52,12 +42,10 @@ _X = PatternVar("x")
 
 
 def _node(op: Operator, *children: Pattern) -> PatternNode:
-    """Return an operator pattern node."""
     return PatternNode(op=op, children=children)
 
 
 def _constant_satisfies(value: Fraction, assumption: Assumption) -> bool:
-    """Return whether an exact rational constant satisfies ``assumption``."""
     if assumption is Assumption.REAL:
         return True
     if assumption is Assumption.POSITIVE:
@@ -69,11 +57,9 @@ def _constant_satisfies(value: Fraction, assumption: Assumption) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class DeclaredAssumptionGuard:
-    """Guard requiring that a bound e-class provably satisfies one assumption.
+    """Guard passing for an exact constant satisfying the assumption, or a variable declared so.
 
-    "Provably" means the class is an exact constant satisfying the assumption, or a source
-    variable the caller declared to satisfy it.  There is no third route: a compound
-    expression is never assumed to inherit a property from its operands.
+    A compound expression is never assumed to inherit a property from its operands.
     """
 
     variable: str
@@ -81,11 +67,9 @@ class DeclaredAssumptionGuard:
 
     @property
     def name(self) -> str:
-        """Return the guard identifier recorded on rejection."""
         return f"{self.assumption.value}({self.variable})"
 
     def __call__(self, egraph: EGraph, substitution: Substitution, context: RewriteContext) -> bool:
-        """Return whether the bound class provably satisfies the assumption."""
         eclass = substitution[self.variable]
         value = constant_value(egraph, eclass)
         if value is not None:
@@ -106,26 +90,21 @@ class AllOfGuard:
 
     @property
     def name(self) -> str:
-        """Return the conjunction of the component guard identifiers."""
         return " and ".join(guard.name for guard in self.guards)
 
     def __call__(self, egraph: EGraph, substitution: Substitution, context: RewriteContext) -> bool:
-        """Return whether every component guard accepts the match."""
         return all(guard(egraph, substitution, context) for guard in self.guards)
 
 
 def _positive(variable: str) -> DeclaredAssumptionGuard:
-    """Return a guard requiring a declared positive value."""
     return DeclaredAssumptionGuard(variable=variable, assumption=Assumption.POSITIVE)
 
 
 def _real(variable: str) -> DeclaredAssumptionGuard:
-    """Return a guard requiring a declared real value."""
     return DeclaredAssumptionGuard(variable=variable, assumption=Assumption.REAL)
 
 
 def _nonzero(variable: str) -> DeclaredAssumptionGuard:
-    """Return a guard requiring a declared nonzero value."""
     return DeclaredAssumptionGuard(variable=variable, assumption=Assumption.NONZERO)
 
 
@@ -138,7 +117,6 @@ def _policy(
     tier: RuleTier = RuleTier.GUARDED,
     branch_sensitive: bool = True,
 ) -> RulePolicy:
-    """Return a domain rule policy, enabled only in POSITIVE_REAL_FORMAL mode."""
     return RulePolicy(
         rule_id=rule_id,
         name=name,
@@ -287,12 +265,7 @@ OPTIONAL_DOMAIN_RULES: RuleSet = RuleSet(
 
 
 def domain_rules(*, include_optional: bool = False) -> RuleSet:
-    """Return the domain rule set, optionally including the opt-in tier.
-
-    The optional rules are sound under their guards but are excluded by default so that
-    benchmark runs are not silently affected by rules the rewrite policy classifies as
-    experimental workflow additions.
-    """
+    """Return the domain rule set; the OPTIONAL tier is excluded unless requested."""
     if include_optional:
         return DOMAIN_RULES.merged_with(OPTIONAL_DOMAIN_RULES)
     return DOMAIN_RULES

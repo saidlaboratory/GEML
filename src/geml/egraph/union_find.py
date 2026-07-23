@@ -1,13 +1,7 @@
 """Disjoint-set forest backing e-class identity.
 
-The e-graph needs one operation above all others: decide, in near-constant time, whether
-two e-class identifiers currently denote the same equivalence class.  A disjoint-set
-forest with union by size and path compression gives that in ``O(alpha(n))`` amortized
-time, where ``alpha`` is the inverse Ackermann function.
-
-Determinism is a hard requirement, so the tie-break when two classes have equal size is
-fixed (the smaller identifier becomes the root) rather than left to whichever argument
-happened to arrive first.
+Union by size with path compression gives ``O(alpha(n))`` amortized ``find``/``union``.
+The size-tie break is fixed (smaller identifier wins) so runs are deterministic.
 """
 
 from __future__ import annotations
@@ -23,11 +17,7 @@ class UnknownEClassError(EGraphError):
 
 @dataclass(frozen=True, slots=True)
 class UnionResult:
-    """Outcome of a single :meth:`UnionFind.union` call.
-
-    ``merged`` distinguishes a real merge from a no-op on two identifiers that already
-    shared a class, which is what lets the saturation loop detect a fixed point.
-    """
+    """Outcome of a :meth:`UnionFind.union` call; ``merged`` is False on a no-op."""
 
     root: EClassId
     absorbed: EClassId
@@ -35,45 +25,29 @@ class UnionResult:
 
 
 class UnionFind:
-    """A deterministic disjoint-set forest over e-class identifiers.
-
-    Identifiers are allocated densely from zero by :meth:`make_set`, so the internal
-    parent and size vectors are plain lists indexed by identifier.
-    """
+    """A deterministic disjoint-set forest over densely allocated e-class identifiers."""
 
     __slots__ = ("_parent", "_size")
 
     def __init__(self) -> None:
-        """Create an empty forest."""
         self._parent: list[int] = []
         self._size: list[int] = []
 
     def __len__(self) -> int:
-        """Return the number of allocated identifiers."""
         return len(self._parent)
 
     def make_set(self) -> EClassId:
-        """Allocate a fresh singleton class and return its identifier.
-
-        Complexity: ``O(1)`` amortized.
-        """
+        """Allocate a fresh singleton class and return its identifier."""
         new_id = EClassId(len(self._parent))
         self._parent.append(new_id)
         self._size.append(1)
         return new_id
 
     def contains(self, element: EClassId) -> bool:
-        """Return whether ``element`` has been allocated."""
         return 0 <= element < len(self._parent)
 
     def find(self, element: EClassId) -> EClassId:
-        """Return the canonical root of ``element``, compressing the path travelled.
-
-        Compression is done iteratively rather than recursively so that a long chain
-        cannot exhaust the Python stack.
-
-        Complexity: ``O(alpha(n))`` amortized.
-        """
+        """Return the canonical root of ``element``, compressing the path iteratively."""
         if not self.contains(element):
             raise UnknownEClassError(f"e-class identifier {element} was never allocated")
         root = element
@@ -87,14 +61,7 @@ class UnionFind:
         return root
 
     def union(self, left: EClassId, right: EClassId) -> UnionResult:
-        """Merge the classes containing ``left`` and ``right``.
-
-        The larger class absorbs the smaller one; on a size tie the numerically smaller
-        identifier becomes the root.  Both choices are deterministic, so an identical
-        sequence of calls always produces an identical forest.
-
-        Complexity: ``O(alpha(n))`` amortized.
-        """
+        """Merge the classes of ``left`` and ``right``; larger absorbs smaller, id breaks ties."""
         left_root = self.find(left)
         right_root = self.find(right)
         if left_root == right_root:
@@ -118,5 +85,4 @@ class UnionFind:
         )
 
     def class_size(self, element: EClassId) -> int:
-        """Return how many identifiers belong to the class containing ``element``."""
         return self._size[self.find(element)]
