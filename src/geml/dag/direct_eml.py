@@ -326,13 +326,13 @@ def compile_with_stats(
     compiler = DirectEMLCompiler(mode=mode)
     start = time.perf_counter()
     root = build(compiler)
-    elapsed_seconds = time.perf_counter() - start
     representation_mode = f"pure_eml:{compiler.mode.value}"
     graph = compiler.table.to_graph(
         root,
         root_id=root_id,
         representation_mode=representation_mode,
     )
+    elapsed_seconds = time.perf_counter() - start
     return (
         graph,
         root.node_id,
