@@ -21,7 +21,7 @@ The metric row stores `eml_node_count` as the exact numerator, `ast_node_count` 
 
 The only primary compiler mode is `CompilerMode.OFFICIAL_V4`. The runner consumes authoritative `sympy_srepr`, parses it through the frozen s-expression parser and AST contracts, validates the AST, and dispatches its ordered structure to the frozen Bundle I count-only constructors. Supported dispatch covers one, variable, integer, rational, add, subtract, multiply, divide, negate, power, exp, log, sin, cos, tan, sinh, cosh, and tanh. Unsupported labels fail explicitly; no display string, LaTeX, `sympy.simplify`, or materialized counting path is used.
 
-The input corpus manifest SHA-256 is `77fce5779b3d2c2f3cdf2b9f49da54cd14474d37ab128337bdf4fcc52afd4f0d`. The run records repository commit `baf0b1c3a746bfcedb29222a495d9d05d599620f`, config hash `878bdfeeac2b8b0936b19d223b6eeecb6e7c2321cc4dcc5e443522d73aa57fb7`, and runner fingerprint `3c57ac753442149e2c70cd94085b6b0f97d90d64d252782cefe3c93edf580c5e`.
+The input corpus manifest SHA-256 is `77fce5779b3d2c2f3cdf2b9f49da54cd14474d37ab128337bdf4fcc52afd4f0d`. The clean, nonprovisional run records repository commit `4a5e8b9e8466bb341d95ba7211c43489854f4b33`, config hash `22bc993f3af493bba9a2242c8fea303c1b022c5923e600eb75a1e6e11ac4c1a9`, and runner fingerprint `e821b5bb74508de519cea62834b0fe158addd5da30531289a5a4590126903843`.
 
 ## 4. Corpus and splits
 
@@ -53,11 +53,11 @@ Structural and semantic denominators are intentionally separate:
 | exact count failures | 0 |
 | deterministically selected for semantic work | 280 |
 | semantic audited/materialized | 273 |
-| semantic valid | 195 |
+| semantic valid | 203 |
 
 Semantic selection is a deterministic, structure-keyed SHA-256 hash sample over expression identity and family, split, size, and depth metadata, with a common modulus of 1,000 for the final run; it is not quota-controlled stratified sampling. Each materialized row requested two deterministic domain-aware assignments and evaluated them through 80-digit `mpmath` and NumPy `complex128`. Positive-real assignments were strictly positive; nonzero-real assignments avoided zero and could be negative; safe-real assignments could be negative. Domain, pole, range, nonfinite, overflow, mismatch, and backend outcomes were retained rather than resampled away.
 
-All 273 materialized rows contain exactly four detailed backend-by-probe records, for 1,092 retained results. The row-level semantic counts are 195 passed, 53 nonfinite, 22 overflow, and 3 mismatch. The remaining 249,720 rows are explicitly `semantic_not_selected`; seven selected rows are `not_materialized_node_limit`. Consequently, semantic evidence is a bounded audit and must not be described as validation of all 250,000 expressions.
+All 273 materialized rows contain exactly four detailed backend-by-probe records, for 1,092 retained results. The row-level semantic counts are 203 passed, 45 nonfinite, 22 overflow, and 3 mismatch. The remaining 249,720 rows are explicitly `semantic_not_selected`; seven selected rows are `not_materialized_node_limit`. Consequently, semantic evidence is a bounded audit and must not be described as validation of all 250,000 expressions.
 
 The saved `semantic_backend_status_counts` table exhaustively crosses each configured backend with every probe status. It reports status rates within each backend and distinct-expression incidence against backend-audited, selected, and materialized populations, together with unique-assignment totals and per-selected/materialized coverage. Deterministic variable-bearing probes are collision-free; constant-only expressions necessarily reuse their sole empty assignment vector. An all-processed incidence is retained for completeness but explicitly labeled as selection-diluted; it is not a corpus-wide semantic failure rate.
 
@@ -155,28 +155,28 @@ The highest-alpha, largest-node, and largest-operation case is expression `54fa4
 | compiler operations | 84,486,577 |
 | alpha | 6,481,679.307692 |
 
-The deepest EML case is expression `72afa39d38eac52ad5ad7cbf7053ece0caf3277d0818c4028d3939b367611464`, at depth 381 with 33,378,349 EML nodes and alpha 2,086,146.8125. The largest successful semantic-audit tree has 24,113 EML nodes and passed. The slowest count-successful, semantic-passed row took 2.003267 seconds. Six independently ranked top-100 lists are saved with deterministic expression-ID tie breaking and authoritative `sympy_srepr` audit context.
+The deepest EML case is expression `72afa39d38eac52ad5ad7cbf7053ece0caf3277d0818c4028d3939b367611464`, at depth 381 with 33,378,349 EML nodes and alpha 2,086,146.8125. The largest successful semantic-audit tree has 23,641 EML nodes and passed. The slowest count-successful, semantic-passed row took 2.066152 seconds. Per-row timing covers the complete row path, so selected rows include bounded materialization and both semantic backends rather than pure count-only compiler time. Six independently ranked top-100 lists are saved with deterministic expression-ID tie breaking and authoritative `sympy_srepr` audit context.
 
 ## 12. Failure and survivorship analysis
 
-There were no parsing, AST validation, unsupported-operator, compiler, count, or alpha failures. The failure tables retain 85 selected-row terminal materialization/semantic issues:
+There were no parsing, AST validation, unsupported-operator, compiler, count, or alpha failures. The failure tables retain 77 selected-row terminal materialization/semantic issues:
 
 | Status | Rows |
 | --- | ---: |
 | materialization node limit | 7 |
-| semantic nonfinite | 53 |
+| semantic nonfinite | 45 |
 | semantic overflow | 22 |
 | semantic mismatch | 3 |
 
-By family these 85 rows comprise 27 algebraic-core, 9 exp/log, 6 mixed-elementary, 21 OOD-stress, 4 powers/division/rational, and 18 trig/hyperbolic rows. These are counts within a deterministically sampled semantic workflow, not corpus-wide semantic failure-rate estimates. Comparable summaries use selected rows (29/92 pilot versus 85/280 final) or materialized rows with a nonpassing semantic status (23/86 versus 78/273); the all-processed incidence is only a sampling-diluted descriptive quantity because the pilot and final selection moduli differ.
+By family these 77 rows comprise 19 algebraic-core, 6 exp/log, 8 mixed-elementary, 18 OOD-stress, 5 powers/division/rational, and 21 trig/hyperbolic rows. These are counts within a deterministically sampled semantic workflow, not corpus-wide semantic failure-rate estimates. Comparable summaries use selected rows (27/92 pilot versus 77/280 final) or materialized rows with a nonpassing semantic status (21/86 versus 70/273); the all-processed incidence is only a sampling-diluted descriptive quantity because the pilot and final selection moduli differ.
 
-All 250,000 rows retained valid structural alpha, including all 85 terminal-issue rows. Therefore valid-alpha survivorship excludes zero rows and does not suppress high-expansion rows from the structural summaries. The companion all-processed denominator is still reported throughout.
+All 250,000 rows retained valid structural alpha, including all 77 terminal-issue rows. Therefore valid-alpha survivorship excludes zero rows and does not suppress high-expansion rows from the structural summaries. The companion all-processed denominator is still reported throughout.
 
 The three mismatches remain open scientific-review cases:
 
 1. `0cad3e801650e041e5826dad317ca2881e64f7f1902aafece1a0a03138e73bfa` (trig/hyperbolic): source values were zero at both probes, while official-v4 EML produced extreme `mpmath` values and NumPy overflow.
 2. `cbbbf1e6962397e9b8e649a48bce7f314b834d77eb1654a78cc1575beb1a6cb3` (mixed elementary): `mpmath` hit a bounded “too many digits in integer” range condition, while NumPy values differed by about 19.4% relative error at both probes.
-3. `0ddfd77a80d7bdc272c2c089f50f595eb5339bd564c231be0ec7931df3d76040` (OOD stress): high-precision probes passed with extended intermediates, while NumPy produced one mismatch and one overflow.
+3. `d73a813310e32e8c2d7184ee5672994a49e336a5f7547c8b8ffc1c0a9518fc4e` (OOD stress): both high-precision probes passed with extended intermediates; NumPy mismatched one astronomically small source result and passed the other with extended intermediates.
 
 These rows were not silently dropped, resampled, or reclassified as successes.
 
@@ -190,26 +190,27 @@ The pilot is the separately generated Goal 1 pilot run-a, not a deterministic su
 | median alpha | 40.172598 | 40.660189 | +0.487591 |
 | p90 alpha | 378.275630 | 385.072286 | +6.796655 |
 | p95 alpha | 1,092.941223 | 1,187.824000 | +94.882777 |
-| selected-row terminal-issue rate | 0.315217 | 0.303571 | -0.011646 |
-| materialized semantic-nonpass rate | 0.267442 | 0.285714 | +0.018272 |
+| selected-row terminal-issue rate | 0.293478 | 0.275000 | -0.018478 |
+| materialized semantic-nonpass rate | 0.244186 | 0.256410 | +0.012224 |
 
 All six family median ranks are unchanged, with rank correlation 1.0. Family median changes range from +0.1567 for exp/log to +8.6432 for mixed elementary; trig/hyperbolic p90 increased by 598.6218. The largest AST-size-bucket share change is -3.3916 percentage points for the 1-8 bucket. Central tendency and family order are descriptively stable, but the structured ID overlap mechanically couples the comparison and tail-sensitive statistics remain meaningfully sample-dependent.
 
 ## 14. Runtime, memory, and throughput
 
-The final run used eight worker processes and ten 25,000-row atomic metric shards. It completed in 2,348.020064 seconds (39.13 minutes), at 106.472685 rows/second. Peak process-tree resident memory was 1,567,707,136 bytes (about 1.46 GiB). It processed 250,000 rows successfully and wrote zero primary count-failure rows.
+The final run used eight worker processes and ten 25,000-row atomic metric shards. Current-invocation metric aggregation completed in 2,557.261734 seconds (42.62 minutes), at 97.760818 newly processed rows/second; this scope excludes provenance collection, final artifact publication, and post-publication validation. The sum of per-shard input-read and metric-processing wall time was 2,521.007216 seconds, or 99.166713 rows/second. Both throughput measures cover the configured end-to-end row workflow, and selected rows include bounded materialization plus both semantic backends. Maximum sampled simultaneous resident memory across the parent and live workers was 1,617,088,512 bytes (about 1.51 GiB). The clean run processed 250,000 rows successfully, wrote zero primary count-failure rows, and required no checkpoint or orphan recovery.
 
-The separately generated 10k pilot completed in 87.502431 seconds at 114.282539 rows/second, with peak resident memory 880,295,936 bytes. Its manifest SHA-256 is `80f96f420486948a7846bc2e3fde4d026a813e66dcb24a1afe75703052b7fe2f`.
+The separately generated 10k pilot completed metric aggregation in 110.796139 seconds at 90.255853 newly processed rows/second. Its per-shard processing total was 109.030293 seconds (91.717629 rows/second), maximum sampled simultaneous resident memory was 914,173,952 bytes, and manifest SHA-256 is `6e6dd777841b45840bc5d3f34c1d491e5e2ffbbbda264b7118392279ef987c30`.
 
 ## 15. Limitations
 
-- Semantic verification is sampled: only 273 materialized rows were audited, and only 195 received a passing row status.
+- Semantic verification is sampled: only 273 materialized rows were audited, and only 203 received a passing row status.
 - Materialization is bounded, so seven selected rows above 25,000 nodes were not evaluated.
 - Two probes per row cannot establish functional equivalence over an entire domain.
 - NumPy `complex128` and even high-precision evaluation can encounter severe range and conditioning problems in large official-v4 expansions.
 - The theoretical thresholds depend on declared bounded grammar vocabularies and are descriptive scenarios, not universal laws.
 - Operator signatures are often unique; most signature groups are underpowered.
-- This run was performed on a dirty, unstaged implementation tree as required by the bundle. Its results are provisional until regenerated from the reviewed clean commit.
+- Per-row runtime and stage throughput measure the complete configured workflow, not isolated count-only compiler performance; selected rows include additional audit work.
+- The production artifacts were generated from clean commit `4a5e8b9e8466bb341d95ba7211c43489854f4b33` and are nonprovisional.
 - Raw tree expansion does not predict downstream model behavior or the benefit of future structural sharing.
 
 ## 16. Reproduction
@@ -231,11 +232,11 @@ The runner validates input manifests and checksums before processing. Checkpoint
 | Artifact | SHA-256 |
 | --- | --- |
 | Goal 1 final input manifest | `77fce5779b3d2c2f3cdf2b9f49da54cd14474d37ab128337bdf4fcc52afd4f0d` |
-| Goal 2 smoke manifest | `b21e1a093e6484f44e2ab412cc88ad05c3eb8e14e7d8ee8f4bd5f7af16b748fd` |
-| Goal 2 pilot manifest | `80f96f420486948a7846bc2e3fde4d026a813e66dcb24a1afe75703052b7fe2f` |
-| Goal 2 final metrics manifest | `22940d0afd75fae908bd6834816ba5c3729127733c491052c468ee6c3f061466` |
-| Goal 2 analysis manifest | `efbfdee7c30b135493dd4548776124cd77f074a12724265526596fc8743fcdb5` |
-| Goal 2 plot manifest | `c4fb1024024eba6c81fa6372b2d11f5a5dc7cea873c3ed49f1cb45cac471e609` |
+| Goal 2 smoke manifest | `94e2995ddc5c2cf8a6e7ddffc9340739d181c12d6d7029874d5eeda15fe500e1` |
+| Goal 2 pilot manifest | `6e6dd777841b45840bc5d3f34c1d491e5e2ffbbbda264b7118392279ef987c30` |
+| Goal 2 final metrics manifest | `06d129f427dc376190fcee38217a6bc78f35c49a61bc8e453849473ec96e8e32` |
+| Goal 2 analysis manifest | `1ab4f562749d185e8812b2a036ea34025c687d463433c5024977b56079c95e58` |
+| Goal 2 plot manifest | `20af1b16c71dcb2170ed1a06f9269ae3a037a1eb5077efb1eb5592a606ba9833` |
 
 The metrics live under `outputs/final/goal2/{smoke,pilot,final}/`; the 16 saved analysis tables live under `outputs/final/goal2/analysis/tables/`; and 10 PNG plus 10 SVG plots live under `outputs/final/goal2/analysis/plots/`. Every listed manifest and subordinate artifact passed its checksum validator after generation.
 
