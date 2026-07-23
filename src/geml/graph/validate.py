@@ -15,6 +15,7 @@ from geml.graph.schema import (
     REPRESENTATION_FAMILIES,
     ChildRef,
     Graph,
+    GraphNode,
     GraphRoot,
 )
 
@@ -36,7 +37,7 @@ def _is_json_value(value: object) -> bool:
         return True
     if isinstance(value, float):
         return math.isfinite(value)
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list):
         return all(_is_json_value(item) for item in value)
     if isinstance(value, dict):
         return all(isinstance(key, str) and _is_json_value(item) for key, item in value.items())
@@ -51,6 +52,9 @@ def _check_records(graph: Graph, errors: list[str]) -> None:
 
     observed_families: set[str] = set()
     for key, node in graph.nodes.items():
+        if not isinstance(node, GraphNode):
+            errors.append(f"node mapping key {key!r} does not contain a GraphNode record")
+            continue
         if key != node.node_id:
             errors.append(f"node mapping key {key!r} does not match node_id {node.node_id!r}")
         if not _is_nonblank(node.node_id):
@@ -88,12 +92,18 @@ def _check_roots(graph: Graph, errors: list[str]) -> None:
             errors.append(
                 f"root {root.root_id!r} target {root.target_id!r} does not exist in graph.nodes"
             )
+        elif not isinstance(graph.nodes[root.target_id], GraphNode):
+            errors.append(
+                f"root {root.root_id!r} target {root.target_id!r} is not a GraphNode record"
+            )
         if not _is_nonblank(root.representation_mode):
             errors.append(f"root {root.root_id!r} has a blank representation mode")
 
 
 def _check_child_refs(graph: Graph, errors: list[str]) -> None:
     for node in graph.nodes.values():
+        if not isinstance(node, GraphNode):
+            continue
         seen_slots: set[int] = set()
         for ref in node.children:
             if not isinstance(ref, ChildRef):
@@ -109,6 +119,8 @@ def _check_child_refs(graph: Graph, errors: list[str]) -> None:
                 errors.append(f"node {node.node_id!r} has a blank or invalid child target")
             elif ref.target_id not in graph.nodes:
                 errors.append(f"node {node.node_id!r} references missing node {ref.target_id!r}")
+            elif not isinstance(graph.nodes[ref.target_id], GraphNode):
+                errors.append(f"node {node.node_id!r} references malformed node {ref.target_id!r}")
 
         expected_slots = set(range(len(node.children)))
         if seen_slots != expected_slots:
@@ -119,49 +131,51 @@ def _check_child_refs(graph: Graph, errors: list[str]) -> None:
 
 
 def _reachable_nodes(graph: Graph) -> set[str]:
+    nodes = {node_id: node for node_id, node in graph.nodes.items() if isinstance(node, GraphNode)}
     visited: set[str] = set()
     stack = [
         root.target_id
         for root in graph.roots
-        if isinstance(root, GraphRoot) and root.target_id in graph.nodes
+        if isinstance(root, GraphRoot) and root.target_id in nodes
     ]
     while stack:
         node_id = stack.pop()
         if node_id in visited:
             continue
         visited.add(node_id)
-        for ref in graph.nodes[node_id].children:
-            if isinstance(ref, ChildRef) and ref.target_id in graph.nodes:
+        for ref in nodes[node_id].children:
+            if isinstance(ref, ChildRef) and ref.target_id in nodes:
                 stack.append(ref.target_id)
     return visited
 
 
 def _check_reachability(graph: Graph, errors: list[str]) -> None:
     reachable = _reachable_nodes(graph)
-    for node_id in graph.nodes:
-        if node_id not in reachable:
+    for node_id, node in graph.nodes.items():
+        if isinstance(node, GraphNode) and node_id not in reachable:
             errors.append(f"node {node_id!r} is unreachable from every root")
 
 
 def _check_acyclic(graph: Graph, errors: list[str]) -> None:
     white, gray, black = 0, 1, 2
-    color = {node_id: white for node_id in graph.nodes}
+    nodes = {node_id: node for node_id, node in graph.nodes.items() if isinstance(node, GraphNode)}
+    color = {node_id: white for node_id in nodes}
 
-    for start_id in graph.nodes:
+    for start_id in nodes:
         if color[start_id] != white:
             continue
         stack: list[tuple[str, int]] = [(start_id, 0)]
         color[start_id] = gray
         while stack:
             node_id, child_index = stack[-1]
-            children = graph.nodes[node_id].children
+            children = nodes[node_id].children
             if child_index >= len(children):
                 color[node_id] = black
                 stack.pop()
                 continue
             stack[-1] = (node_id, child_index + 1)
             ref = children[child_index]
-            if not isinstance(ref, ChildRef) or ref.target_id not in graph.nodes:
+            if not isinstance(ref, ChildRef) or ref.target_id not in nodes:
                 continue
             target_color = color[ref.target_id]
             if target_color == gray:
@@ -173,13 +187,13 @@ def _check_acyclic(graph: Graph, errors: list[str]) -> None:
 
 def _check_ast_purity(graph: Graph, errors: list[str]) -> None:
     for node in graph.nodes.values():
-        if node.family == AST_FAMILY and len(node.children) > 2:
+        if isinstance(node, GraphNode) and node.family == AST_FAMILY and len(node.children) > 2:
             errors.append(f"AST node {node.node_id!r} exceeds the binary AST arity limit")
 
 
 def _check_eml_purity(graph: Graph, errors: list[str]) -> None:
     for node in graph.nodes.values():
-        if node.family != EML_FAMILY:
+        if not isinstance(node, GraphNode) or node.family != EML_FAMILY:
             continue
         if node.kind == EML_OPERATOR_KIND:
             if node.label != "eml" or node.value is not None or len(node.children) != 2:

@@ -7,6 +7,7 @@ from collections.abc import Callable
 import pytest
 
 from geml.ast.builder import build_ast_from_parsed
+from geml.dag import direct_eml
 from geml.dag.direct_eml import (
     DIRECT_SOURCE_OPERATORS,
     DirectEMLCompiler,
@@ -14,7 +15,7 @@ from geml.dag.direct_eml import (
     compile_with_stats,
 )
 from geml.dag.eml import eml_to_dag, validate_eml_dag
-from geml.dag.hashcons import InternedNode
+from geml.dag.hashcons import HashConsTable, InternedNode
 from geml.eml.compiler_arithmetic import (
     eml_decimal,
     eml_divide,
@@ -37,6 +38,7 @@ from geml.eml.compiler_transcendental import eml_cosh, eml_sinh, eml_tanh
 from geml.eml.compiler_trig import eml_cos, eml_sin, eml_tan
 from geml.eml.ir import EMLTerm, One, Variable
 from geml.experiments.goal2.run import materialize_ast_official
+from geml.graph.schema import Graph
 from geml.graph.signatures import compute_signature
 from geml.parsing.srepr import parse_srepr
 from geml.spec.operators import OPERATORS, EMLConstructionStatus
@@ -254,6 +256,48 @@ def test_duplicate_requests_are_cache_hits_and_keep_explicit_slots() -> None:
     assert root.children[0].target_id == root.children[1].target_id
     assert statistics.cache_hits > 0
     assert statistics.intern_requests > statistics.final_node_count
+
+
+def test_elapsed_time_includes_graph_finalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    finalized = False
+    timer_calls = 0
+    original_to_graph = HashConsTable.to_graph
+
+    def tracked_to_graph(
+        table: HashConsTable,
+        root: InternedNode,
+        *,
+        root_id: str,
+        representation_mode: str,
+    ) -> Graph:
+        nonlocal finalized
+        graph = original_to_graph(
+            table,
+            root,
+            root_id=root_id,
+            representation_mode=representation_mode,
+        )
+        finalized = True
+        return graph
+
+    def deterministic_timer() -> float:
+        nonlocal timer_calls
+        timer_calls += 1
+        if timer_calls == 1:
+            assert not finalized
+            return 10.0
+        assert finalized
+        return 12.5
+
+    monkeypatch.setattr(HashConsTable, "to_graph", tracked_to_graph)
+    monkeypatch.setattr(direct_eml.time, "perf_counter", deterministic_timer)
+
+    _, _, statistics = compile_with_stats(lambda compiler: compiler.emit_variable("x"))
+
+    assert timer_calls == 2
+    assert statistics.elapsed_seconds == 2.5
 
 
 def test_cross_table_references_are_rejected() -> None:

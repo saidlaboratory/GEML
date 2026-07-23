@@ -8,7 +8,7 @@ from collections.abc import Iterable
 
 from pydantic import JsonValue
 
-from geml.graph.schema import Graph
+from geml.graph.schema import Graph, GraphNode, strict_json_snapshot
 
 SIGNATURE_VERSION = "geml-graph-signature-v1"
 
@@ -33,7 +33,7 @@ def signature_from_parts(
         "family": family,
         "kind": kind,
         "label": label,
-        "value": value,
+        "value": strict_json_snapshot(value),
         "version": SIGNATURE_VERSION,
     }
     encoded = json.dumps(
@@ -63,6 +63,8 @@ def compute_signatures(graph: Graph, node_ids: Iterable[str]) -> dict[str, str]:
             node = graph.nodes.get(node_id)
             if node is None:
                 raise KeyError(f"graph node {node_id!r} does not exist")
+            if not isinstance(node, GraphNode):
+                raise TypeError(f"graph node {node_id!r} is not a GraphNode record")
 
             if leaving:
                 signatures[node_id] = signature_from_parts(
