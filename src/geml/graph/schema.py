@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -19,6 +20,117 @@ REPRESENTATION_FAMILIES = frozenset({AST_FAMILY, EML_FAMILY, MACRO_FAMILY, MOTIF
 EML_OPERATOR_KIND = "eml"
 EML_VARIABLE_KIND = "variable"
 EML_ONE_KIND = "one"
+
+
+class _FrozenJsonList(list[JsonValue]):
+    """A JSON array snapshot that retains normal list read semantics."""
+
+    @staticmethod
+    def _immutable(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("JSON value snapshots are immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    __iadd__ = _immutable
+    __imul__ = _immutable
+    append = _immutable
+    clear = _immutable
+    extend = _immutable
+    insert = _immutable
+    pop = _immutable
+    remove = _immutable
+    reverse = _immutable
+    sort = _immutable
+
+    def __copy__(self) -> _FrozenJsonList:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> _FrozenJsonList:
+        memo[id(self)] = self
+        return self
+
+
+class _FrozenJsonDict(dict[str, JsonValue]):
+    """A JSON object snapshot that retains normal dict read semantics."""
+
+    @staticmethod
+    def _immutable(*_args: object, **_kwargs: object) -> None:
+        raise TypeError("JSON value snapshots are immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    __ior__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+
+    def __copy__(self) -> _FrozenJsonDict:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> _FrozenJsonDict:
+        memo[id(self)] = self
+        return self
+
+
+def _snapshot_json_value(
+    value: object,
+    *,
+    active_container_ids: set[int],
+) -> JsonValue:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("JSON numbers must be finite")
+        return float(value)
+    if isinstance(value, str):
+        return str(value)
+    if isinstance(value, tuple):
+        raise TypeError("tuples are not valid JSON arrays; use a list")
+    if not isinstance(value, (list, dict)):
+        raise TypeError(
+            "JSON values must be null, bool, int, finite float, str, list, or string-keyed dict"
+        )
+
+    container_id = id(value)
+    if container_id in active_container_ids:
+        raise ValueError("JSON values cannot contain reference cycles")
+    active_container_ids.add(container_id)
+    try:
+        if isinstance(value, list):
+            return _FrozenJsonList(
+                _snapshot_json_value(item, active_container_ids=active_container_ids)
+                for item in value
+            )
+
+        snapshot: dict[str, JsonValue] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError("JSON object keys must be strings")
+            snapshot[str(key)] = _snapshot_json_value(
+                item,
+                active_container_ids=active_container_ids,
+            )
+        return _FrozenJsonDict(snapshot)
+    finally:
+        active_container_ids.remove(container_id)
+
+
+def strict_json_snapshot(value: object) -> JsonValue:
+    """Return a recursively immutable copy of one strict JSON value.
+
+    Lists remain list-compatible JSON arrays and dictionaries remain
+    dict-compatible JSON objects. Tuples are rejected rather than being
+    silently normalized to arrays, preserving typed structural identity.
+    """
+
+    return _snapshot_json_value(value, active_container_ids=set())
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,8 +162,9 @@ class GraphNode:
     children: tuple[ChildRef, ...] = ()
 
     def __post_init__(self) -> None:
-        """Snapshot child references so graph records cannot drift after creation."""
+        """Snapshot all nested records so structural identity cannot drift."""
 
+        object.__setattr__(self, "value", strict_json_snapshot(self.value))
         object.__setattr__(self, "children", tuple(self.children))
 
 
