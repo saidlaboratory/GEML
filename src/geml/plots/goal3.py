@@ -5,10 +5,21 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from decimal import localcontext
 from itertools import pairwise
 from typing import Final
 
-from geml.analysis.goal3.metrics import RATIO_NAMES, CheckpointMetrics, ExactMean
+from geml.analysis.goal3.metrics import (
+    AGGREGATE_MEAN_METHOD,
+    AGGREGATE_REPORTED_PRECISION_DIGITS,
+    AGGREGATE_ROUNDING,
+    AGGREGATE_WORKING_PRECISION_DIGITS,
+    RATIO_NAMES,
+    CheckpointMetrics,
+    DecimalMean,
+    aggregate_decimal_context,
+    aggregate_mean_policy,
+)
 
 STANDARD_SCALE_CHECKPOINTS: Final = (10_000, 50_000, 100_000, 250_000)
 PEAK_MEMORY_SCOPE: Final = (
@@ -67,7 +78,7 @@ class RuntimePoint:
 
 @dataclass(frozen=True, slots=True)
 class StabilityPoint:
-    """Runtime and exact cumulative means joined at one corpus prefix."""
+    """Runtime and bounded high-precision means joined at an exact prefix."""
 
     processed_count: int
     valid_count: int
@@ -77,9 +88,9 @@ class StabilityPoint:
     peak_resident_memory_bytes: int
     processing_time_scope: str
     peak_memory_scope: str
-    ratio_means: tuple[tuple[str, ExactMean], ...]
+    ratio_means: tuple[tuple[str, DecimalMean], ...]
 
-    def ratio_mean(self, name: str) -> ExactMean | None:
+    def ratio_mean(self, name: str) -> DecimalMean | None:
         for candidate, mean in self.ratio_means:
             if candidate == name:
                 return mean
@@ -97,6 +108,42 @@ class StabilityPoint:
             "peak_memory_scope": self.peak_memory_scope,
             "ratio_means": {name: mean.as_dict() for name, mean in self.ratio_means},
         }
+
+
+@dataclass(frozen=True, slots=True)
+class StabilityDelta:
+    """Approximate change between two reported high-precision means."""
+
+    processed_count: int
+    decimal: str
+    value: float
+    approximate: bool = True
+    method: str = "difference_of_reported_decimal_means"
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "processed_count": self.processed_count,
+            "decimal": self.decimal,
+            "value": self.value,
+            "approximate": self.approximate,
+            "method": self.method,
+        }
+
+
+def _stability_delta(
+    processed_count: int,
+    previous: DecimalMean,
+    current: DecimalMean,
+) -> StabilityDelta:
+    context = aggregate_decimal_context(precision=AGGREGATE_REPORTED_PRECISION_DIGITS)
+    with localcontext(context):
+        difference = +(current.decimal_value - previous.decimal_value)
+        decimal_text = str(difference)
+    return StabilityDelta(
+        processed_count=processed_count,
+        decimal=decimal_text,
+        value=float(difference),
+    )
 
 
 def build_runtime_curve(
@@ -219,22 +266,23 @@ def build_stability_curve(
 def stability_deltas(
     points: Sequence[StabilityPoint],
     metric: str,
-) -> tuple[tuple[int, float], ...]:
-    """Return signed changes in one valid-only ratio mean between prefixes."""
+) -> tuple[StabilityDelta, ...]:
+    """Return bounded high-precision changes between reported prefix means."""
 
     if metric not in RATIO_NAMES:
         raise ValueError(f"unknown stability metric {metric!r}")
     ordered = tuple(sorted(points, key=lambda point: point.processed_count))
-    deltas: list[tuple[int, float]] = []
+    deltas: list[StabilityDelta] = []
     for previous, current in pairwise(ordered):
         previous_mean = previous.ratio_mean(metric)
         current_mean = current.ratio_mean(metric)
         if previous_mean is None or current_mean is None:
             raise PlotDataError(f"{metric} has no valid-only denominator at a requested checkpoint")
         deltas.append(
-            (
+            _stability_delta(
                 current.processed_count,
-                current_mean.value - previous_mean.value,
+                previous_mean,
+                current_mean,
             )
         )
     return tuple(deltas)
@@ -247,6 +295,30 @@ def plot_data_payload(points: Sequence[StabilityPoint]) -> dict[str, object]:
     metric_means = {
         name: tuple(point.ratio_mean(name) for point in ordered) for name in RATIO_NAMES
     }
+    metric_deltas: dict[str, list[dict[str, object]]] = {}
+    for name, means in metric_means.items():
+        deltas: list[dict[str, object]] = []
+        for index, (previous, current) in enumerate(pairwise(means), start=1):
+            processed_count = ordered[index].processed_count
+            if previous is None or current is None:
+                deltas.append(
+                    {
+                        "processed_count": processed_count,
+                        "decimal": None,
+                        "value": None,
+                        "approximate": True,
+                        "method": "difference_of_reported_decimal_means",
+                    }
+                )
+                continue
+            deltas.append(
+                _stability_delta(
+                    processed_count,
+                    previous,
+                    current,
+                ).as_dict()
+            )
+        metric_deltas[name] = deltas
     return {
         "x_axis": {
             "name": "processed_count",
@@ -264,13 +336,22 @@ def plot_data_payload(points: Sequence[StabilityPoint]) -> dict[str, object]:
             "throughput_rows_per_second": [point.throughput_rows_per_second for point in ordered],
             "peak_resident_memory_bytes": [point.peak_resident_memory_bytes for point in ordered],
         },
+        "aggregate_mean_policy": aggregate_mean_policy(),
         "metric_stability": {
             name: {
-                "exact": [mean.exact if mean is not None else None for mean in metric_means[name]],
+                "decimal": [
+                    mean.decimal if mean is not None else None for mean in metric_means[name]
+                ],
                 "value": [mean.value if mean is not None else None for mean in metric_means[name]],
+                "approximate": True,
+                "method": AGGREGATE_MEAN_METHOD,
+                "working_precision_digits": AGGREGATE_WORKING_PRECISION_DIGITS,
+                "reported_precision_digits": AGGREGATE_REPORTED_PRECISION_DIGITS,
+                "rounding": AGGREGATE_ROUNDING,
                 "valid_denominator": [
                     mean.sample_count if mean is not None else 0 for mean in metric_means[name]
                 ],
+                "difference_from_previous": metric_deltas[name],
             }
             for name in RATIO_NAMES
         },
