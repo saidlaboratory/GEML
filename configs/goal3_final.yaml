@@ -1,0 +1,41 @@
+# configs/goal3_final.yaml
+# owned by 3-6
+#
+# config for the real 250k goal 3 run. NOT executed yet - the real
+# corpus (1-8) and the merged 3-5 audit are both required first, and
+# this file describes the intended production run against them.
+
+run:
+  run_id: goal3_full_250k
+  resume: true                 # skip already-completed expression_ids on restart
+  reproduction_command: >
+    PYTHONPATH=src python3 -m geml.experiments.goal3.run
+    --config configs/goal3_final.yaml
+
+corpus:
+  # points at 1-8's real frozen corpus manifest once it exists
+  manifest_path: data/goal1_corpus/corpus_manifest.json
+  splits: [train, validation, test_iid, test_ood]
+
+eml_construction:
+  path: direct        # use 3-4's direct/memoized construction, not 3-3's
+                       # post-hoc build-then-compress - only valid because
+                       # the 3-5 audit already confirmed the two agree
+  verified_operators: [exp, ln]   # only these are real right now; add/mul/pow
+                                   # pending 2-2/2-3/2-4's real formulas landing
+
+output:
+  results_path: results/goal3/metrics.jsonl
+  shard_size: 25000    # matches 1-5's shard size range
+
+metrics:
+  - raw_tree_alpha
+  - dag_alpha_vs_ast_tree
+  - dag_alpha_vs_ast_dag
+  - ast_compression
+  - eml_compression
+
+smoke_test:
+  count: 25
+  command: >
+    PYTHONPATH=src python3 -m pytest tests/experiments/test_goal3_smoke.py -v
