@@ -783,14 +783,7 @@ def _purity_text(errors: tuple[str, ...]) -> str:
     return "valid" if not errors else "; ".join(errors)
 
 
-def audit_one(
-    case: AuditCase,
-    *,
-    direct_compiler: DirectCompiler = _compile_direct,
-    posthoc_compiler: PostHocCompiler = _compile_posthoc,
-) -> AuditResult:
-    """Audit one case and retain a terminal classification and all axis results."""
-
+def _case_result_fields(case: AuditCase) -> dict[str, Any]:
     operator_families = tuple(
         dict.fromkeys(
             operator.operator_family
@@ -798,7 +791,7 @@ def audit_one(
             if operator.name in case.operator_names
         )
     )
-    common = {
+    return {
         "case_id": case.case_id,
         "operator_names": case.operator_names,
         "operator_families": operator_families,
@@ -807,6 +800,39 @@ def audit_one(
         "split": case.split,
         "domain_mode": case.domain_mode,
     }
+
+
+def _validate_compiler_result[StatisticsType](
+    result: object,
+    *,
+    compiler_name: str,
+    statistics_type: type[StatisticsType],
+) -> tuple[Graph, str, StatisticsType]:
+    if not isinstance(result, tuple) or len(result) != 3:
+        raise TypeError(f"{compiler_name} compiler must return a three-item tuple")
+
+    graph, root_id, statistics = result
+    if not isinstance(graph, Graph):
+        raise TypeError(f"{compiler_name} compiler returned a non-Graph graph")
+    if not isinstance(root_id, str) or not root_id:
+        raise TypeError(f"{compiler_name} compiler returned an invalid root ID")
+    if not isinstance(statistics, statistics_type):
+        raise TypeError(
+            f"{compiler_name} compiler returned {type(statistics).__name__} statistics; "
+            f"expected {statistics_type.__name__}"
+        )
+    return graph, root_id, statistics
+
+
+def audit_one(
+    case: AuditCase,
+    *,
+    direct_compiler: DirectCompiler = _compile_direct,
+    posthoc_compiler: PostHocCompiler = _compile_posthoc,
+) -> AuditResult:
+    """Audit one case and retain a terminal classification and all axis results."""
+
+    common = _case_result_fields(case)
     if case.blocked_reason is not None:
         return AuditResult(
             **common,
@@ -826,11 +852,19 @@ def audit_one(
     direct_error: Exception | None = None
     posthoc_error: Exception | None = None
     try:
-        direct_result = direct_compiler(case.ast)
+        direct_result = _validate_compiler_result(
+            direct_compiler(case.ast),
+            compiler_name="direct",
+            statistics_type=ConstructionStats,
+        )
     except Exception as error:
         direct_error = error
     try:
-        posthoc_result = posthoc_compiler(case.ast)
+        posthoc_result = _validate_compiler_result(
+            posthoc_compiler(case.ast),
+            compiler_name="posthoc",
+            statistics_type=EMLDagStatistics,
+        )
     except Exception as error:
         posthoc_error = error
 
@@ -1011,14 +1045,23 @@ def run_audit(
     case_ids = [case.case_id for case in requested_cases]
     if len(case_ids) != len(set(case_ids)):
         raise ValueError("audit case IDs must be unique")
-    results = tuple(
-        audit_one(
-            case,
-            direct_compiler=direct_compiler,
-            posthoc_compiler=posthoc_compiler,
-        )
-        for case in requested_cases
-    )
+    retained_results: list[AuditResult] = []
+    for case in requested_cases:
+        try:
+            result = audit_one(
+                case,
+                direct_compiler=direct_compiler,
+                posthoc_compiler=posthoc_compiler,
+            )
+        except Exception as error:
+            result = AuditResult(
+                **_case_result_fields(case),
+                status=AuditStatus.FAILURE,
+                failure_type=type(error).__name__,
+                failure_message=(f"unexpected audit {type(error).__name__}: {error}"),
+            )
+        retained_results.append(result)
+    results = tuple(retained_results)
 
     operator_coverage = _matched_coverage(results, "operator_names")
     operator_family_coverage = _matched_coverage(results, "operator_families")

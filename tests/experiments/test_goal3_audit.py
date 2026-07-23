@@ -7,9 +7,11 @@ from dataclasses import replace
 import pytest
 
 from geml.contracts.corpus import CorpusSplit
+from geml.dag.direct_eml import compile_ast_to_eml_dag
 from geml.dag.eml import convert_with_stats
 from geml.eml.compiler_core import CompilerMode, eml_log
 from geml.eml.ir import Variable
+from geml.experiments.goal3 import equivalence_audit
 from geml.experiments.goal3.equivalence_audit import (
     AUDIT_SIZE_BUCKETS,
     REQUIRED_CORPUS_FAMILIES,
@@ -129,7 +131,6 @@ def test_construction_failure_is_retained_without_aborting_later_cases() -> None
         direct_calls.append(ast.expression_id)
         if ast.expression_id == first.case_id:
             raise RuntimeError("deliberate direct-construction failure")
-        from geml.dag.direct_eml import compile_ast_to_eml_dag
 
         return compile_ast_to_eml_dag(ast)
 
@@ -144,6 +145,66 @@ def test_construction_failure_is_retained_without_aborting_later_cases() -> None
     )
     assert summary.results[1].status is AuditStatus.MATCH
     assert direct_calls == [first.case_id, second.case_id]
+    assert not summary.ready
+
+
+@pytest.mark.parametrize(
+    "malformed_result",
+    [
+        (),
+        ("not-a-graph", "not-a-root", "not-statistics"),
+    ],
+    ids=["wrong-shape", "wrong-types"],
+)
+def test_malformed_compiler_result_is_retained_and_later_cases_run(
+    malformed_result: tuple[object, ...],
+) -> None:
+    first, second = STRATIFIED_AUDIT_SET[:2]
+    direct_calls: list[str] = []
+
+    def malformed_direct(ast):
+        direct_calls.append(ast.expression_id)
+        if ast.expression_id == first.case_id:
+            return malformed_result
+        return compile_ast_to_eml_dag(ast)
+
+    first_summary = run_audit((first, second), direct_compiler=malformed_direct)
+    direct_calls.clear()
+    second_summary = run_audit((first, second), direct_compiler=malformed_direct)
+
+    assert first_summary.results[0].status is AuditStatus.FAILURE
+    assert first_summary.results[0].failure_type == "TypeError"
+    assert first_summary.results[1].status is AuditStatus.MATCH
+    assert first_summary.fingerprint == second_summary.fingerprint
+    assert direct_calls == [first.case_id, second.case_id]
+    assert not first_summary.ready
+
+
+def test_run_audit_contains_unexpected_per_case_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, second = STRATIFIED_AUDIT_SET[:2]
+    audited_case_ids: list[str] = []
+    original_audit_one = equivalence_audit.audit_one
+
+    def unexpected_once(case, **kwargs):
+        audited_case_ids.append(case.case_id)
+        if case.case_id == first.case_id:
+            raise RuntimeError("deliberate unexpected audit failure")
+        return original_audit_one(case, **kwargs)
+
+    monkeypatch.setattr(equivalence_audit, "audit_one", unexpected_once)
+
+    summary = run_audit((first, second))
+
+    assert audited_case_ids == [first.case_id, second.case_id]
+    assert summary.results[0].status is AuditStatus.FAILURE
+    assert summary.results[0].failure_type == "RuntimeError"
+    assert (
+        summary.results[0].failure_message
+        == "unexpected audit RuntimeError: deliberate unexpected audit failure"
+    )
+    assert summary.results[1].status is AuditStatus.MATCH
     assert not summary.ready
 
 
