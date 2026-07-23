@@ -1,98 +1,145 @@
-"""
-ast.py - bottom-up hash-consing, ast trees to dags
+"""Exact structural sharing for validated binary AST trees."""
 
-owned by 3-2
-
-reuses 3-1's real Graph/GraphNode/ChildRef/compute_signature, that
-part's not a placeholder anymore since we built it ourselves already.
-AstNode below still is though, pending 1-2
-"""
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any
+from fractions import Fraction
 
-from geml.graph.schema import Graph, GraphNode, ChildRef, compute_statistics
-from geml.graph.signatures import compute_signature
+from geml.contracts.ast import ASTNode, ASTTree
+from geml.graph.schema import (
+    AST_FAMILY,
+    ChildRef,
+    Graph,
+    GraphNode,
+    GraphRoot,
+    compute_statistics,
+)
+from geml.graph.signatures import signature_from_parts
+from geml.graph.validate import validate_graph
 
-
-# TODO(Sahil/Quang): placeholder pending 1-2's real ast contract, swap
-# once it merges
-@dataclass(frozen=True)
-class AstNode:
-    op: str
-    children: tuple["AstNode", ...] = ()
-    value: Any = None
-
-
-def _ast_node_count(node: AstNode) -> int:
-    # counts the original tree size, duplicates and all - this is what
-    # the compression ratio gets measured against
-    if not node.children:
-        return 1
-    return 1 + sum(_ast_node_count(c) for c in node.children)
+_NODE_ID_PREFIX = "ast-"
 
 
-def ast_to_dag(root: AstNode) -> Graph:
-    # children get converted first, then each parent checks (via 3-1's
-    # signature) if an identical node already exists before adding a
-    # new one. only exact structural matches get merged - nothing
-    # commutative or semantic, that just falls out of the signature
-    # already caring about slot order and operator kind
-    nodes: dict[str, GraphNode] = {}
-    signature_to_id: dict[str, str] = {}
-    counter = [0]
+@dataclass(frozen=True, slots=True)
+class ASTDagStatistics:
+    """Exact source-tree and structurally shared DAG statistics."""
 
-    def next_id() -> str:
-        counter[0] += 1
-        return f"n{counter[0]}"
-
-    def convert(ast_node: AstNode) -> str:
-        child_refs = tuple(
-            ChildRef(slot=i, target_id=convert(child))
-            for i, child in enumerate(ast_node.children)
-        )
-
-        tentative_id = next_id()
-        candidate = GraphNode(
-            node_id=tentative_id,
-            family="ast",
-            kind=ast_node.op,
-            value=ast_node.value,
-            children=child_refs,
-        )
-        nodes[tentative_id] = candidate  # temp registration so compute_signature can see the children
-        sig = compute_signature(Graph(nodes=nodes, roots=(tentative_id,)), tentative_id)
-
-        if sig in signature_to_id:
-            del nodes[tentative_id]  # already exists, throw this one away
-            return signature_to_id[sig]
-
-        signature_to_id[sig] = tentative_id
-        return tentative_id
-
-    root_id = convert(root)
-    return Graph(nodes=nodes, roots=(root_id,))
-
-
-@dataclass
-class DagConversionStats:
-    ast_node_count: int
+    tree_node_count: int
     dag_node_count: int
-    dag_edge_count: int
-    dag_max_depth: int
-    compression_ratio: float
+    dag_child_reference_count: int
+    dag_depth: int
+    compression_ratio: Fraction
+
+    @property
+    def dag_edge_count(self) -> int:
+        """Compatibility name for the explicit child-reference count."""
+
+        return self.dag_child_reference_count
 
 
-def convert_with_stats(root: AstNode) -> tuple[Graph, DagConversionStats]:
-    graph = ast_to_dag(root)
-    ast_count = _ast_node_count(root)
-    dag_stats = compute_statistics(graph)
-    ratio = ast_count / dag_stats.node_count if dag_stats.node_count else 0.0
+def _children_by_node(tree: ASTTree) -> dict[str, tuple[tuple[int, str], ...]]:
+    children: dict[str, list[tuple[int, str]]] = {node.node_id: [] for node in tree.nodes}
+    for edge in tree.edges:
+        children[edge.source_id].append((edge.child_slot, edge.target_id))
+    return {node_id: tuple(sorted(node_children)) for node_id, node_children in children.items()}
 
-    return graph, DagConversionStats(
-        ast_node_count=ast_count,
-        dag_node_count=dag_stats.node_count,
-        dag_edge_count=dag_stats.edge_count,
-        dag_max_depth=dag_stats.max_depth,
-        compression_ratio=ratio,
+
+def _postorder_node_ids(
+    root_id: str,
+    children: dict[str, tuple[tuple[int, str], ...]],
+) -> list[str]:
+    """Return iterative child-before-parent order for a validated AST."""
+
+    order: list[str] = []
+    stack: list[tuple[str, bool]] = [(root_id, False)]
+    while stack:
+        node_id, leaving = stack.pop()
+        if leaving:
+            order.append(node_id)
+            continue
+        stack.append((node_id, True))
+        for _, child_id in reversed(children[node_id]):
+            stack.append((child_id, False))
+    return order
+
+
+def _intern_node(
+    source: ASTNode,
+    child_nodes: tuple[tuple[int, str], ...],
+    *,
+    nodes: dict[str, GraphNode],
+) -> str:
+    signature = signature_from_parts(
+        family=AST_FAMILY,
+        kind=source.node_kind,
+        label=source.label,
+        value=source.value,
+        children=((slot, child_id.removeprefix(_NODE_ID_PREFIX)) for slot, child_id in child_nodes),
+    )
+    node_id = f"{_NODE_ID_PREFIX}{signature}"
+    if node_id in nodes:
+        return node_id
+    nodes[node_id] = GraphNode(
+        node_id=node_id,
+        family=AST_FAMILY,
+        kind=source.node_kind,
+        label=source.label,
+        value=source.value,
+        children=tuple(ChildRef(slot=slot, target_id=child_id) for slot, child_id in child_nodes),
+    )
+    return node_id
+
+
+def ast_to_dag(tree: ASTTree) -> Graph:
+    """Share only exactly identical structural subtrees in ``tree``."""
+
+    if not isinstance(tree, ASTTree):
+        raise TypeError("tree must be a validated ASTTree")
+
+    source_nodes = {node.node_id: node for node in tree.nodes}
+    source_children = _children_by_node(tree)
+    source_to_dag: dict[str, str] = {}
+    dag_nodes: dict[str, GraphNode] = {}
+
+    for source_id in _postorder_node_ids(tree.root_id, source_children):
+        child_nodes = tuple(
+            (slot, source_to_dag[child_id]) for slot, child_id in source_children[source_id]
+        )
+        dag_id = _intern_node(
+            source_nodes[source_id],
+            child_nodes,
+            nodes=dag_nodes,
+        )
+        source_to_dag[source_id] = dag_id
+
+    graph = Graph(
+        nodes=dag_nodes,
+        roots=(
+            GraphRoot(
+                root_id=tree.expression_id,
+                target_id=source_to_dag[tree.root_id],
+                representation_mode=AST_FAMILY,
+            ),
+        ),
+    )
+    validation = validate_graph(graph)
+    if not validation.valid:  # pragma: no cover - protects the public boundary
+        raise RuntimeError(
+            "AST-to-DAG conversion produced an invalid graph: " + "; ".join(validation.errors)
+        )
+    return graph
+
+
+def convert_with_stats(tree: ASTTree) -> tuple[Graph, ASTDagStatistics]:
+    """Convert one AST and return exact compression statistics."""
+
+    graph = ast_to_dag(tree)
+    graph_statistics = compute_statistics(graph)
+    tree_node_count = tree.statistics.node_count
+    return graph, ASTDagStatistics(
+        tree_node_count=tree_node_count,
+        dag_node_count=graph_statistics.node_count,
+        dag_child_reference_count=graph_statistics.child_reference_count,
+        dag_depth=graph_statistics.max_depth,
+        compression_ratio=Fraction(tree_node_count, graph_statistics.node_count),
     )

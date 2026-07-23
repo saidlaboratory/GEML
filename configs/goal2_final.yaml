@@ -1,0 +1,147 @@
+schema_version: geml-goal2-config-v1
+output_root: outputs/final/goal2
+primary_compiler_mode: official_v4
+run_seed: 20260722
+
+# Smoke intentionally exercises the production final artifact's first 25 rows. The
+# pilot is the separate Goal 1 pilot run-a, not a selected final subset; the
+# analysis quantifies and caveats its known expression overlap with the final corpus.
+stages:
+  smoke:
+    manifest: outputs/final/goal1/final/run/manifests/corpus.manifest.json
+    source_label: selected_final_corpus_25_smoke
+    expected_count: 25
+    row_limit: 25
+    semantic_selection_modulus: 1
+  pilot:
+    manifest: outputs/final/goal1/pilot/run-a/manifests/corpus.manifest.json
+    source_label: actual_goal1_pilot_run_a
+    expected_count: 10000
+    row_limit: null
+    semantic_selection_modulus: 100
+  final:
+    manifest: outputs/final/goal1/final/run/manifests/corpus.manifest.json
+    source_label: final_goal1_corpus_250k
+    expected_count: 250000
+    row_limit: null
+    semantic_selection_modulus: 1000
+
+input_validation:
+  require_manifest_sidecars: true
+  require_qa_pass: true
+  require_unique_expression_ids: true
+
+metrics:
+  output_shard_size: 25000
+  worker_processes: 8
+  resume: true
+  atomic_finalization: true
+
+count_only:
+  count_every_row: true
+  materialize_for_counts: false
+
+materialization:
+  maximum_nodes: 25000
+  maximum_depth: 256
+  maximum_construction_steps: 100000
+
+semantic_audit:
+  backends: [mpmath, numpy_complex128]
+  probe_count: 2
+  precision_digits: 80
+  mpmath_absolute_tolerance: "1e-40"
+  mpmath_relative_tolerance: "1e-35"
+  numpy_absolute_tolerance: "1e-10"
+  numpy_relative_tolerance: "1e-9"
+  selection_hash: sha256
+
+# K counts the explicitly listed source grammar operator labels. L counts the
+# bounded leaf vocabulary: six variable names, 19 integers (-9..9), and, where
+# enabled, 92 distinct reduced non-integral rationals generated from p=-9..9 and
+# q=2..9. Integer(1) is included once in the 19-integer vocabulary.
+threshold_scenarios:
+  - name: algebraic_core_bounded_v1
+    scope_families: [algebraic_core]
+    definition_status: defined
+    K: 4
+    L: 25
+    derivation: >-
+      K=4 for add, subtract, multiply, and negate. L=25 for six configured
+      variable names plus the 19 configured integer values -9 through 9.
+    references:
+      - configs/goal1_generator_final.yaml#families.algebraic_core
+      - configs/goal1_generator_final.yaml#grammar
+      - docs/specs/OPERATOR_DOMAIN_REGISTRY.md
+  - name: power_division_rational_bounded_v1
+    scope_families: [powers_division_rationals]
+    definition_status: defined
+    K: 6
+    L: 117
+    derivation: >-
+      K=6 for add, subtract, multiply, divide, negate, and power. L=117 for
+      six variables, 19 integers, and 92 distinct reduced non-integral rationals.
+    references:
+      - configs/goal1_generator_final.yaml#families.powers_division_rationals
+      - configs/goal1_generator_final.yaml#grammar
+      - docs/specs/OPERATOR_DOMAIN_REGISTRY.md
+  - name: exp_log_bounded_v1
+    scope_families: [exp_log]
+    definition_status: defined
+    K: 8
+    L: 117
+    derivation: >-
+      K adds exp and log to the six power/division/algebraic operator labels;
+      L uses the same bounded six-variable, integer, and rational vocabulary.
+    references:
+      - configs/goal1_generator_final.yaml#families.exp_log
+      - configs/goal1_generator_final.yaml#grammar
+      - docs/specs/OPERATOR_DOMAIN_REGISTRY.md
+  - name: trig_hyperbolic_bounded_v1
+    scope_families: [trig_hyperbolic]
+    definition_status: defined
+    K: 10
+    L: 25
+    derivation: >-
+      K=10 for the four algebraic labels plus sin, cos, tan, sinh, cosh, and
+      tanh. L=25 because this family enables variables and integers, not rationals.
+    references:
+      - configs/goal1_generator_final.yaml#families.trig_hyperbolic
+      - configs/goal1_generator_final.yaml#grammar
+      - docs/specs/OPERATOR_DOMAIN_REGISTRY.md
+  - name: mixed_elementary_bounded_v1
+    scope_families: [mixed_elementary]
+    definition_status: defined
+    K: 14
+    L: 117
+    derivation: >-
+      K=14 for four algebraic, divide, power, exp, log, and six trig/hyperbolic
+      labels. L is the full bounded six-variable, integer, and rational vocabulary.
+    references:
+      - configs/goal1_generator_final.yaml#families.mixed_elementary
+      - configs/goal1_generator_final.yaml#grammar
+      - docs/specs/OPERATOR_DOMAIN_REGISTRY.md
+  - name: ood_stress_bounded_v1
+    scope_families: [ood_stress]
+    definition_status: defined
+    K: 8
+    L: 117
+    derivation: >-
+      K=8 for add, subtract, multiply, divide, negate, power, exp, and log.
+      L uses the same bounded six-variable, integer, and rational vocabulary.
+    references:
+      - configs/goal1_generator_final.yaml#families.ood_stress
+      - configs/goal1_generator_final.yaml#grammar
+      - docs/specs/OPERATOR_DOMAIN_REGISTRY.md
+
+telemetry:
+  peak_resident_memory: true
+  package_versions: [geml, mpmath, numpy, psutil, pyarrow, pydantic, sympy]
+
+analysis:
+  ast_size_buckets: [[1, 8], [9, 16], [17, 32], [33, 64], [65, 128]]
+  minimum_group_count: 30
+  top_case_count: 100
+  scatter_sample_size: 20000
+  sample_seed: 20260722
+  quantile_method: linear

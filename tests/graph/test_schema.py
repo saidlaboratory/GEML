@@ -1,241 +1,478 @@
-"""tests/graph/test_schema.py - owned by 3-1. tiny fixtures only."""
-from geml.graph.schema import Graph, GraphNode, ChildRef, compute_statistics
-from geml.graph.signatures import compute_signature
+"""Tests for the representation-neutral graph contract."""
+
+from __future__ import annotations
+
+import copy
+
+import pytest
+
+from geml.graph.schema import (
+    AST_FAMILY,
+    EML_FAMILY,
+    EML_ONE_KIND,
+    EML_OPERATOR_KIND,
+    EML_VARIABLE_KIND,
+    ChildRef,
+    Graph,
+    GraphNode,
+    GraphRoot,
+    compute_statistics,
+)
+from geml.graph.signatures import compute_signature, signature_from_parts
 from geml.graph.validate import validate_graph
 
 
-def _add_xy():
-    """x + y, a tiny plain AST graph."""
+def _ast_leaf(node_id: str, value: str | int) -> GraphNode:
+    label = "symbol" if isinstance(value, str) else "integer"
+    return GraphNode(node_id, AST_FAMILY, "leaf", label, value)
+
+
+def _add_xy() -> Graph:
     nodes = {
-        "root": GraphNode("root", family="ast", kind="Add", children=(ChildRef(0, "x"), ChildRef(1, "y"))),
-        "x": GraphNode("x", family="ast", kind="Var", value="x"),
-        "y": GraphNode("y", family="ast", kind="Var", value="y"),
+        "root": GraphNode(
+            "root",
+            AST_FAMILY,
+            "operator",
+            "add",
+            children=(ChildRef(0, "x"), ChildRef(1, "y")),
+        ),
+        "x": _ast_leaf("x", "x"),
+        "y": _ast_leaf("y", "y"),
     }
-    return Graph(nodes=nodes, roots=("root",))
+    return Graph(nodes, (GraphRoot("expression", "root", "ast"),))
 
 
-# ---------------------------------------------------------------------
-# basic validity + stats
-# ---------------------------------------------------------------------
+def _shared_add() -> Graph:
+    """Represent ``(x + 1) * (x + 1)`` with one shared Add node."""
 
-def test_simple_graph_is_valid():
-    g = _add_xy()
-    result = validate_graph(g)
-    assert result.valid
-    assert result.errors == []
-
-
-def test_stats_on_simple_graph():
-    g = _add_xy()
-    stats = compute_statistics(g)
-    assert stats.node_count == 3
-    assert stats.edge_count == 2
-    assert stats.leaf_count == 2
-    assert stats.root_count == 1
-    assert stats.max_depth == 1
-
-
-# ---------------------------------------------------------------------
-# duplicate child references (the DAG-sharing case)
-# ---------------------------------------------------------------------
-
-def _mul_shared_add():
-    """(x+1)*(x+1) as a DAG - Mul has two children, both pointing at the same Add node."""
     nodes = {
-        "mul": GraphNode("mul", family="ast", kind="Mul", children=(ChildRef(0, "add"), ChildRef(1, "add"))),
-        "add": GraphNode("add", family="ast", kind="Add", children=(ChildRef(0, "x"), ChildRef(1, "one"))),
-        "x": GraphNode("x", family="ast", kind="Var", value="x"),
-        "one": GraphNode("one", family="ast", kind="Const", value=1),
+        "multiply": GraphNode(
+            "multiply",
+            AST_FAMILY,
+            "operator",
+            "multiply",
+            children=(ChildRef(0, "add"), ChildRef(1, "add")),
+        ),
+        "add": GraphNode(
+            "add",
+            AST_FAMILY,
+            "operator",
+            "add",
+            children=(ChildRef(0, "x"), ChildRef(1, "one")),
+        ),
+        "x": _ast_leaf("x", "x"),
+        "one": _ast_leaf("one", 1),
     }
-    return Graph(nodes=nodes, roots=("mul",))
+    return Graph(nodes, (GraphRoot("expression", "multiply", "ast"),))
 
 
-def test_duplicate_child_refs_stay_explicit():
-    g = _mul_shared_add()
-    mul_node = g.nodes["mul"]
-    assert len(mul_node.children) == 2  # both refs present, not collapsed into one
-    assert mul_node.children[0].target_id == mul_node.children[1].target_id == "add"
+def test_valid_graph_statistics_count_duplicate_references() -> None:
+    graph = _shared_add()
+
+    assert validate_graph(graph).valid
+    assert len(graph.nodes["multiply"].children) == 2
+    assert graph.nodes["multiply"].children[0].target_id == "add"
+    assert graph.nodes["multiply"].children[1].target_id == "add"
+
+    statistics = compute_statistics(graph)
+    assert statistics.node_count == 4
+    assert statistics.edge_count == 4
+    assert statistics.child_reference_count == 4
+    assert statistics.leaf_count == 2
+    assert statistics.root_count == 1
+    assert statistics.max_depth == 2
 
 
-def test_shared_node_counted_once_in_stats():
-    # DAG-sharing case: 4 unique nodes (mul, add, x, one), but 4 total
-    # edges since 'add' is referenced twice - edge_count can exceed
-    # node_count-1, which is the whole point of sharing vs a plain tree
-    g = _mul_shared_add()
-    stats = compute_statistics(g)
-    assert stats.node_count == 4
-    assert stats.edge_count == 4
+def test_graph_snapshots_mutable_inputs() -> None:
+    nodes = {"x": _ast_leaf("x", "x")}
+    graph = Graph(nodes, (GraphRoot("expression", "x", "ast"),))
+    nodes["y"] = _ast_leaf("y", "y")
+
+    assert tuple(graph.nodes) == ("x",)
+    with pytest.raises(TypeError):
+        graph.nodes["y"] = _ast_leaf("y", "y")  # type: ignore[index]
 
 
-def test_shared_node_graph_is_valid():
-    g = _mul_shared_add()
-    assert validate_graph(g).valid
+def test_graph_deep_snapshots_nested_json_values() -> None:
+    payload = {"nested": [{"value": 1}]}
+    graph = Graph(
+        {"payload": GraphNode("payload", AST_FAMILY, "leaf", "payload", payload)},
+        (GraphRoot("expression", "payload", "ast"),),
+    )
+    signature = compute_signature(graph, "payload")
+
+    payload["nested"][0]["value"] = 2
+
+    assert graph.nodes["payload"].value == {"nested": [{"value": 1}]}
+    assert compute_signature(graph, "payload") == signature
+    assert copy.deepcopy(graph.nodes["payload"]) == graph.nodes["payload"]
+
+    snapshot = graph.nodes["payload"].value
+    assert isinstance(snapshot, dict)
+    nested = snapshot["nested"]
+    assert isinstance(nested, list)
+    with pytest.raises(TypeError, match="immutable"):
+        nested.append(2)
+    nested_item = nested[0]
+    assert isinstance(nested_item, dict)
+    with pytest.raises(TypeError, match="immutable"):
+        nested_item["value"] = 2
 
 
-# ---------------------------------------------------------------------
-# signatures: structural equality
-# ---------------------------------------------------------------------
+def test_nested_json_signature_remains_byte_compatible() -> None:
+    signature = signature_from_parts(
+        family=AST_FAMILY,
+        kind="leaf",
+        label="payload",
+        value={"a": [1, {"b": "é"}]},
+        children=(),
+    )
 
-def test_identical_subtrees_have_identical_signatures():
-    """acceptance criterion: identical subtrees -> identical signatures."""
-    nodes = {
-        "a": GraphNode("a", family="ast", kind="Add", children=(ChildRef(0, "x1"), ChildRef(1, "one1"))),
-        "x1": GraphNode("x1", family="ast", kind="Var", value="x"),
-        "one1": GraphNode("one1", family="ast", kind="Const", value=1),
-        "b": GraphNode("b", family="ast", kind="Add", children=(ChildRef(0, "x2"), ChildRef(1, "one2"))),
-        "x2": GraphNode("x2", family="ast", kind="Var", value="x"),
-        "one2": GraphNode("one2", family="ast", kind="Const", value=1),
-    }
-    g = Graph(nodes=nodes, roots=("a", "b"))
-    assert compute_signature(g, "a") == compute_signature(g, "b")
+    assert signature == "7f1de41b98b3d7ec64e42c6e8ab0cf9263422d1462095c647f391c531881a28d"
 
 
-def test_non_identical_ordered_subtrees_differ():
-    """acceptance criterion: non-identical ordered subtrees -> different signatures."""
-    nodes = {
-        "pow_x2": GraphNode("pow_x2", family="ast", kind="Pow", children=(ChildRef(0, "x"), ChildRef(1, "two"))),
-        "pow_2x": GraphNode("pow_2x", family="ast", kind="Pow", children=(ChildRef(0, "two"), ChildRef(1, "x"))),
-        "x": GraphNode("x", family="ast", kind="Var", value="x"),
-        "two": GraphNode("two", family="ast", kind="Const", value=2),
-    }
-    g = Graph(nodes=nodes, roots=("pow_x2", "pow_2x"))
-    assert compute_signature(g, "pow_x2") != compute_signature(g, "pow_2x")
+def test_tuple_values_are_rejected_in_nodes_and_direct_signatures() -> None:
+    with pytest.raises(TypeError, match="tuples are not valid JSON arrays"):
+        GraphNode("tuple", AST_FAMILY, "leaf", "payload", (1,))  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="tuples are not valid JSON arrays"):
+        signature_from_parts(
+            family=AST_FAMILY,
+            kind="leaf",
+            label="payload",
+            value=(1,),  # type: ignore[arg-type]
+            children=(),
+        )
 
 
-def test_structural_vs_semantic_equality():
-    """
-    fixture distinguishing structural equality (same shape) from
-    semantic equality (same math, different shape). the schema only
-    knows about structure - two graphs that mean the same thing but
-    are built differently must NOT get the same signature. proving
-    they're actually equal mathematically is goal 4's job (e-graphs),
-    not this schema's.
-    """
-    # x + x  (structurally: Add(x, x))
-    add_xx_nodes = {
-        "root": GraphNode("root", family="ast", kind="Add", children=(ChildRef(0, "x1"), ChildRef(1, "x2"))),
-        "x1": GraphNode("x1", family="ast", kind="Var", value="x"),
-        "x2": GraphNode("x2", family="ast", kind="Var", value="x"),
-    }
-    g1 = Graph(nodes=add_xx_nodes, roots=("root",))
+def test_validation_retains_non_node_mapping_values() -> None:
+    graph = Graph(
+        {
+            "root": GraphNode(
+                "root",
+                AST_FAMILY,
+                "operator",
+                "negate",
+                children=(ChildRef(0, "malformed"),),
+            ),
+            "malformed": "not-a-node",  # type: ignore[dict-item]
+        },
+        (GraphRoot("expression", "root", "ast"),),
+    )
 
-    # 2 * x  (structurally: Mul(2, x)) - mathematically equal to x+x, but a different shape
-    mul_2x_nodes = {
-        "root": GraphNode("root", family="ast", kind="Mul", children=(ChildRef(0, "two"), ChildRef(1, "x"))),
-        "two": GraphNode("two", family="ast", kind="Const", value=2),
-        "x": GraphNode("x", family="ast", kind="Var", value="x"),
-    }
-    g2 = Graph(nodes=mul_2x_nodes, roots=("root",))
+    result = validate_graph(graph)
 
-    # different structure -> different signature, even though the maths matches
-    assert compute_signature(g1, "root") != compute_signature(g2, "root")
-
-
-# ---------------------------------------------------------------------
-# validation failure modes
-# ---------------------------------------------------------------------
-
-def test_cycle_is_rejected():
-    nodes = {
-        "a": GraphNode("a", family="ast", kind="Add", children=(ChildRef(0, "b"),)),
-        "b": GraphNode("b", family="ast", kind="Add", children=(ChildRef(0, "a"),)),
-    }
-    g = Graph(nodes=nodes, roots=("a",))
-    result = validate_graph(g)
     assert not result.valid
-    assert any("cycle" in e for e in result.errors)
+    assert any("does not contain a GraphNode record" in error for error in result.errors)
+    assert any("references malformed node" in error for error in result.errors)
+    with pytest.raises(ValueError, match="invalid graph"):
+        compute_statistics(graph)
 
 
-def test_missing_root_is_rejected():
-    nodes = {"a": GraphNode("a", family="ast", kind="Var", value="x")}
-    g = Graph(nodes=nodes, roots=("nonexistent",))
-    result = validate_graph(g)
+def test_identical_subtrees_have_identical_signatures() -> None:
+    nodes = {
+        "a": GraphNode(
+            "a",
+            AST_FAMILY,
+            "operator",
+            "add",
+            children=(ChildRef(0, "x1"), ChildRef(1, "one1")),
+        ),
+        "x1": _ast_leaf("x1", "x"),
+        "one1": _ast_leaf("one1", 1),
+        "b": GraphNode(
+            "b",
+            AST_FAMILY,
+            "operator",
+            "add",
+            children=(ChildRef(0, "x2"), ChildRef(1, "one2")),
+        ),
+        "x2": _ast_leaf("x2", "x"),
+        "one2": _ast_leaf("one2", 1),
+    }
+    graph = Graph(
+        nodes,
+        (
+            GraphRoot("expression-a", "a", "ast"),
+            GraphRoot("expression-b", "b", "ast"),
+        ),
+    )
+
+    signature_a = compute_signature(graph, "a")
+    signature_b = compute_signature(graph, "b")
+    assert signature_a == signature_b
+    assert len(signature_a) == 64
+    assert signature_a == signature_a.lower()
+
+
+def test_ordered_slots_change_a_signature() -> None:
+    nodes = {
+        "xy": GraphNode(
+            "xy",
+            AST_FAMILY,
+            "operator",
+            "power",
+            children=(ChildRef(0, "x"), ChildRef(1, "two")),
+        ),
+        "yx": GraphNode(
+            "yx",
+            AST_FAMILY,
+            "operator",
+            "power",
+            # Tuple order is irrelevant; the explicit slots are authoritative.
+            children=(ChildRef(1, "x"), ChildRef(0, "two")),
+        ),
+        "x": _ast_leaf("x", "x"),
+        "two": _ast_leaf("two", 2),
+    }
+    graph = Graph(
+        nodes,
+        (
+            GraphRoot("expression-xy", "xy", "ast"),
+            GraphRoot("expression-yx", "yx", "ast"),
+        ),
+    )
+
+    assert compute_signature(graph, "xy") != compute_signature(graph, "yx")
+
+
+@pytest.mark.parametrize(
+    ("changed_node", "family", "kind", "label", "value"),
+    [
+        ("family", EML_FAMILY, "leaf", "integer", 1),
+        ("kind", AST_FAMILY, "constant", "integer", 1),
+        ("label", AST_FAMILY, "leaf", "one", 1),
+        ("value_type", AST_FAMILY, "leaf", "integer", "1"),
+    ],
+)
+def test_every_canonical_header_field_affects_signature(
+    changed_node: str,
+    family: str,
+    kind: str,
+    label: str,
+    value: str | int,
+) -> None:
+    del changed_node
+    root = (GraphRoot("expression", "n", family),)
+    baseline = Graph({"n": _ast_leaf("n", 1)}, root)
+    changed = Graph({"n": GraphNode("n", family, kind, label, value)}, root)
+
+    assert compute_signature(baseline, "n") != compute_signature(changed, "n")
+
+
+def test_structural_identity_is_not_semantic_equivalence() -> None:
+    add = Graph(
+        {
+            "root": GraphNode(
+                "root",
+                AST_FAMILY,
+                "operator",
+                "add",
+                children=(ChildRef(0, "x1"), ChildRef(1, "x2")),
+            ),
+            "x1": _ast_leaf("x1", "x"),
+            "x2": _ast_leaf("x2", "x"),
+        },
+        (GraphRoot("expression", "root", "ast"),),
+    )
+    multiply = Graph(
+        {
+            "root": GraphNode(
+                "root",
+                AST_FAMILY,
+                "operator",
+                "multiply",
+                children=(ChildRef(0, "two"), ChildRef(1, "x")),
+            ),
+            "two": _ast_leaf("two", 2),
+            "x": _ast_leaf("x", "x"),
+        },
+        (GraphRoot("expression", "root", "ast"),),
+    )
+
+    assert compute_signature(add, "root") != compute_signature(multiply, "root")
+
+
+@pytest.mark.parametrize(
+    ("graph", "message"),
+    [
+        (
+            Graph(
+                {"x": _ast_leaf("x", "x")},
+                (GraphRoot("expression", "missing", "ast"),),
+            ),
+            "does not exist",
+        ),
+        (
+            Graph(
+                {
+                    "root": GraphNode(
+                        "root",
+                        AST_FAMILY,
+                        "operator",
+                        "add",
+                        children=(ChildRef(0, "x"), ChildRef(0, "y")),
+                    ),
+                    "x": _ast_leaf("x", "x"),
+                    "y": _ast_leaf("y", "y"),
+                },
+                (GraphRoot("expression", "root", "ast"),),
+            ),
+            "duplicate child slot",
+        ),
+        (
+            Graph(
+                {
+                    "root": GraphNode(
+                        "root",
+                        AST_FAMILY,
+                        "operator",
+                        "negate",
+                        children=(ChildRef(1, "x"),),
+                    ),
+                    "x": _ast_leaf("x", "x"),
+                },
+                (GraphRoot("expression", "root", "ast"),),
+            ),
+            "contiguous from zero",
+        ),
+        (
+            Graph(
+                {
+                    "a": GraphNode(
+                        "a",
+                        AST_FAMILY,
+                        "operator",
+                        "negate",
+                        children=(ChildRef(0, "b"),),
+                    ),
+                    "b": GraphNode(
+                        "b",
+                        AST_FAMILY,
+                        "operator",
+                        "negate",
+                        children=(ChildRef(0, "a"),),
+                    ),
+                },
+                (GraphRoot("expression", "a", "ast"),),
+            ),
+            "cycle detected",
+        ),
+        (
+            Graph(
+                {
+                    "root": _ast_leaf("root", "x"),
+                    "orphan": _ast_leaf("orphan", "y"),
+                },
+                (GraphRoot("expression", "root", "ast"),),
+            ),
+            "unreachable",
+        ),
+    ],
+)
+def test_structural_validation_retains_failures(graph: Graph, message: str) -> None:
+    result = validate_graph(graph)
+
     assert not result.valid
-    assert any("does not exist" in e for e in result.errors)
+    assert any(message in error for error in result.errors)
+    with pytest.raises(ValueError, match="invalid graph"):
+        compute_statistics(graph)
 
 
-def test_duplicate_slot_is_rejected():
-    """two DIFFERENT children can't both claim the same slot number."""
-    nodes = {
-        "root": GraphNode("root", family="ast", kind="Add", children=(ChildRef(0, "x"), ChildRef(0, "y"))),
-        "x": GraphNode("x", family="ast", kind="Var", value="x"),
-        "y": GraphNode("y", family="ast", kind="Var", value="y"),
-    }
-    g = Graph(nodes=nodes, roots=("root",))
-    result = validate_graph(g)
-    assert not result.valid
-    assert any("claiming slot" in e for e in result.errors)
+def test_purity_rejects_mixed_representation_families() -> None:
+    graph = Graph(
+        {
+            "root": GraphNode(
+                "root",
+                AST_FAMILY,
+                "operator",
+                "negate",
+                children=(ChildRef(0, "x"),),
+            ),
+            "x": GraphNode("x", EML_FAMILY, EML_VARIABLE_KIND, "x", "x"),
+        },
+        (GraphRoot("expression", "root", "ast"),),
+    )
+
+    assert any("same representation family" in error for error in validate_graph(graph).errors)
 
 
-def test_purity_violation_is_rejected():
-    """sin isn't in the (provisional) AST vocabulary."""
-    nodes = {
-        "root": GraphNode("root", family="ast", kind="sin", children=(ChildRef(0, "x"),)),
-        "x": GraphNode("x", family="ast", kind="Var", value="x"),
-    }
-    g = Graph(nodes=nodes, roots=("root",))
-    result = validate_graph(g)
-    assert not result.valid
-    assert any("not in the approved" in e for e in result.errors)
+def test_binary_ast_purity_rejects_arity_above_two() -> None:
+    graph = Graph(
+        {
+            "root": GraphNode(
+                "root",
+                AST_FAMILY,
+                "operator",
+                "add",
+                children=(
+                    ChildRef(0, "x"),
+                    ChildRef(1, "y"),
+                    ChildRef(2, "z"),
+                ),
+            ),
+            "x": _ast_leaf("x", "x"),
+            "y": _ast_leaf("y", "y"),
+            "z": _ast_leaf("z", "z"),
+        },
+        (GraphRoot("expression", "root", "ast"),),
+    )
+
+    assert any("binary AST arity" in error for error in validate_graph(graph).errors)
 
 
-def test_unreachable_node_is_rejected():
-    nodes = {
-        "root": GraphNode("root", family="ast", kind="Var", value="x"),
-        "orphan": GraphNode("orphan", family="ast", kind="Var", value="y"),
-    }
-    g = Graph(nodes=nodes, roots=("root",))
-    result = validate_graph(g)
-    assert not result.valid
-    assert any("unreachable" in e for e in result.errors)
+def test_exact_pure_eml_shapes_validate() -> None:
+    graph = Graph(
+        {
+            "root": GraphNode(
+                "root",
+                EML_FAMILY,
+                EML_OPERATOR_KIND,
+                "eml",
+                children=(ChildRef(0, "x"), ChildRef(1, "one")),
+            ),
+            "x": GraphNode("x", EML_FAMILY, EML_VARIABLE_KIND, "x", "x"),
+            "one": GraphNode("one", EML_FAMILY, EML_ONE_KIND, "1", 1),
+        },
+        (GraphRoot("expression", "root", "pure_eml:official_v4"),),
+    )
+
+    assert validate_graph(graph).valid
 
 
-def test_eml_family_purity():
-    """eml family should reject AST-style operators like Add - pure EML
-    trees may only contain eml nodes and leaves."""
-    nodes = {
-        "root": GraphNode("root", family="eml", kind="Add", children=(ChildRef(0, "x"), ChildRef(1, "one"))),
-        "x": GraphNode("x", family="eml", kind="Var", value="x"),
-        "one": GraphNode("one", family="eml", kind="Const", value=1),
-    }
-    g = Graph(nodes=nodes, roots=("root",))
-    result = validate_graph(g)
-    assert not result.valid
-    assert any("eml" in e for e in result.errors)
+@pytest.mark.parametrize(
+    "invalid_leaf",
+    [
+        GraphNode("leaf", EML_FAMILY, EML_ONE_KIND, "1", 2),
+        GraphNode("leaf", EML_FAMILY, EML_VARIABLE_KIND, "x+y", "x+y"),
+        GraphNode("leaf", EML_FAMILY, "constant", "1", 1),
+    ],
+)
+def test_pure_eml_rejects_hidden_or_nonprimitive_leaves(
+    invalid_leaf: GraphNode,
+) -> None:
+    graph = Graph(
+        {"leaf": invalid_leaf},
+        (GraphRoot("expression", "leaf", "pure_eml:official_v4"),),
+    )
+
+    assert not validate_graph(graph).valid
 
 
-def test_macro_family_is_valid_and_neutral():
-    """
-    macro nodes (compiler-generated shorthand like eml_add) aren't
-    checked against a fixed vocabulary - there isn't a closed list the
-    way ast/eml have one. this proves a macro graph validates cleanly
-    and gets a real signature, not just "assumed to work" because no
-    test ever built one.
-    """
-    nodes = {
-        "root": GraphNode("root", family="macro", kind="eml_add", children=(ChildRef(0, "x"), ChildRef(1, "one"))),
-        "x": GraphNode("x", family="macro", kind="Var", value="x"),
-        "one": GraphNode("one", family="macro", kind="Const", value=1),
-    }
-    g = Graph(nodes=nodes, roots=("root",))
-    result = validate_graph(g)
-    assert result.valid
-    assert result.errors == []
-    sig = compute_signature(g, "root")
-    assert sig  # non-empty, actually computed, not skipped
+@pytest.mark.parametrize("family", ["macro", "motif"])
+def test_schema_remains_neutral_for_future_graph_families(family: str) -> None:
+    graph = Graph(
+        {
+            "root": GraphNode(
+                "root",
+                family,
+                "template",
+                "future-representation",
+                children=(ChildRef(0, "x"),),
+            ),
+            "x": GraphNode("x", family, "leaf", "x", "x"),
+        },
+        (GraphRoot("expression", "root", family),),
+    )
 
-
-def test_motif_family_is_valid_and_neutral():
-    """same as above but for motif family - a compressed, reused pattern
-    node with no fixed vocabulary either."""
-    nodes = {
-        "root": GraphNode("root", family="motif", kind="motif_17", label="common_add_one", children=(ChildRef(0, "x"),)),
-        "x": GraphNode("x", family="motif", kind="Var", value="x"),
-    }
-    g = Graph(nodes=nodes, roots=("root",))
-    result = validate_graph(g)
-    assert result.valid
-    assert result.errors == []
-    sig = compute_signature(g, "root")
-    assert "motif" in sig
-    assert "common_add_one" in sig  # label shows up in the signature too
+    assert validate_graph(graph).valid
+    assert compute_signature(graph, "root")
