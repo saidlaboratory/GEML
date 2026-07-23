@@ -1,0 +1,53 @@
+# Goal 3 production command, run from the repository root:
+# python -m geml.experiments.goal3.run --config configs/goal3_final.yaml --stage final
+schema_version: geml-goal3-config-v1
+output_root: outputs/final/goal3
+compiler_mode: official_v4
+construction_path: direct_hashcons
+
+stages:
+  smoke:
+    manifest: outputs/final/goal1/final/run/manifests/corpus.manifest.json
+    source_label: selected_final_corpus_25_smoke
+    expected_count: 25
+    row_limit: 25
+  final:
+    manifest: outputs/final/goal1/final/run/manifests/corpus.manifest.json
+    source_label: final_goal1_corpus_250k
+    expected_count: 250000
+    row_limit: null
+
+input_validation:
+  require_manifest_sidecars: true
+  require_qa_pass: true
+  require_unique_expression_ids: true
+
+processing:
+  worker_processes: 8
+  worker_batch_size: 256
+  worker_chunksize: 8
+  parquet_row_group_size: 1024
+  resume: true
+  atomic_finalization: true
+
+audit:
+  # The direct path must never run unless issue 3-5 has complete exact coverage.
+  require_ready: true
+
+telemetry:
+  package_versions: [geml, mpmath, psutil, pyarrow, pydantic, sympy]
+  scale_checkpoints: [10000, 50000, 100000, 250000]
+
+scientific_metrics:
+  # Every ratio is also stored as a reduced exact numerator/denominator pair.
+  ratio_orientation: 'raw=eml_tree/ast_tree;dag_tree=eml_dag/ast_tree;dag_dag=eml_dag/ast_dag;ast_compression=ast_tree/ast_dag;eml_compression=eml_tree/eml_dag'
+  # A shared node's reuse depth is its shortest child-reference distance from the root.
+  reuse_depth: minimum_root_distance
+  # Concentration is max(indegree-1) divided by total excess child references.
+  sharing_concentration: max_excess_reference_share
+  # Counts include every incoming reference to nodes whose indegree exceeds one.
+  reused_reference_count: sum_indegrees_of_reused_nodes
+  # Maximum reuse is the largest indegree among reused nodes (zero if none).
+  max_reuse_count: maximum_reused_node_indegree
+  # Child-reference overhead is the sum of indegree-1 over all reused nodes.
+  child_reference_overhead: sum_excess_references
