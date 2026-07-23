@@ -1,0 +1,51 @@
+# configs/goal6_pairs.yaml
+# owned by 6-1
+#
+# config for the real >=50k/5k/5k pair build. NOT executable yet - it
+# needs 1-8's corpus, 4-4/4-5's rule libraries and 2-6's verifier, all
+# three still open. this file pins the intended run so the numbers in
+# the spec and the numbers we eventually report come from the same place.
+
+run:
+  run_id: goal6_pairs_v1
+  resume: true
+  reproduction_command: >
+    PYTHONPATH=src python3 -m geml.data.pairs.generate
+    --config configs/goal6_pairs.yaml
+
+corpus:
+  manifest_path: data/goal1_corpus/corpus_manifest.json   # 1-8's frozen manifest
+  splits: [train, validation, test_iid, test_ood]
+
+targets:
+  # the acceptance floor, not a quota to hit by loosening anything -
+  # if saturation doesn't reach it, we report the shortfall
+  train: 50000
+  validation: 5000
+  test: 5000
+
+positives:
+  mode: SAFE_REAL          # 4-1 rewrite mode; POSITIVE_REAL_FORMAL needs recorded assumptions
+  max_per_source: 8        # cap the fan-out so one heavily-rewritable expression
+                           # can't dominate a split
+  min_step_distance: 1
+  max_step_distance: 12    # longer traces exist; 7-0 wants them stratified, not truncated silently
+
+negatives:
+  kind: same_family
+  size_tolerance: 2        # nodes. tight on purpose - a loose window makes
+                           # "which is bigger" a winning strategy
+  ratio: 1.0               # one negative per positive
+
+verification:
+  tier_order: [egraph_proof, symbolic, numeric]   # first tier that answers wins, tier recorded on the pair
+  require_refutation_for_negatives: true
+
+output:
+  path: outputs/final/goal6/pairs/
+  shard_size: 25000        # matches 1-5
+
+smoke_test:
+  count: 25
+  command: >
+    PYTHONPATH=src python3 -m pytest tests/data/test_pairs.py -v
