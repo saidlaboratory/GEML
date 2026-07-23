@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import inspect
 import re
 from dataclasses import FrozenInstanceError
@@ -12,8 +13,11 @@ import pytest
 import geml.interfaces.eml_dag_cost as cost_module
 from geml.ast.builder import build_ast_from_parsed
 from geml.contracts.ast import ASTEdge, ASTNode, ASTStatistics, ASTTree
+from geml.contracts.corpus import CorpusSplit
+from geml.contracts.expression import ExpressionRecord
 from geml.eml.compiler_core import CompilerMode, eml_exp, eml_negate
 from geml.eml.ir import EML, One, Variable
+from geml.experiments.goal3.run import process_expression_record
 from geml.graph.validate import ValidationResult
 from geml.interfaces.eml_dag_cost import (
     EMLDagCostFailureStage,
@@ -30,6 +34,32 @@ def _ast_from_srepr(source: str, *, expression_id: str = "expression") -> ASTTre
     return build_ast_from_parsed(
         parse_srepr(source),
         expression_id=expression_id,
+    )
+
+
+def _record_from_srepr(
+    source: str,
+    *,
+    operator_counts: dict[str, int],
+) -> ExpressionRecord:
+    domain_mode = "safe_real"
+    expression_id = hashlib.sha256(
+        f"geml-expression-v1\0{domain_mode}\0{source}".encode()
+    ).hexdigest()
+    tree = _ast_from_srepr(source, expression_id=expression_id)
+    return ExpressionRecord(
+        expression_id=expression_id,
+        sympy_srepr=source,
+        display_text=source,
+        latex_text=None,
+        split=CorpusSplit.TRAIN,
+        operator_family="interface_fixture",
+        domain_mode=domain_mode,
+        variables=("x",),
+        target_ast_size=tree.statistics.node_count,
+        target_depth=tree.statistics.depth,
+        generator_seed=1,
+        generator_metadata={"operator_counts": operator_counts},
     )
 
 
@@ -214,6 +244,41 @@ def test_source_ast_uses_exact_official_cost_by_default() -> None:
     assert result.failure_stage is None
     assert result.error_type is None
     assert result.error_message is None
+
+
+@pytest.mark.parametrize(
+    ("source", "operator_counts"),
+    [
+        ("Symbol('x', real=True)", {"symbol": 1}),
+        (
+            "Add(Symbol('x', real=True), Symbol('x', real=True))",
+            {"add": 1, "symbol": 2},
+        ),
+        ("sin(Symbol('x', real=True))", {"sin": 1, "symbol": 1}),
+    ],
+)
+def test_cost_result_matches_goal3_metric_fixture(
+    source: str,
+    operator_counts: dict[str, int],
+) -> None:
+    record = _record_from_srepr(source, operator_counts=operator_counts)
+    tree = _ast_from_srepr(record.sympy_srepr, expression_id=record.expression_id)
+
+    cost = compute_eml_dag_cost(tree)
+    metric = process_expression_record(
+        record,
+        shard_id="interface-fixture:train:00000",
+        shard_path="data/train/interface-fixture.parquet",
+        input_row_index=0,
+    )
+
+    assert cost.status is EMLDagCostStatus.SUCCESS
+    assert metric["status"] == "success"
+    assert cost.eml_dag_node_count == metric["eml_dag_node_count"]
+    assert cost.eml_dag_child_reference_count == metric["eml_dag_child_reference_count"]
+    assert cost.eml_dag_depth == metric["eml_dag_depth"]
+    assert cost.compiler_mode is CompilerMode.OFFICIAL_V4
+    assert cost.construction_path == metric["construction_path"]
 
 
 @pytest.mark.parametrize("operator_name", _COSTED_OPERATORS)
