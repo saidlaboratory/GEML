@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 from datetime import UTC, datetime
@@ -16,12 +17,15 @@ import yaml
 import geml.analysis.goal3.metrics as goal3_metrics
 from geml.analysis.goal3.failures import OutcomeMiner
 from geml.analysis.goal3.metrics import (
+    METRICS_SUMMARY_NAME,
+    OPERATOR_SIGNATURE_SIDECAR_NAME,
     RATIO_NAMES,
     AnalysisArtifactError,
     AnalysisRow,
     ReusePattern,
     StratificationAxis,
     analyze_goal3_artifacts,
+    iter_operator_signature_group_payloads,
     save_analysis,
 )
 from geml.contracts.corpus import CorpusSplit
@@ -337,6 +341,42 @@ def test_row_adapter_rejects_inconsistent_reuse_accounting() -> None:
         AnalysisRow.from_mapping(mapping)
 
 
+def test_reuse_aggregate_rejects_impossible_reference_minima() -> None:
+    decimal_zero = goal3_metrics.DecimalMean(decimal="0", sample_count=1)
+    exact_zero = goal3_metrics.ExactMean.from_total(0, 1)
+    exact_five = goal3_metrics.ExactMean.from_total(5, 1)
+    with pytest.raises(ValueError, match="no-reuse aggregate"):
+        goal3_metrics.ReuseAggregate(
+            total_reused_node_count=0,
+            total_reused_reference_count=5,
+            total_excess_reference_count=5,
+            total_child_reference_overhead=5,
+            max_reuse_indegree=0,
+            mean_reused_node_count=exact_zero,
+            mean_reused_reference_count=exact_five,
+            mean_excess_reference_count=exact_five,
+            mean_child_reference_overhead=exact_five,
+            mean_reuse_depth=None,
+            mean_sharing_concentration=decimal_zero,
+        )
+
+    exact_two = goal3_metrics.ExactMean.from_total(2, 1)
+    with pytest.raises(ValueError, match="maximum indegree is inconsistent"):
+        goal3_metrics.ReuseAggregate(
+            total_reused_node_count=2,
+            total_reused_reference_count=2,
+            total_excess_reference_count=0,
+            total_child_reference_overhead=0,
+            max_reuse_indegree=2,
+            mean_reused_node_count=exact_two,
+            mean_reused_reference_count=exact_two,
+            mean_excess_reference_count=exact_zero,
+            mean_child_reference_overhead=exact_zero,
+            mean_reuse_depth=goal3_metrics.ExactMean.from_total(2, 2),
+            mean_sharing_concentration=decimal_zero,
+        )
+
+
 def test_analysis_stratifies_exact_metrics_and_retains_failures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -362,7 +402,9 @@ def test_analysis_stratifies_exact_metrics_and_retains_failures(
     assert compression_mean.sample_count == 3
     assert compression_mean.as_dict()["approximate"] is True
     assert "exact" not in compression_mean.as_dict()
-    assert {table.axis for table in report.strata} == set(StratificationAxis)
+    assert {table.axis for table in report.strata} == set(StratificationAxis) - {
+        StratificationAxis.OPERATOR_SIGNATURE
+    }
     strata = {table.axis: table for table in report.strata}
     assert {group.key for group in strata[StratificationAxis.FAMILY].groups} == {
         "algebraic_core",
@@ -584,10 +626,12 @@ def test_saving_is_deterministic_and_never_edits_source_artifacts(
     saved_manifest = json.loads(first.manifest_path.read_text(encoding="utf-8"))
     assert saved_manifest["analysis_fingerprint"] == report.fingerprint
     assert {product["path"] for product in saved_manifest["products"]} == {
-        "metrics.table.json",
+        METRICS_SUMMARY_NAME,
+        OPERATOR_SIGNATURE_SIDECAR_NAME,
         "outcomes.table.json",
         "stability.plot-data.json",
     }
+    assert first.operator_signature_strata_path.is_file()
 
     with pytest.raises(AnalysisArtifactError, match="outside"):
         save_analysis(report, source_root / "analysis")
@@ -616,6 +660,19 @@ def _coprime_ratio_rows(count: int) -> list[dict[str, object]]:
     return rows
 
 
+def _unique_signature_rows(count: int) -> list[dict[str, object]]:
+    template = _processed_mapping(0)
+    rows: list[dict[str, object]] = []
+    width = len(str(count))
+    for index in range(count):
+        row = dict(template)
+        row["expression_id"] = hashlib.sha256(f"signature-{index}".encode()).hexdigest()
+        row["input_row_index"] = index
+        row["operator_signature"] = f"signature-{index:0{width}d}"
+        rows.append(row)
+    return rows
+
+
 def _single_checkpoint_telemetry(count: int) -> tuple[dict[str, object], ...]:
     return (
         {
@@ -635,6 +692,266 @@ def _single_checkpoint_telemetry(count: int) -> tuple[dict[str, object], ...]:
             ],
         },
     )
+
+
+def test_high_cardinality_signature_strata_stream_to_a_bounded_sidecar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    count = 2_000
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    manifest = source_root / "manifest.json"
+    _patch_public_readers(
+        monkeypatch,
+        manifest,
+        _unique_signature_rows(count),
+        chunked=True,
+        telemetry_payloads=_single_checkpoint_telemetry(count),
+    )
+    report = analyze_goal3_artifacts(
+        manifest,
+        scale_checkpoints=(count,),
+        ranking_limit=5,
+    )
+
+    summary_payload = report.metrics_payload()
+    summary_axes = {table["axis"] for table in summary_payload["strata"]}
+    assert StratificationAxis.OPERATOR_SIGNATURE.value not in summary_axes
+    assert all(table.axis is not StratificationAxis.OPERATOR_SIGNATURE for table in report.strata)
+    assert report.operator_signature_stratum.group_count == count
+
+    first = save_analysis(report, tmp_path / "analysis-first")
+    orphan_root = tmp_path / "analysis-resumed-from-orphan"
+    orphan_root.mkdir()
+    orphan_path = orphan_root / OPERATOR_SIGNATURE_SIDECAR_NAME
+    orphan_path.write_bytes(first.operator_signature_strata_path.read_bytes())
+    resumed = save_analysis(report, orphan_root)
+
+    assert sha256_file(first.operator_signature_strata_path) == sha256_file(
+        resumed.operator_signature_strata_path
+    )
+    recovered = list(iter_operator_signature_group_payloads(first.manifest_path))
+    assert [payload["key"] for payload in recovered] == [
+        f"signature-{index:04d}" for index in range(count)
+    ]
+    assert sum(payload["all_processed_count"] for payload in recovered) == count
+
+    logical_digest = hashlib.sha256()
+    logical_byte_count = 0
+    with gzip.open(first.operator_signature_strata_path, "rb") as stream:
+        for line in stream:
+            logical_digest.update(line)
+            logical_byte_count += len(line)
+    descriptor = report.operator_signature_stratum
+    assert logical_digest.hexdigest() == descriptor.content_sha256
+    assert logical_byte_count == descriptor.uncompressed_byte_count
+
+    saved_manifest = json.loads(first.manifest_path.read_text(encoding="utf-8"))
+    external = saved_manifest["external_strata"][0]
+    assert external["group_count"] == count
+    assert external["content_sha256"] == descriptor.content_sha256
+    assert external["uncompressed_byte_count"] == descriptor.uncompressed_byte_count
+    assert external["sha256"] == sha256_file(first.operator_signature_strata_path)
+    assert external["byte_count"] == first.operator_signature_strata_path.stat().st_size
+    assert first.metrics_path.stat().st_size < 200_000
+    assert first.operator_signature_strata_path.stat().st_size < 2_000_000
+    managed_spool_path = report.operator_signature_spool.path
+    assert managed_spool_path.is_file()
+    report.operator_signature_spool.cleanup()
+    assert not managed_spool_path.exists()
+
+
+def test_analysis_fingerprint_binds_every_signature_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = _unique_signature_rows(3)
+    manifest = tmp_path / "manifest.json"
+    telemetry = _single_checkpoint_telemetry(3)
+    _patch_public_readers(
+        monkeypatch,
+        manifest,
+        rows,
+        chunked=True,
+        telemetry_payloads=telemetry,
+    )
+    original = analyze_goal3_artifacts(manifest, scale_checkpoints=(3,))
+
+    changed_rows = [dict(row) for row in rows]
+    changed_rows[1]["operator_signature"] = "signature-mutated"
+    _patch_public_readers(
+        monkeypatch,
+        manifest,
+        changed_rows,
+        chunked=False,
+        telemetry_payloads=telemetry,
+    )
+    changed = analyze_goal3_artifacts(manifest, scale_checkpoints=(3,))
+
+    assert original.operator_signature_stratum.content_sha256 != (
+        changed.operator_signature_stratum.content_sha256
+    )
+    assert original.fingerprint != changed.fingerprint
+
+
+def _write_deterministic_gzip(path: Path, lines: list[bytes]) -> None:
+    with (
+        path.open("wb") as raw_stream,
+        gzip.GzipFile(
+            filename="",
+            mode="wb",
+            compresslevel=9,
+            fileobj=raw_stream,
+            mtime=0,
+        ) as compressed_stream,
+    ):
+        for line in lines:
+            compressed_stream.write(line)
+
+
+def _update_signature_physical_identity(manifest_path: Path, sidecar_path: Path) -> None:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    identity = {
+        "sha256": sha256_file(sidecar_path),
+        "byte_count": sidecar_path.stat().st_size,
+    }
+    manifest["external_strata"][0].update(identity)
+    matching_product = next(
+        product
+        for product in manifest["products"]
+        if product["path"] == OPERATOR_SIGNATURE_SIDECAR_NAME
+    )
+    matching_product.update(identity)
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("crc", "cannot read"),
+        ("reorder", "strictly key-ordered"),
+        ("duplicate", "strictly key-ordered"),
+        ("noncanonical", "not canonical"),
+        ("missing_newline", "lacks a newline"),
+        ("invalid_utf8", "invalid operator-signature JSONL"),
+        ("denominator", "denominators do not account"),
+        ("negative_reuse", "reuse aggregate counts"),
+        ("mean_policy", "precision policy is not pinned"),
+        ("descriptor", "logical identity differs"),
+    ],
+)
+def test_signature_sidecar_validator_rejects_corruption(
+    mutation: str,
+    message: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = _unique_signature_rows(3)
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    source_manifest = source_root / "manifest.json"
+    _patch_public_readers(
+        monkeypatch,
+        source_manifest,
+        rows,
+        chunked=True,
+        telemetry_payloads=_single_checkpoint_telemetry(3),
+    )
+    saved = save_analysis(
+        analyze_goal3_artifacts(source_manifest, scale_checkpoints=(3,)),
+        tmp_path / "analysis",
+    )
+    with gzip.open(saved.operator_signature_strata_path, "rb") as stream:
+        lines = list(stream)
+
+    if mutation == "crc":
+        encoded = bytearray(saved.operator_signature_strata_path.read_bytes())
+        encoded[-8] ^= 1
+        saved.operator_signature_strata_path.write_bytes(encoded)
+    elif mutation == "reorder":
+        lines[0], lines[1] = lines[1], lines[0]
+        _write_deterministic_gzip(saved.operator_signature_strata_path, lines)
+    elif mutation == "duplicate":
+        lines[1] = lines[0]
+        _write_deterministic_gzip(saved.operator_signature_strata_path, lines)
+    elif mutation == "noncanonical":
+        payload = json.loads(lines[0])
+        lines[0] = (json.dumps(payload, sort_keys=True) + "\n").encode()
+        _write_deterministic_gzip(saved.operator_signature_strata_path, lines)
+    elif mutation == "missing_newline":
+        lines[-1] = lines[-1].removesuffix(b"\n")
+        _write_deterministic_gzip(saved.operator_signature_strata_path, lines)
+    elif mutation == "invalid_utf8":
+        lines[0] = b"\xff\n"
+        _write_deterministic_gzip(saved.operator_signature_strata_path, lines)
+    elif mutation == "denominator":
+        payload = json.loads(lines[0])
+        payload["failure_count"] += 1
+        lines[0] = (
+            json.dumps(
+                payload,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode()
+        _write_deterministic_gzip(saved.operator_signature_strata_path, lines)
+    elif mutation in {"negative_reuse", "mean_policy"}:
+        payload = json.loads(lines[0])
+        if mutation == "negative_reuse":
+            payload["ast_reuse"]["total_reused_node_count"] = -123
+        else:
+            payload["ratio_means"]["raw_tree_alpha"]["working_precision_digits"] = 79
+        lines[0] = (
+            json.dumps(
+                payload,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode()
+        _write_deterministic_gzip(saved.operator_signature_strata_path, lines)
+    else:
+        manifest = json.loads(saved.manifest_path.read_text(encoding="utf-8"))
+        replacement = "b" * 64
+        manifest["external_strata"][0]["content_sha256"] = replacement
+        matching_product = next(
+            product
+            for product in manifest["products"]
+            if product["path"] == OPERATOR_SIGNATURE_SIDECAR_NAME
+        )
+        matching_product["content_sha256"] = replacement
+        summary = json.loads(saved.metrics_path.read_text(encoding="utf-8"))
+        summary["external_strata"][0]["content_sha256"] = replacement
+        saved.metrics_path.write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        summary_product = next(
+            product for product in manifest["products"] if product["path"] == METRICS_SUMMARY_NAME
+        )
+        summary_product["sha256"] = sha256_file(saved.metrics_path)
+        summary_product["byte_count"] = saved.metrics_path.stat().st_size
+        saved.manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if mutation != "descriptor":
+        _update_signature_physical_identity(
+            saved.manifest_path,
+            saved.operator_signature_strata_path,
+        )
+    with pytest.raises(AnalysisArtifactError, match=message):
+        list(iter_operator_signature_group_payloads(saved.manifest_path))
 
 
 def test_decimal_aggregation_ignores_ambient_context(
