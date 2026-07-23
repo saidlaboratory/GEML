@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from geml.graph.schema import (
@@ -16,7 +18,7 @@ from geml.graph.schema import (
     GraphRoot,
     compute_statistics,
 )
-from geml.graph.signatures import compute_signature
+from geml.graph.signatures import compute_signature, signature_from_parts
 from geml.graph.validate import validate_graph
 
 
@@ -89,6 +91,81 @@ def test_graph_snapshots_mutable_inputs() -> None:
     assert tuple(graph.nodes) == ("x",)
     with pytest.raises(TypeError):
         graph.nodes["y"] = _ast_leaf("y", "y")  # type: ignore[index]
+
+
+def test_graph_deep_snapshots_nested_json_values() -> None:
+    payload = {"nested": [{"value": 1}]}
+    graph = Graph(
+        {"payload": GraphNode("payload", AST_FAMILY, "leaf", "payload", payload)},
+        (GraphRoot("expression", "payload", "ast"),),
+    )
+    signature = compute_signature(graph, "payload")
+
+    payload["nested"][0]["value"] = 2
+
+    assert graph.nodes["payload"].value == {"nested": [{"value": 1}]}
+    assert compute_signature(graph, "payload") == signature
+    assert copy.deepcopy(graph.nodes["payload"]) == graph.nodes["payload"]
+
+    snapshot = graph.nodes["payload"].value
+    assert isinstance(snapshot, dict)
+    nested = snapshot["nested"]
+    assert isinstance(nested, list)
+    with pytest.raises(TypeError, match="immutable"):
+        nested.append(2)
+    nested_item = nested[0]
+    assert isinstance(nested_item, dict)
+    with pytest.raises(TypeError, match="immutable"):
+        nested_item["value"] = 2
+
+
+def test_nested_json_signature_remains_byte_compatible() -> None:
+    signature = signature_from_parts(
+        family=AST_FAMILY,
+        kind="leaf",
+        label="payload",
+        value={"a": [1, {"b": "é"}]},
+        children=(),
+    )
+
+    assert signature == "7f1de41b98b3d7ec64e42c6e8ab0cf9263422d1462095c647f391c531881a28d"
+
+
+def test_tuple_values_are_rejected_in_nodes_and_direct_signatures() -> None:
+    with pytest.raises(TypeError, match="tuples are not valid JSON arrays"):
+        GraphNode("tuple", AST_FAMILY, "leaf", "payload", (1,))  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="tuples are not valid JSON arrays"):
+        signature_from_parts(
+            family=AST_FAMILY,
+            kind="leaf",
+            label="payload",
+            value=(1,),  # type: ignore[arg-type]
+            children=(),
+        )
+
+
+def test_validation_retains_non_node_mapping_values() -> None:
+    graph = Graph(
+        {
+            "root": GraphNode(
+                "root",
+                AST_FAMILY,
+                "operator",
+                "negate",
+                children=(ChildRef(0, "malformed"),),
+            ),
+            "malformed": "not-a-node",  # type: ignore[dict-item]
+        },
+        (GraphRoot("expression", "root", "ast"),),
+    )
+
+    result = validate_graph(graph)
+
+    assert not result.valid
+    assert any("does not contain a GraphNode record" in error for error in result.errors)
+    assert any("references malformed node" in error for error in result.errors)
+    with pytest.raises(ValueError, match="invalid graph"):
+        compute_statistics(graph)
 
 
 def test_identical_subtrees_have_identical_signatures() -> None:

@@ -22,8 +22,14 @@ may deliberately reference the same target node.
 
 - a graph-local node identity;
 - one representation family: `ast`, `eml`, `macro`, or `motif`;
-- structural kind, label, and JSON-compatible value fields;
+- structural kind, label, and a strict JSON value field;
 - an immutable tuple of ordered child references.
+
+JSON objects and arrays are copied recursively into immutable snapshots while
+retaining normal dictionary/list read behavior and canonical JSON encoding.
+Tuples are not JSON arrays and are rejected rather than silently normalized.
+This prevents caller-owned nested values from changing a node's structural
+identity after construction.
 
 `Graph(nodes, roots)` snapshots its input mapping and root records. Every
 graph has at least one root, every node is reachable from a root, and all nodes
@@ -60,8 +66,9 @@ semantically equivalent.
 
 `validate_graph` retains all detected failures and checks:
 
-1. nonempty records, supported representation families, mapping-key identity,
-   nonblank fields, and finite JSON-compatible values;
+1. nonempty records, actual `GraphNode` mapping values, supported
+   representation families, mapping-key identity, nonblank fields, and strict
+   finite JSON values;
 2. root existence;
 3. child target existence, nonnegative unique slots, and contiguous slot
    coverage;
@@ -83,6 +90,9 @@ No constant, macro, template, derived operation, or compound source syntax is
 accepted inside a pure EML graph. Macro and motif families remain
 representation-neutral because their vocabularies belong to later owning
 issues.
+
+Malformed mapping values are retained as validation errors. They do not abort
+later root, reachability, cycle, or purity checks.
 
 ## Scope
 
