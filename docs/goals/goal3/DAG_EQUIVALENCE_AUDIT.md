@@ -1,55 +1,98 @@
-# Goal 3 DAG Equivalence Audit (3-5)
+# Goal 3 direct/post-hoc EML-DAG equivalence audit
 
-what this actually proves, and what it doesn't - read this before
-citing the audit results anywhere.
+## Claim
 
-## what's covered right now
+For each case in the required tiny audit set, the `OFFICIAL_V4` direct
+hash-consing compiler produces the same pure-EML value graph as:
 
-only `exp` and `ln`, plus compositions of them (`ln(exp(x))`,
-`exp(exp(x))`), plus one repeated-subexpression case. those are the
-only two eml constructions currently verified against the real paper
-(arXiv:2603.21852v2, eq 3 and 5 - see 3-3/3-4). everything runnable in
-the audit set traces back to just these two building blocks.
+1. materializing the same validated source AST with the authoritative Goal 2
+   `OFFICIAL_V4` constructors; and
+2. applying exact structural sharing to that materialized tree.
 
-6 cases run and match exactly across every comparison axis (signature,
-node count, edge count, depth, evaluation, purity, both directions).
+“Same” means all seven recorded axes match:
 
-## what's NOT covered
+- the canonical root signature;
+- the complete canonical node and root topology, including node family, kind,
+  label, typed value, ordered child slots, repeated child references, root
+  identity, and representation-mode label;
+- unique node count;
+- explicit child-reference count;
+- leaf-zero maximum depth;
+- 80-digit principal-complex mpmath evaluation at the case's declared finite
+  bindings, including the extended-intermediate flag, with a `1e-60` scaled
+  absolute/relative agreement tolerance; and
+- strict pure-EML validation on both graphs.
 
-`add`, `mul`, `pow` - none of these have real constructors yet, since
-2-2/2-3/2-4's actual compiler formulas aren't merged. there's one
-deliberately included case (`add_family_blocked`) that exists purely
-to prove the audit harness reports this gap explicitly instead of
-silently pretending everything's covered - it shows up as `blocked`,
-not as a pass, not as a skip.
+The audit deliberately compares structural identity, not algebraic or semantic
+equivalence. Two different trees that happen to evaluate to the same number do
+not pass the signature or topology checks.
 
-**do not read "6/6 passing" as "goal 3's dag conversion is proven
-correct in general."** it's proven correct for exactly the two
-families tested. every other family is an open question until it has
-its own real constructor and its own audit case.
+## Stratification and authority
 
-## why this matters
+The set covers every operator currently marked both generation-enabled and
+EML-approved in `geml.spec.operators`, and therefore every enabled operator
+family. It also covers all six final corpus families, the four frozen
+`CorpusSplit` values, and all generation-enabled real domain modes.
 
-the whole point of 3-4 (direct construction) is a performance
-optimization over 3-3 (build-then-compress) - same math, different
-allocation strategy. this audit is the thing that actually backs that
-claim up with numbers, rather than just asserting it. if a future
-family's direct and post-hoc paths ever disagree, that's a real bug in
-one of the two implementations, and this audit is what's supposed to
-catch it before it goes further.
+The AST-size strata are the final Goal 2 analysis buckets from
+`configs/goal2_final.yaml`: 1–8, 9–16, 17–32, 33–64, and 65–128 nodes. Every
+case's validated AST node count must fall inside its declared bucket. The four
+larger-bucket fixtures contain 9, 17, 33, and 65 AST nodes respectively and use
+repeated `log(exp(...))` pairs to avoid unstable exponential towers. No
+production shard or `outputs/` artifact is read.
 
-## scale note
+Cases use finite, guard-respecting bindings:
 
-this audit runs on hand-built tiny fixtures only, not the real 250k
-corpus - that's explicitly out of scope for 3-5 (see issue: "do not
-run the full 250k pipeline"). once the real corpus exists, a similar
-but much larger-scale audit will be needed as part of a later goal 3
-task, not this one.
+- logarithm inputs are positive;
+- division denominators are nonzero;
+- power fixtures use a positive base and exact integer exponent; and
+- tangent inputs lie in the required closed interval `[-1, 1]`.
 
-## how to extend this later
+These bindings test direct/post-hoc evaluator agreement. They are not a claim
+that finitely many probes prove a compiler formula over its complete domain.
+The independent Goal 2 symbolic and numeric audits own that scientific claim.
 
-once 2-2/2-3/2-4 land with real add/mul/pow formulas, the
-`add_family_blocked` case (and equivalents for mul/pow) should get
-replaced with real runnable cases the same way `exp`/`ln` are handled
-here - build both a direct and post-hoc version, add eval bindings,
-drop it into `STRATIFIED_AUDIT_SET` in `equivalence_audit.py`.
+## Failure and blocker accounting
+
+Every requested case has exactly one terminal status:
+
+- `match`: all seven axes completed and matched;
+- `mismatch`: construction completed but at least one axis disagreed;
+- `failure`: construction or an axis raised an error; or
+- `blocked`: the case was explicitly requested but cannot currently run, with
+  a nonblank reason.
+
+All completed axis comparisons remain attached to a mismatch or axis failure.
+The audit continues after a failed case, so later results cannot disappear.
+Blocked, failed, and mismatched cases do not satisfy coverage. `ready` is true
+only when every live-registry stratum is covered by matching cases and every
+requested result is `match`.
+
+The summary fingerprint is lowercase SHA-256 over canonical JSON containing
+the schema version, ordered terminal results, all axis values/diagnostics, and
+missing-coverage lists. It excludes timings and process state, so identical
+scientific results have identical fingerprints.
+
+## Boundaries
+
+The claim is limited to:
+
+- the current enabled-and-approved source registry;
+- the explicit tiny audit fixtures;
+- `CompilerMode.OFFICIAL_V4`; and
+- the current canonical graph-signature version.
+
+It does not cover disabled or pending source operators, the opt-in
+`CLEAN_NEGATION` representation, semantic equivalence between distinct graph
+structures, every numeric point, production throughput, checkpointing, or the
+250,000-expression corpus. Goal 3 production work must gate on a complete,
+ready audit but must not reinterpret this tiny audit as whole-corpus evidence.
+
+## Reproduction
+
+```bash
+python -m pytest tests/experiments/test_goal3_audit.py
+python -m pytest
+python -m ruff check .
+python -m ruff format . --check
+```
