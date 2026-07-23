@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geml"
+version = "0.1.0"
+description = "Graph learning over a single-operator representation of mathematics"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.9",
+    "mpmath==1.3.0",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "psutil>=6.0",
+    "pyarrow>=17.0",
+    "pydantic>=2.10",
+    "PyYAML>=6.0",
+    "sympy==1.14.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+ml = [
+    "torch>=2.5",
+]
+
+[project.urls]
+Repository = "https://github.com/saidlaboratory/GEML"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "N", "PT", "RUF", "SIM", "UP"]
+
+[tool.ruff.format]
+docstring-code-format = true
+indent-style = "space"
+quote-style = "double"
