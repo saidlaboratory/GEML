@@ -1,0 +1,41 @@
+# configs/goal7_steps.yaml
+# owned by 7-0
+#
+# config for the real step extraction. NOT executable yet - it needs
+# 6-1's pair traces and 4-3's rewrite application API. pinned here so
+# the smoke path and the production run share one description.
+
+run:
+  run_id: goal7_steps_v1
+  resume: true
+  reproduction_command: >
+    PYTHONPATH=src python3 -m geml.data.steps.extract
+    --config configs/goal7_steps.yaml
+
+input:
+  pairs_path: outputs/final/goal6/pairs/     # 6-1's shards
+  positives_only: true                       # negatives carry no trace
+
+replay:
+  # 4-3 re-applies every stored (rule, site) and we compare against the
+  # stored next state. off means records ship as replay_status=unchecked,
+  # which is allowed for the smoke path and NOT allowed for the real run.
+  verify: true
+  on_mismatch: stop_trace     # the rest of a trace hangs off a state we can't reproduce
+
+stratify:
+  drop_ambiguous: true        # same (state, rule, site) leading to two next states
+  report_dead_rules: true     # against 4-4/4-5's registered rule ids
+  min_examples_per_rule: 50   # below this a rule is reported as thin, not silently averaged away
+
+splits:
+  inherit_from_pairs: true    # never reassigned here; violations are a hard failure
+
+output:
+  path: outputs/final/goal7/steps/
+  shard_size: 25000
+
+smoke_test:
+  count: 25
+  command: >
+    PYTHONPATH=src python3 -m pytest tests/data/test_steps.py -v
