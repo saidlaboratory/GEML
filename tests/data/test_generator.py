@@ -12,7 +12,7 @@ from random import Random
 
 import pytest
 from pydantic import ValidationError
-from sympy import Integer, Pow, exp, log
+from sympy import Integer, Pow, cos, cosh, exp, log, sin, sinh, tan, tanh
 
 import geml.data.generation.generator as generator_module
 from geml.contracts.corpus import CorpusSplit
@@ -39,11 +39,14 @@ from geml.data.generation.generator import (
     run_smoke,
 )
 from geml.data.generation.grammar import (
+    TAN_ARGUMENT_CLASSES,
     TRIVIALITY_FEATURES,
     GrammarGenerationError,
     GrammarPolicy,
     TrivialityPolicy,
     generate_tree,
+    maximum_leaves_with_arity_count,
+    target_is_label_feasible,
     triviality_violations,
 )
 from geml.spec.corpus_families import CORPUS_FAMILY_REGISTRY, FINAL_CORPUS_SIZE
@@ -68,11 +71,13 @@ def test_config_retains_exact_final_quotas_and_enabled_smoke_only(
         "ood_stress": 25_000,
     }
     assert sum(config.smoke.family_counts.values()) == 10_000
-    assert set(config.smoke.family_counts) == {
-        "algebraic_core",
-        "powers_division_rationals",
-        "exp_log",
-        "ood_stress",
+    assert config.smoke.family_counts == {
+        "algebraic_core": 2_800,
+        "powers_division_rationals": 1_600,
+        "exp_log": 1_600,
+        "trig_hyperbolic": 1_600,
+        "mixed_elementary": 1_400,
+        "ood_stress": 1_000,
     }
 
 
@@ -118,6 +123,31 @@ def test_config_rejects_unusable_power_and_required_operator_policies(
     algebraic["required_any_operators"] = ("multiply",)
     algebraic["operator_weights"]["multiply"] = 0.0
     with pytest.raises(ValidationError, match="required-any operator"):
+        GeneratorConfig.model_validate(payload)
+
+    payload = config.model_dump(mode="python")
+    mixed = payload["families"]["mixed_elementary"]
+    mixed["required_operator_groups"] = ((),)
+    with pytest.raises(ValidationError, match="groups must be nonempty"):
+        GeneratorConfig.model_validate(payload)
+
+    payload = config.model_dump(mode="python")
+    mixed = payload["families"]["mixed_elementary"]
+    mixed["required_operator_groups"] = (("sin", "sin"),)
+    with pytest.raises(ValidationError, match="within each required group"):
+        GeneratorConfig.model_validate(payload)
+
+    payload = config.model_dump(mode="python")
+    mixed = payload["families"]["mixed_elementary"]
+    mixed["required_operator_groups"] = (("exp", "sin"),)
+    with pytest.raises(ValidationError, match="only one required group"):
+        GeneratorConfig.model_validate(payload)
+
+    payload = config.model_dump(mode="python")
+    mixed = payload["families"]["mixed_elementary"]
+    for operator in mixed["required_operator_groups"][0]:
+        mixed["operator_weights"][operator] = 0.0
+    with pytest.raises(ValidationError, match="positively weighted operator"):
         GeneratorConfig.model_validate(payload)
 
     payload = config.model_dump(mode="python")
@@ -179,6 +209,28 @@ def test_expression_id_excludes_nonidentity_fields(config: GeneratorConfig) -> N
     assert train_record.sympy_srepr == validation_record.sympy_srepr
 
 
+@pytest.mark.parametrize(
+    ("field", "invalid", "message"),
+    [
+        ("domain_mode", " ", "domain mode must be a nonblank string"),
+        ("sympy_srepr", "", "SymPy srepr must be a nonblank string"),
+        ("sympy_srepr", 1, "SymPy srepr must be a nonblank string"),
+    ],
+)
+def test_expression_id_rejects_invalid_identity_text(
+    field: str,
+    invalid: object,
+    message: str,
+) -> None:
+    arguments: dict[str, object] = {
+        "domain_mode": "safe_real",
+        "sympy_srepr": "Integer(1)",
+    }
+    arguments[field] = invalid
+    with pytest.raises(ValueError, match=message):
+        derive_expression_id(**arguments)  # type: ignore[arg-type]
+
+
 def test_seed_derivation_is_stable_and_identity_sensitive() -> None:
     arguments = {
         "run_seed": 1729,
@@ -202,6 +254,34 @@ def test_seed_derivation_is_stable_and_identity_sensitive() -> None:
         assert derive_expression_seed(**arguments) != derive_expression_seed(
             **(arguments | {field: value})
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid", "message"),
+    [
+        ("run_seed", True, "run seed must be an integer"),
+        ("run_seed", 1.5, "run seed must be an integer"),
+        ("family_id", "", "family id must be a nonblank string"),
+        ("profile_name", " ", "profile name must be a nonblank string"),
+        ("domain_mode", None, "domain mode must be a nonblank string"),
+        ("stress_criterion", "", "stress criterion must be a nonblank string"),
+    ],
+)
+def test_seed_derivation_rejects_invalid_identity_inputs(
+    field: str,
+    invalid: object,
+    message: str,
+) -> None:
+    arguments: dict[str, object] = {
+        "run_seed": 1729,
+        "expression_index": 4,
+        "family_id": "exp_log",
+        "profile_name": "ordinary",
+        "domain_mode": "safe_real",
+    }
+    arguments[field] = invalid
+    with pytest.raises(ValueError, match=message):
+        derive_expression_seed(**arguments)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("invalid_index", [True, 1.5, "1", -1])
@@ -317,10 +397,12 @@ def test_index_generation_is_independent_of_request_order(config: GeneratorConfi
 
 def test_small_smoke_hash_repeats_exactly(config: GeneratorConfig) -> None:
     family_counts = {
-        "algebraic_core": 20,
-        "powers_division_rationals": 20,
-        "exp_log": 20,
-        "ood_stress": 20,
+        "algebraic_core": 10,
+        "powers_division_rationals": 10,
+        "exp_log": 10,
+        "trig_hyperbolic": 10,
+        "mixed_elementary": 10,
+        "ood_stress": 10,
     }
     first = run_smoke(config, family_counts=family_counts)
     second = run_smoke(config, family_counts=family_counts)
@@ -345,7 +427,14 @@ def test_different_indexes_produce_structural_variation(config: GeneratorConfig)
 
 @pytest.mark.parametrize(
     "family_id",
-    ["algebraic_core", "powers_division_rationals", "exp_log", "ood_stress"],
+    [
+        "algebraic_core",
+        "powers_division_rationals",
+        "exp_log",
+        "trig_hyperbolic",
+        "mixed_elementary",
+        "ood_stress",
+    ],
 )
 def test_generated_operators_are_enabled_approved_and_family_scoped(
     config: GeneratorConfig,
@@ -435,6 +524,82 @@ def test_minimum_leaf_count_is_explicit(config: GeneratorConfig) -> None:
         )
 
 
+@pytest.mark.parametrize("minimum_leaf_count", [True, 1.5, "1"])
+def test_generate_tree_requires_an_integer_minimum_leaf_count(
+    config: GeneratorConfig,
+    minimum_leaf_count: object,
+) -> None:
+    target = DifficultyTarget(
+        target_size=1,
+        target_depth=0,
+        variable_count=1,
+        intermediate_leaf_probability=0.5,
+    )
+    with pytest.raises(GrammarGenerationError, match="positive integer"):
+        generate_tree(
+            target=target,
+            domain_mode="safe_real",
+            variable_names=("x",),
+            allowed_operators=("symbol",),
+            operator_weights={"symbol": 1.0},
+            policy=config.grammar,
+            rng=Random(0),
+            minimum_leaf_count=minimum_leaf_count,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("domain_mode", ["unknown", "complex", 1])
+def test_generate_tree_requires_an_enabled_registered_domain(
+    config: GeneratorConfig,
+    domain_mode: object,
+) -> None:
+    target = DifficultyTarget(
+        target_size=1,
+        target_depth=0,
+        variable_count=1,
+        intermediate_leaf_probability=0.5,
+    )
+    with pytest.raises(GrammarGenerationError, match="domain mode"):
+        generate_tree(
+            target=target,
+            domain_mode=domain_mode,  # type: ignore[arg-type]
+            variable_names=("x",),
+            allowed_operators=("symbol",),
+            operator_weights={"symbol": 1.0},
+            policy=config.grammar,
+            rng=Random(0),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid", "message"),
+    [
+        ("size", True, "size must be a positive integer"),
+        ("size", 1.0, "size must be a positive integer"),
+        ("depth", True, "depth must be a nonnegative integer"),
+        ("depth", -1, "depth must be a nonnegative integer"),
+        ("arity", 1.0, "arity must be zero, one, or two"),
+        ("arity", True, "arity must be zero, one, or two"),
+        ("minimum_count", 1.0, "count must be a positive integer"),
+        ("minimum_count", True, "count must be a positive integer"),
+    ],
+)
+def test_maximum_leaves_requires_strict_integer_arguments(
+    field: str,
+    invalid: object,
+    message: str,
+) -> None:
+    arguments: dict[str, object] = {
+        "size": 3,
+        "depth": 1,
+        "arity": 2,
+        "minimum_count": 1,
+    }
+    arguments[field] = invalid
+    with pytest.raises(ValueError, match=message):
+        maximum_leaves_with_arity_count(**arguments)  # type: ignore[arg-type]
+
+
 def test_labeling_failures_are_aggregated_in_grammar_errors(
     config: GeneratorConfig,
 ) -> None:
@@ -462,16 +627,390 @@ def test_labeling_failures_are_aggregated_in_grammar_errors(
 
 
 @pytest.mark.parametrize("family_id", ["trig_hyperbolic", "mixed_elementary"])
-def test_pending_families_fail_with_complete_blocker_list(
+def test_trig_and_mixed_families_generate_successfully(
     config: GeneratorConfig,
     family_id: str,
 ) -> None:
-    with pytest.raises(
-        GeneratorPolicyBlockedError,
-        match="sin, cos, tan, sinh, cosh, tanh",
-    ):
+    record = generate_expression(
+        config,
+        expression_index=0,
+        family_id=family_id,
+        split="train",
+    )
+    assert record.operator_family == family_id
+    assert record.generator_metadata["required_operator_groups"]
+
+
+@pytest.mark.parametrize(
+    ("operator_name", "sympy_function"),
+    [
+        ("sin", sin),
+        ("cos", cos),
+        ("sinh", sinh),
+        ("cosh", cosh),
+        ("tanh", tanh),
+    ],
+)
+def test_trig_hyperbolic_sympy_constructors_are_exact(
+    config: GeneratorConfig,
+    operator_name: str,
+    sympy_function,
+) -> None:
+    target = DifficultyTarget(
+        target_size=2,
+        target_depth=1,
+        variable_count=1,
+        intermediate_leaf_probability=0.5,
+    )
+    tree = generate_tree(
+        target=target,
+        domain_mode="safe_real",
+        variable_names=("x",),
+        allowed_operators=("symbol", operator_name),
+        operator_weights={"symbol": 1.0, operator_name: 1.0},
+        policy=config.grammar,
+        rng=Random(0),
+    )
+    assert tree.expression.func == sympy_function
+    assert dict(tree.operator_counts) == {operator_name: 1, "symbol": 1}
+
+
+@pytest.mark.parametrize(
+    ("guard_operator", "guard_function"),
+    [("sin", sin), ("cos", cos), ("tanh", tanh)],
+)
+def test_tan_accepts_each_bounded_function_guard(
+    config: GeneratorConfig,
+    guard_operator: str,
+    guard_function,
+) -> None:
+    target = DifficultyTarget(
+        target_size=3,
+        target_depth=2,
+        variable_count=1,
+        intermediate_leaf_probability=0.5,
+    )
+    matching_tree = None
+    for seed in range(64):
+        tree = generate_tree(
+            target=target,
+            domain_mode="safe_real",
+            variable_names=("x",),
+            allowed_operators=("symbol", guard_operator, "tan"),
+            operator_weights={"symbol": 1.0, guard_operator: 1.0, "tan": 100.0},
+            policy=config.grammar,
+            rng=Random(seed),
+        )
+        if tree.expression.func == tan:
+            matching_tree = tree
+            break
+    assert matching_tree is not None
+    assert matching_tree.expression.args[0].func == guard_function
+    assert dict(matching_tree.tan_argument_classes) == {guard_operator: 1}
+
+
+def test_tan_accepts_exact_constants_only_inside_closed_unit_interval(
+    config: GeneratorConfig,
+) -> None:
+    target = DifficultyTarget(
+        target_size=4,
+        target_depth=2,
+        variable_count=1,
+        intermediate_leaf_probability=0.5,
+    )
+    matching_tree = None
+    for seed in range(128):
+        tree = generate_tree(
+            target=target,
+            domain_mode="safe_real",
+            variable_names=("x",),
+            allowed_operators=("symbol", "one", "add", "tan"),
+            operator_weights={"symbol": 1.0, "one": 1.0, "add": 1.0, "tan": 1.0},
+            policy=config.grammar,
+            rng=Random(seed),
+        )
+        if dict(tree.tan_argument_classes).get("exact_constant"):
+            matching_tree = tree
+            break
+    assert matching_tree is not None
+    tangent = next(node for node in matching_tree.expression.atoms(tan))
+    assert tangent.args[0].is_number
+    assert abs(tangent.args[0]) <= 1
+
+
+def test_tan_guard_metadata_is_complete_and_stable(config: GeneratorConfig) -> None:
+    records = [
         generate_expression(
             config,
+            expression_index=40_000 + index,
+            family_id="trig_hyperbolic",
+            split="train",
+        )
+        for index in range(120)
+    ]
+    observed_classes: Counter[str] = Counter()
+    for record in records:
+        metadata = record.generator_metadata
+        classes = metadata["tan_argument_classes"]
+        assert tuple(classes) == TAN_ARGUMENT_CLASSES
+        assert sum(classes.values()) == metadata["operator_counts"].get("tan", 0)
+        assert (
+            metadata["domain_guards"]["tan_arguments"] == "closed_unit_interval_structural_grammar"
+        )
+        observed_classes.update(classes)
+    assert len([name for name, count in observed_classes.items() if count]) >= 3
+
+
+def test_mixed_family_requires_exp_log_and_trig_hyperbolic_groups(
+    config: GeneratorConfig,
+) -> None:
+    expected_groups = [
+        ["exp", "log"],
+        ["sin", "cos", "tan", "sinh", "cosh", "tanh"],
+    ]
+    records = [
+        generate_expression(
+            config,
+            expression_index=45_000 + index,
+            family_id="mixed_elementary",
+            split="train",
+        )
+        for index in range(40)
+    ]
+    for record in records:
+        counts = record.generator_metadata["operator_counts"]
+        assert record.generator_metadata["required_operator_groups"] == expected_groups
+        assert counts.get("exp", 0) + counts.get("log", 0) >= 1
+        assert sum(counts.get(name, 0) for name in expected_groups[1]) >= 1
+
+
+def test_mixed_family_rejects_targets_without_two_unary_slots(
+    config: GeneratorConfig,
+) -> None:
+    invalid = DifficultyTarget(
+        target_size=3,
+        target_depth=1,
+        variable_count=1,
+        intermediate_leaf_probability=0.5,
+    )
+    with pytest.raises(GeneratorConfigurationError, match="every required operator group"):
+        generate_expression(
+            config,
+            expression_index=0,
+            family_id="mixed_elementary",
+            split="train",
+            target=invalid,
+        )
+
+    valid = invalid.model_copy(update={"target_depth": 2})
+    record = generate_expression(
+        config,
+        expression_index=0,
+        family_id="mixed_elementary",
+        split="train",
+        target=valid,
+    )
+    assert record.target_ast_size == 3
+    assert record.target_depth == 2
+
+
+def _guarded_operator_config(
+    config: GeneratorConfig,
+    *,
+    family_id: str,
+    operator: str,
+    helper: str,
+    domain_mode: str,
+    profile: DifficultyProfile | None = None,
+) -> GeneratorConfig:
+    base_policy = config.families[family_id]
+    weights = {name: 0.0 for name in base_policy.operator_weights}
+    for name in ("symbol", "one", "integer", operator, helper):
+        if name in weights:
+            weights[name] = 1.0
+    family = base_policy.model_copy(
+        update={
+            "domain_weights": {domain_mode: 1.0},
+            "operator_weights": weights,
+            "required_any_operators": (operator,),
+            "required_operator_groups": (),
+        }
+    )
+    families = dict(config.families)
+    families[family_id] = family
+    updates: dict[str, object] = {"families": families}
+    if profile is not None:
+        profiles = dict(config.difficulty_profiles)
+        profiles[family.difficulty_profile] = profile
+        updates["difficulty_profiles"] = profiles
+    return config.model_copy(update=updates)
+
+
+@pytest.mark.parametrize(
+    ("family_id", "operator", "helper", "domain_mode"),
+    [
+        ("trig_hyperbolic", "tan", "sin", "safe_real"),
+        ("trig_hyperbolic", "tan", "sin", "positive_real"),
+        ("trig_hyperbolic", "tan", "sin", "nonzero_real"),
+        ("exp_log", "log", "exp", "safe_real"),
+        ("exp_log", "log", "exp", "nonzero_real"),
+    ],
+)
+def test_guarded_operator_impossible_leaf_targets_fail_before_attempts(
+    config: GeneratorConfig,
+    family_id: str,
+    operator: str,
+    helper: str,
+    domain_mode: str,
+) -> None:
+    guarded_config = _guarded_operator_config(
+        config,
+        family_id=family_id,
+        operator=operator,
+        helper=helper,
+        domain_mode=domain_mode,
+    )
+    target = DifficultyTarget(
+        target_size=2,
+        target_depth=1,
+        variable_count=1,
+        intermediate_leaf_probability=0.5,
+    )
+    with pytest.raises(GeneratorConfigurationError, match="every required operator group"):
+        generate_expression(
+            guarded_config,
+            expression_index=0,
+            family_id=family_id,
+            split="train",
+            domain_mode=domain_mode,
+            target=target,
+        )
+
+
+@pytest.mark.parametrize(
+    ("family_id", "operator", "helper", "domain_mode"),
+    [
+        ("trig_hyperbolic", "tan", "sin", "safe_real"),
+        ("exp_log", "log", "exp", "safe_real"),
+        ("exp_log", "log", "exp", "nonzero_real"),
+    ],
+)
+def test_nested_guards_make_size_three_variable_targets_feasible(
+    config: GeneratorConfig,
+    family_id: str,
+    operator: str,
+    helper: str,
+    domain_mode: str,
+) -> None:
+    guarded_config = _guarded_operator_config(
+        config,
+        family_id=family_id,
+        operator=operator,
+        helper=helper,
+        domain_mode=domain_mode,
+    )
+    target = DifficultyTarget(
+        target_size=3,
+        target_depth=2,
+        variable_count=1,
+        intermediate_leaf_probability=0.5,
+    )
+    record = generate_expression(
+        guarded_config,
+        expression_index=0,
+        family_id=family_id,
+        split="train",
+        domain_mode=domain_mode,
+        target=target,
+    )
+    counts = record.generator_metadata["operator_counts"]
+    assert counts[operator] == counts[helper] == counts["symbol"] == 1
+
+
+def test_positive_real_symbol_is_a_direct_feasible_log_argument(
+    config: GeneratorConfig,
+) -> None:
+    guarded_config = _guarded_operator_config(
+        config,
+        family_id="exp_log",
+        operator="log",
+        helper="exp",
+        domain_mode="positive_real",
+    )
+    target = DifficultyTarget(
+        target_size=2,
+        target_depth=1,
+        variable_count=1,
+        intermediate_leaf_probability=0.5,
+    )
+    record = generate_expression(
+        guarded_config,
+        expression_index=0,
+        family_id="exp_log",
+        split="train",
+        domain_mode="positive_real",
+        target=target,
+    )
+    assert record.generator_metadata["operator_counts"] == {"log": 1, "symbol": 1}
+
+
+def test_label_feasibility_respects_greedy_variable_order(
+    config: GeneratorConfig,
+) -> None:
+    negative_rationals_only = config.grammar.model_copy(
+        update={
+            "rational_numerator_minimum": -3,
+            "rational_numerator_maximum": -1,
+        }
+    )
+    target = DifficultyTarget(
+        target_size=3,
+        target_depth=1,
+        variable_count=1,
+        intermediate_leaf_probability=0.5,
+    )
+    operators = ("symbol", "rational", "divide")
+
+    assert not target_is_label_feasible(
+        target=target,
+        domain_mode="positive_real",
+        allowed_operators=operators,
+        operator_weights={operator: 1.0 for operator in operators},
+        policy=negative_rationals_only,
+        required_operator_groups=(("divide",), ("rational",)),
+    )
+
+
+@pytest.mark.parametrize(
+    ("family_id", "operator", "helper"),
+    [
+        ("trig_hyperbolic", "tan", "sin"),
+        ("exp_log", "log", "exp"),
+    ],
+)
+def test_impossible_guarded_profile_fails_during_target_sampling(
+    config: GeneratorConfig,
+    family_id: str,
+    operator: str,
+    helper: str,
+) -> None:
+    profile = DifficultyProfile(
+        size_buckets=(SizeBucket(minimum=2, maximum=2, weight=1.0),),
+        depth_weights={1: 1.0},
+        variable_count_weights={1: 1.0},
+        intermediate_leaf_probability=0.5,
+    )
+    guarded_config = _guarded_operator_config(
+        config,
+        family_id=family_id,
+        operator=operator,
+        helper=helper,
+        domain_mode="safe_real",
+        profile=profile,
+    )
+    with pytest.raises(GeneratorConfigurationError, match="cannot realize"):
+        generate_expression(
+            guarded_config,
             expression_index=0,
             family_id=family_id,
             split="train",
@@ -524,14 +1063,14 @@ def test_generated_depth_size_and_intermediate_leaf_mixture(config: GeneratorCon
         assert metadata["metric_status"] == "generator_logical_targets_not_parser_verified"
 
 
-def test_unachievable_target_reports_every_failed_attempt(config: GeneratorConfig) -> None:
+def test_unachievable_caller_target_is_rejected_before_attempts(config: GeneratorConfig) -> None:
     impossible = DifficultyTarget(
         target_size=3,
         target_depth=2,
         variable_count=2,
         intermediate_leaf_probability=0.5,
     )
-    with pytest.raises(GenerationExhaustedError) as captured:
+    with pytest.raises(GeneratorConfigurationError, match="every required operator group"):
         generate_expression(
             config,
             expression_index=9,
@@ -539,10 +1078,6 @@ def test_unachievable_target_reports_every_failed_attempt(config: GeneratorConfi
             split="train",
             target=impossible,
         )
-    error = captured.value
-    assert error.attempts == config.maximum_attempts_per_record
-    assert sum(error.rejection_reasons.values()) == error.attempts
-    assert error.target == impossible
 
 
 def test_caller_target_cannot_bypass_family_minimum_size(config: GeneratorConfig) -> None:
@@ -934,7 +1469,7 @@ def test_smoke_retains_detailed_exhaustion_telemetry(
     )
     base_policy = config.families["algebraic_core"]
     forced_weights = {name: 0.0 for name in base_policy.operator_weights}
-    forced_weights.update({"one": 1.0, "multiply": 1.0})
+    forced_weights.update({"symbol": 1e-30, "one": 1.0, "multiply": 1.0})
     forced_family = base_policy.model_copy(
         update={
             "operator_weights": forced_weights,
@@ -945,11 +1480,17 @@ def test_smoke_retains_detailed_exhaustion_telemetry(
     profiles["ordinary"] = fixed_profile
     families = dict(config.families)
     families["algebraic_core"] = forced_family
+    caps = dict(config.triviality.per_expression_caps)
+    caps["multiplication_by_one"] = 0
     forced_config = config.model_copy(
         update={
             "difficulty_profiles": profiles,
             "families": families,
             "maximum_attempts_per_record": 2,
+            "triviality": TrivialityPolicy(
+                per_expression_caps=caps,
+                corpus_rate_caps=config.triviality.corpus_rate_caps,
+            ),
         }
     )
 
@@ -968,8 +1509,8 @@ def test_smoke_retains_detailed_exhaustion_telemetry(
         "intermediate_leaf_probability": 0.5,
     }
     assert failure["rejection_reasons"]
-    assert failure["labeling_attempts"] == 2 * config.grammar.shape_attempts
-    assert failure["labeling_rejection_reasons"]
+    assert failure["rejection_reasons"] == {"triviality_cap:multiplication_by_one": 2}
+    assert failure["labeling_attempts"] >= 2
     assert summary["unique_expression_ids"] == 0
     assert summary["repeated_expression_occurrences"] == 0
 
@@ -1030,17 +1571,16 @@ def test_smoke_reports_duplicates_without_deduplicating(config: GeneratorConfig)
 
 
 def test_smoke_summary_reports_final_family_blockers(config: GeneratorConfig) -> None:
-    summary = run_smoke(config, family_counts={"algebraic_core": 2, "exp_log": 2})
-    expected = ["sin", "cos", "tan", "sinh", "cosh", "tanh"]
-    assert summary["blocked_final_families"] == {
-        "trig_hyperbolic": expected,
-        "mixed_elementary": expected,
-    }
+    summary = run_smoke(
+        config,
+        family_counts={"trig_hyperbolic": 2, "mixed_elementary": 2},
+    )
+    assert summary["failure_count"] == 0
+    assert summary["blocked_final_families"] == {}
 
 
-def test_smoke_retains_blocked_family_failures(config: GeneratorConfig) -> None:
-    summary = run_smoke(config, family_counts={"trig_hyperbolic": 1})
-    assert summary["attempted"] == summary["failure_count"] == 1
-    assert summary["successful"] == 0
-    assert summary["failures"][0]["error_type"] == "GeneratorPolicyBlockedError"
-    assert "sin, cos, tan, sinh, cosh, tanh" in summary["failures"][0]["message"]
+def test_smoke_reports_tan_guard_class_distribution(config: GeneratorConfig) -> None:
+    summary = run_smoke(config, family_counts={"trig_hyperbolic": 40})
+    distribution = summary["tan_argument_class_distribution"]
+    assert tuple(distribution) == TAN_ARGUMENT_CLASSES
+    assert sum(distribution.values()) == summary["operator_usage"].get("tan", 0)

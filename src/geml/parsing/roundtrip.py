@@ -15,7 +15,24 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
-from sympy import Add, Basic, Integer, Mul, Pow, Rational, Symbol, exp, log, srepr
+from sympy import (
+    Add,
+    Basic,
+    Integer,
+    Mul,
+    Pow,
+    Rational,
+    Symbol,
+    cos,
+    cosh,
+    exp,
+    log,
+    sin,
+    sinh,
+    srepr,
+    tan,
+    tanh,
+)
 
 from geml.ast.builder import build_ast_from_parsed
 from geml.ast.statistics import ASTStructureError, structural_signature
@@ -37,6 +54,16 @@ from geml.parsing.srepr import (
 )
 
 _COMMUTATIVE_AST_LABELS = frozenset({"add", "multiply"})
+_SYMPY_UNARY_FUNCTIONS = {
+    "exp": exp,
+    "log": log,
+    "sin": sin,
+    "cos": cos,
+    "tan": tan,
+    "sinh": sinh,
+    "cosh": cosh,
+    "tanh": tanh,
+}
 _SINGLE_LETTER_SYMBOL = re.compile(r"[A-Za-z]\Z")
 _DEFAULT_LIMITS = ParserLimits()
 
@@ -358,10 +385,9 @@ def _ast_to_sympy(tree: ASTTree) -> Basic:
             return Mul(*children, evaluate=False)
         if node.label == "power" and len(children) == 2:
             return Pow(*children, evaluate=False)
-        if node.label == "exp" and len(children) == 1:
-            return exp(children[0], evaluate=False)
-        if node.label == "log" and len(children) == 1:
-            return log(children[0], evaluate=False)
+        unary_function = _SYMPY_UNARY_FUNCTIONS.get(node.label)
+        if unary_function is not None and len(children) == 1:
+            return unary_function(children[0], evaluate=False)
         raise RoundTripComparisonError(f"unsupported diagnostic operator: {node.label!r}")
 
     try:

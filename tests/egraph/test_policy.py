@@ -1,13 +1,13 @@
 import pytest
 
 from geml.egraph.policy import (
-    RewriteMode,
-    RuleTier,
-    ExtractionStatus,
-    RulePolicy,
-    ResourceLimits,
-    SaturationReport,
     FORBIDDEN_SHORTCUTS,
+    ExtractionStatus,
+    ResourceLimits,
+    RewriteMode,
+    RulePolicy,
+    RuleTier,
+    SaturationReport,
 )
 
 

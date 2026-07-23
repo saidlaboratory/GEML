@@ -28,8 +28,10 @@ have arity zero.
 
 Statuses mean:
 
-- `approved`: the pinned primary evidence supports the construction within the
-  declared current real-domain guards;
+- `approved`: the pinned primary evidence supports source generation and the
+  construction within the declared real-domain guards and the paper's
+  almost-everywhere/extended-complex scope. It does not promise that every
+  finite-precision pure-EML execution path is total at every real point;
 - `pending_verification`: a candidate construction exists but project-level
   domain or mathematical verification remains open;
 - `unsupported`: evidence shows the operation is outside the approved policy;
@@ -57,6 +59,18 @@ exponents require a positive base and negative exponents require a nonzero
 base. Every real-mode `log` argument must come from a positive-expression
 grammar; `nonzero_real` alone is not sufficient.
 
+All six trigonometric and hyperbolic operators are approved for real source
+arguments by the pinned official compiler. This is a source-corpus eligibility
+decision plus official construction evidence—not a claim of strict pointwise
+totality for every expanded pure-EML execution. The paper permits isolated
+exceptional/extended-real paths; local verification retains them explicitly
+(including the official-v4 `sinh(0)` and `tanh(0)` high-precision outcomes)
+rather than silently treating them as passes. Internal complex intermediates do
+not enable complex source variables or the `I` leaf. To keep generated `tan`
+expressions uniformly away from real poles, every argument is structurally
+certified to lie in the closed interval `[-1, 1]`; the generator records the
+certificate class for each occurrence.
+
 ## Operator table
 
 | Operator | Arity | SymPy encoding | Family | Domains | Generation | EML status |
@@ -73,12 +87,12 @@ grammar; `nonzero_real` alone is not sufficient.
 | `power` | 2 | `Pow(base, exponent, evaluate=False)` | `power` | three real modes | yes | `approved` |
 | `exp` | 1 | `exp(argument, evaluate=False)` | `exp_log` | three real modes | yes | `approved` |
 | `log` | 1 | `log(argument, evaluate=False)` | `exp_log` | three real modes | yes | `approved` |
-| `sin` | 1 | `sin(argument, evaluate=False)` | `trigonometric` | three real modes | no | `pending_verification` |
-| `cos` | 1 | `cos(argument, evaluate=False)` | `trigonometric` | three real modes | no | `pending_verification` |
-| `tan` | 1 | `tan(argument, evaluate=False)` | `trigonometric` | three real modes | no | `pending_verification` |
-| `sinh` | 1 | `sinh(argument, evaluate=False)` | `hyperbolic` | three real modes | no | `pending_verification` |
-| `cosh` | 1 | `cosh(argument, evaluate=False)` | `hyperbolic` | three real modes | no | `pending_verification` |
-| `tanh` | 1 | `tanh(argument, evaluate=False)` | `hyperbolic` | three real modes | no | `pending_verification` |
+| `sin` | 1 | `sin(argument, evaluate=False)` | `trigonometric` | three real modes | yes | `approved` |
+| `cos` | 1 | `cos(argument, evaluate=False)` | `trigonometric` | three real modes | yes | `approved` |
+| `tan` | 1 | `tan(argument, evaluate=False)` | `trigonometric` | three real modes | yes | `approved` |
+| `sinh` | 1 | `sinh(argument, evaluate=False)` | `hyperbolic` | three real modes | yes | `approved` |
+| `cosh` | 1 | `cosh(argument, evaluate=False)` | `hyperbolic` | three real modes | yes | `approved` |
+| `tanh` | 1 | `tanh(argument, evaluate=False)` | `hyperbolic` | three real modes | yes | `approved` |
 | `e` | 0 | `E` | `source_constant` | three real modes | no | `pending_verification` |
 | `pi` | 0 | `pi` | `source_constant` | three real modes | no | `pending_verification` |
 | `imaginary_unit` | 0 | `I` | `source_constant` | `complex` | no | `reserved` |
@@ -87,10 +101,10 @@ There are currently no `unsupported` registry entries. The status remains part
 of the closed vocabulary so future negative evidence can be recorded without a
 schema change.
 
-Trig/hyperbolic entries remain pending because the official source warns that
-their real-valued outputs use complex intermediate calculations. `e` and `pi`
-remain pending source leaves because the project plan calls their inclusion an
-open decision. `imaginary_unit` is reserved because complex support is outside
+The six trig/hyperbolic entries are approved from the pinned official compiler's
+construction and test coverage under the declared real-source guards. `e` and
+`pi` remain pending source leaves because the project has not approved them for
+Goal 1. `imaginary_unit` is reserved because source-complex support is outside
 the current pipeline.
 
 ## Final corpus families
@@ -100,8 +114,8 @@ the current pipeline.
 | `algebraic_core` | 70,000 | IID | exact leaves and algebraic core | ready |
 | `powers_division_rationals` | 40,000 | IID | algebraic core, rationals, division, bounded power | ready |
 | `exp_log` | 40,000 | IID | preceding operators plus `exp` and guarded `log` | ready |
-| `trig_hyperbolic` | 40,000 | IID | algebraic core plus planned trig/hyperbolic operators | blocked by six pending operators |
-| `mixed_elementary` | 35,000 | IID | algebraic, power, exp/log, trig, and hyperbolic | blocked by six pending operators |
+| `trig_hyperbolic` | 40,000 | IID | algebraic core plus approved trig/hyperbolic operators | ready |
+| `mixed_elementary` | 35,000 | IID | algebraic, power, exp/log, trig, and hyperbolic | ready |
 | `ood_stress` | 25,000 | OOD policy | enabled leaf, exact-number, arithmetic, power, and exp/log families under a declared stress criterion | ready |
 | **Total** | **250,000** |  |  |  |
 
@@ -113,11 +127,14 @@ Quotas are final targets and are never redistributed to bypass pending
 approvals. `require_family_generation_ready` exposes a clear preflight gate and
 lists every blocking operator.
 
-## Goal 2 review boundary
+## Compiler-verification boundary
 
-Goal 2 will implement the official constructions separately, then verify them
-symbolically and numerically under the declared domains with complete failure
-accounting. Only that evidence can promote trig/hyperbolic entries, enable a
-complex policy, or resolve optional constants. Any promotion requires a source
-ledger update and the same registry validation gate; no generator may carry a
-hidden formula or approval override.
+Goal 1 approval records that the pinned official compiler can lower these six
+real-source operators; it does not copy formulas into the generator. The local
+EML compiler/verifier is a separate evidence layer with structural, exact
+fingerprint, symbolic-diagnostic, and two-backend numeric checks with complete
+failure accounting. It neither widens the source vocabulary nor converts an
+isolated EML evaluation exception into a source-domain restriction. Complex
+source support and optional constants remain separate decisions requiring
+explicit domain policy and ledger updates; no generator may carry a hidden
+formula or approval override.

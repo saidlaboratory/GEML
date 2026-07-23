@@ -50,13 +50,21 @@ def test_ood_stress_is_a_policy_family() -> None:
     assert ood.operator_family_constraints
 
 
-def test_pending_operators_block_final_families_without_quota_changes() -> None:
-    blockers = blocked_operators("trig_hyperbolic")
-    assert blockers == ("sin", "cos", "tan", "sinh", "cosh", "tanh")
-    assert blocked_operators("mixed_elementary") == blockers
-    with pytest.raises(FamilyGenerationBlockedError, match="sin, cos, tan, sinh, cosh, tanh"):
-        require_family_generation_ready("trig_hyperbolic")
-    assert require_family_generation_ready("exp_log").family_id == "exp_log"
+def test_all_final_families_are_generation_ready() -> None:
+    assert all(not blocked_operators(family) for family in CORPUS_FAMILIES)
+    assert all(
+        require_family_generation_ready(family).family_id == family.family_id
+        for family in CORPUS_FAMILIES
+    )
+
+
+def test_generation_gate_still_reports_a_pending_operator() -> None:
+    pending_family = CORPUS_FAMILY_REGISTRY["trig_hyperbolic"].model_copy(
+        update={"eligible_operators": ("e",)}
+    )
+    assert blocked_operators(pending_family) == ("e",)
+    with pytest.raises(FamilyGenerationBlockedError, match="e"):
+        require_family_generation_ready(pending_family)
 
 
 def test_family_records_and_registry_are_immutable() -> None:

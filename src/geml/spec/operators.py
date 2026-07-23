@@ -17,7 +17,13 @@ Arity = Annotated[StrictInt, Field(ge=0, le=2)]
 
 
 class EMLConstructionStatus(StrEnum):
-    """Evidence state for an official pure-EML construction."""
+    """Evidence and source-generation state for an official EML construction.
+
+    ``APPROVED`` records sufficient sourced construction evidence under the
+    declared guards. It does not assert that every finite-precision execution
+    of a branch-sensitive pure-EML tree is total at every real point; documented
+    isolated/extended-real outcomes remain verification results.
+    """
 
     APPROVED = "approved"
     PENDING_VERIFICATION = "pending_verification"
@@ -217,11 +223,14 @@ OPERATORS: tuple[OperatorRecord, ...] = (
         sympy_encoding="sin(argument, evaluate=False)",
         operator_family="trigonometric",
         domain_modes=_REAL_MODES,
-        enabled_for_generation=False,
-        eml_construction_status=EMLConstructionStatus.PENDING_VERIFICATION,
+        enabled_for_generation=True,
+        eml_construction_status=EMLConstructionStatus.APPROVED,
         source_ids=_ALL_STRUCTURAL_SOURCES,
         encoding_notes=(
-            "Official lowering uses complex intermediates; current complex policy is disabled."
+            "The pinned official compiler lowers real source arguments through the approved "
+            "EML core; internal complex intermediates do not enable complex source values. "
+            "Approval follows the paper's almost-everywhere construction scope and retains "
+            "isolated branch/extended-real evaluation outcomes."
         ),
     ),
     OperatorRecord(
@@ -230,11 +239,14 @@ OPERATORS: tuple[OperatorRecord, ...] = (
         sympy_encoding="cos(argument, evaluate=False)",
         operator_family="trigonometric",
         domain_modes=_REAL_MODES,
-        enabled_for_generation=False,
-        eml_construction_status=EMLConstructionStatus.PENDING_VERIFICATION,
+        enabled_for_generation=True,
+        eml_construction_status=EMLConstructionStatus.APPROVED,
         source_ids=_ALL_STRUCTURAL_SOURCES,
         encoding_notes=(
-            "Official lowering uses complex intermediates; current complex policy is disabled."
+            "The pinned official compiler lowers real source arguments through the approved "
+            "EML core; internal complex intermediates do not enable complex source values. "
+            "Approval follows the paper's almost-everywhere construction scope and retains "
+            "isolated branch/extended-real evaluation outcomes."
         ),
     ),
     OperatorRecord(
@@ -243,11 +255,14 @@ OPERATORS: tuple[OperatorRecord, ...] = (
         sympy_encoding="tan(argument, evaluate=False)",
         operator_family="trigonometric",
         domain_modes=_REAL_MODES,
-        enabled_for_generation=False,
-        eml_construction_status=EMLConstructionStatus.PENDING_VERIFICATION,
+        enabled_for_generation=True,
+        eml_construction_status=EMLConstructionStatus.APPROVED,
         source_ids=_ALL_STRUCTURAL_SOURCES,
         encoding_notes=(
-            "Complex-intermediate lowering and real-axis poles require Goal 2 verification."
+            "The pinned official compiler lowers real source arguments through the approved "
+            "EML core. Generation additionally requires a structural proof that the argument "
+            "lies in the closed interval [-1, 1], away from real-axis poles. Approval follows "
+            "the paper's almost-everywhere construction scope."
         ),
     ),
     OperatorRecord(
@@ -256,10 +271,13 @@ OPERATORS: tuple[OperatorRecord, ...] = (
         sympy_encoding="sinh(argument, evaluate=False)",
         operator_family="hyperbolic",
         domain_modes=_REAL_MODES,
-        enabled_for_generation=False,
-        eml_construction_status=EMLConstructionStatus.PENDING_VERIFICATION,
+        enabled_for_generation=True,
+        eml_construction_status=EMLConstructionStatus.APPROVED,
         source_ids=_ALL_STRUCTURAL_SOURCES,
-        encoding_notes="The compiler has a construction, but Goal 2 has not verified it locally.",
+        encoding_notes=(
+            "The pinned official compiler provides a direct pure-EML construction under the "
+            "paper's almost-everywhere scope; isolated extended-real paths remain reportable."
+        ),
     ),
     OperatorRecord(
         name="cosh",
@@ -267,10 +285,14 @@ OPERATORS: tuple[OperatorRecord, ...] = (
         sympy_encoding="cosh(argument, evaluate=False)",
         operator_family="hyperbolic",
         domain_modes=_REAL_MODES,
-        enabled_for_generation=False,
-        eml_construction_status=EMLConstructionStatus.PENDING_VERIFICATION,
+        enabled_for_generation=True,
+        eml_construction_status=EMLConstructionStatus.APPROVED,
         source_ids=_ALL_STRUCTURAL_SOURCES,
-        encoding_notes="The compiler has a construction, but Goal 2 has not verified it locally.",
+        encoding_notes=(
+            "The pinned official compiler provides a direct pure-EML construction; for real "
+            "arguments the result is also a positive-expression production. Approval follows "
+            "the paper's almost-everywhere scope."
+        ),
     ),
     OperatorRecord(
         name="tanh",
@@ -278,10 +300,14 @@ OPERATORS: tuple[OperatorRecord, ...] = (
         sympy_encoding="tanh(argument, evaluate=False)",
         operator_family="hyperbolic",
         domain_modes=_REAL_MODES,
-        enabled_for_generation=False,
-        eml_construction_status=EMLConstructionStatus.PENDING_VERIFICATION,
+        enabled_for_generation=True,
+        eml_construction_status=EMLConstructionStatus.APPROVED,
         source_ids=_ALL_STRUCTURAL_SOURCES,
-        encoding_notes="The compiler has a construction, but Goal 2 has not verified it locally.",
+        encoding_notes=(
+            "The pinned official compiler provides a direct pure-EML construction; real outputs "
+            "lie strictly between -1 and 1. Approval follows the paper's almost-everywhere "
+            "scope, with isolated extended-real paths retained by verification."
+        ),
     ),
     OperatorRecord(
         name="e",
@@ -350,11 +376,6 @@ def validate_operator_registry() -> None:
             operator.eml_construction_status is not EMLConstructionStatus.APPROVED
         ):
             raise ValueError(f"enabled operator {operator.name!r} does not have approved status")
-        if (
-            operator.eml_construction_status is not EMLConstructionStatus.APPROVED
-            and operator.enabled_for_generation
-        ):
-            raise ValueError(f"non-approved operator {operator.name!r} cannot be enabled")
 
 
 def get_operator(name: str) -> OperatorRecord:

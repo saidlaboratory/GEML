@@ -30,12 +30,17 @@ excludes the entry.
 - **Domain caveats:** Section 4.1 says real-axis results can have isolated
   exceptional points, that trigonometric constructions use complex
   intermediates, and that principal-log branches and extended-real behavior
-  require care. Those caveats prevent current trig/hyperbolic approval under the
-  disabled complex policy.
+  require care. GEML keeps source expressions real, does not expose those
+  intermediates as source operators, and structurally restricts generated `tan`
+  arguments to `[-1, 1]` so they stay away from real poles.
 - **Evidence decision:** sufficient, together with the pinned compiler, for
-  guarded real algebraic, exact-number, power, `exp`, and `log` entries. Only
-  pending evidence for trig/hyperbolic entries and optional `e`/`pi` source
-  leaves under current project policy. `imaginary_unit` remains reserved.
+  guarded real algebraic, exact-number, power, `exp`, `log`, trigonometric, and
+  hyperbolic entries under the paper's almost-everywhere construction scope.
+  Approval gates source-corpus eligibility; it does not erase isolated
+  branch/extended-real execution outcomes, which remain explicit verification
+  rows. The compiler's internal complex intermediates do not authorize complex
+  source expressions. Optional `e`/`pi` source leaves remain pending under
+  current project policy, and `imaginary_unit` remains reserved.
 
 ## Source: EML-COMPILER-B3DA1482
 
@@ -50,18 +55,37 @@ excludes the entry.
   implementation evidence, not copied into GEML.
 - **Scope used:** `eml_int`, `eml_rational`, `eml_sinh`, `eml_cosh`,
   `eml_tanh`, `eml_atan`, `eml_from_number`, `compile_to_eml`, and
-  `normalize_to_exp_log`; the `Integer`, `Rational`, `Symbol`, `Add`, `Mul`,
-  `Pow`, `exp`, and `log` dispatch branches; the declared input function map.
+  `normalize_to_exp_log`; the direct hyperbolic dispatch branches; normalization
+  of `sin`, `cos`, and `tan` through `log`, `exp`, and `Pow`; the `Integer`,
+  `Rational`, `Symbol`, `Add`, `Mul`, `Pow`, `exp`, and `log` dispatch branches;
+  and the declared function test inputs containing all six operators.
+- **Local clean-room corroboration:**
+  [`EML_CORE_FORMULAS.md`](EML_CORE_FORMULAS.md),
+  [`EML_ARITHMETIC_FORMULAS.md`](EML_ARITHMETIC_FORMULAS.md), and
+  [`EML_TRANSCENDENTAL_FORMULAS.md`](EML_TRANSCENDENTAL_FORMULAS.md) document
+  the independently expressed GEML IR formulas and their authority. The local
+  offline audit checks exact pinned fingerprints, pure-tree structure, symbolic
+  diagnostics, and row-complete high-precision and independent `complex128`
+  numeric probes; backend limitations and failed probes remain explicit.
 - **Relevant entries:** every operator in the registry.
 - **Domain caveats:** compiler tests operate primarily on real grids, skip
   points outside a source function's domain, and include special handling for
   branch-sensitive constants. This project must retain such failures rather
-  than treating skipped points as verification.
+  than treating skipped points as verification. An older upstream verifier at
+  revision
+  [`f5d4f3c`](https://github.com/VA00/SymbolicRegressionPackage/commit/f5d4f3cc92925a16d8b5b298630e79ccbd6c41d8)
+  had wrong-sign `sinh`/`tanh` witnesses for negative inputs; the
+  [maintainer confirmed](https://github.com/VA00/SymbolicRegressionPackage/issues/4#issuecomment-4274333595)
+  that obsolete `sinhEML` witness was incorrect. GEML instead pins the later v4
+  direct exponential formulas and keeps negative-input sign probes.
 - **Evidence decision:** corroborates `approved` source coverage for exact
-  numbers, arithmetic, bounded/guarded power, `exp`, and positive-argument
-  `log`. Trig/hyperbolic functions remain `pending_verification` because their
-  official lowering and branch behavior have not passed GEML Goal 2's declared
-  domain audit. No upstream code or formula is reused here.
+  numbers, arithmetic, bounded/guarded power, `exp`, positive-argument `log`,
+  and all six real-source trig/hyperbolic operators. `sinh`, `cosh`, and `tanh`
+  have direct compiler constructions; `sin`, `cos`, and `tan` are accepted and
+  normalized to the supported core. This approval does not enable complex,
+  `E`, `pi`, or `I` as source leaves. No upstream code is vendored or copied;
+  the authoritative formulas are independently expressed in GEML IR and
+  checked against exact offline fingerprints.
 
 ## Source: SYMPY-1.14-STRUCTURE
 
@@ -92,8 +116,11 @@ excludes the entry.
 
 ## Approval boundary
 
-Goal 2 owns implementation and GEML-local symbolic/numeric verification of
-official pure-EML formulas. A future status change must cite new evidence,
-document branch and singularity behavior, enable any required domain policy,
-and update both registry tests and this ledger. Status must never be changed
-only to satisfy a corpus quota.
+The six real-source trig/hyperbolic operators are approved here from the pinned
+official compiler, the exact local fingerprint audit, and the structural `tan`
+interval guard. The clean-room EML modules independently express and audit the
+pure-EML formulas as approval evidence; they do not widen Goal 1's source
+vocabulary. A future source-domain or constant status change must cite evidence,
+document branch and singularity behavior, enable any required domain policy, and
+update both registry tests and this ledger. Status must never be changed only to
+satisfy a corpus quota.

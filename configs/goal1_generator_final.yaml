@@ -137,7 +137,7 @@ families:
 
   mixed_elementary:
     difficulty_profile: ordinary
-    minimum_target_size: 2
+    minimum_target_size: 3
     domain_weights: {safe_real: 0.35, positive_real: 0.40, nonzero_real: 0.25}
     operator_weights:
       symbol: 2.5
@@ -158,7 +158,9 @@ families:
       sinh: 0.6
       cosh: 0.6
       tanh: 0.6
-    required_any_operators: [exp, log, sin, cos, tan, sinh, cosh, tanh]
+    required_any_operators: [exp, log]
+    required_operator_groups:
+      - [sin, cos, tan, sinh, cosh, tanh]
 
   ood_stress:
     difficulty_profile: ood_stress
@@ -209,7 +211,9 @@ maximum_attempts_per_record: 64
 smoke:
   split: train
   family_counts:
-    algebraic_core: 2500
-    powers_division_rationals: 2500
-    exp_log: 2500
-    ood_stress: 2500
+    algebraic_core: 2800
+    powers_division_rationals: 1600
+    exp_log: 1600
+    trig_hyperbolic: 1600
+    mixed_elementary: 1400
+    ood_stress: 1000

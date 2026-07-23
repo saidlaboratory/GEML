@@ -44,6 +44,7 @@ DOMAIN_POLICIES: tuple[DomainPolicy, ...] = (
         operation_constraints=(
             "Every log argument must be constructed as provably positive.",
             "Every division denominator must be constructed as provably nonzero.",
+            "Every tan argument must be structurally certified in the closed interval [-1, 1].",
             "A possibly negative base may only use an approved bounded integer exponent.",
         ),
         numeric_probe_policy=(
@@ -62,6 +63,7 @@ DOMAIN_POLICIES: tuple[DomainPolicy, ...] = (
         operation_constraints=(
             "Log arguments must remain in the positive-expression grammar.",
             "Division denominators must remain strictly positive or otherwise provably nonzero.",
+            "Every tan argument must be structurally certified in the closed interval [-1, 1].",
             "Non-integer powers require a strictly positive base.",
         ),
         numeric_probe_policy=(
@@ -81,6 +83,7 @@ DOMAIN_POLICIES: tuple[DomainPolicy, ...] = (
             "A division denominator must be independently guaranteed nonzero.",
             "A nonzero variable assumption does not make an arbitrary composite nonzero.",
             "Log arguments still require a separate positive construction guarantee.",
+            "Every tan argument must be structurally certified in the closed interval [-1, 1].",
         ),
         numeric_probe_policy=(
             "Probe positive and negative finite values separated from zero.",

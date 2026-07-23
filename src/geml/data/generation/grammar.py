@@ -11,9 +11,26 @@ from random import Random
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, model_validator
-from sympy import Add, Expr, Integer, Mul, Pow, Rational, Symbol, exp, log
+from sympy import (
+    Add,
+    Expr,
+    Integer,
+    Mul,
+    Pow,
+    Rational,
+    Symbol,
+    cos,
+    cosh,
+    exp,
+    log,
+    sin,
+    sinh,
+    tan,
+    tanh,
+)
 
 from geml.data.generation.difficulty import DifficultyTarget, freeze_mapping
+from geml.spec.domains import DOMAIN_REGISTRY
 
 NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
 PositiveInt = Annotated[StrictInt, Field(ge=1)]
@@ -33,6 +50,13 @@ LOG_ARGUMENT_CLASSES: tuple[str, ...] = (
     "positive_sum",
     "positive_product",
     "exp",
+    "cosh",
+)
+TAN_ARGUMENT_CLASSES: tuple[str, ...] = (
+    "sin",
+    "cos",
+    "tanh",
+    "exact_constant",
 )
 
 
@@ -146,6 +170,7 @@ class _Node:
     children: tuple[_Node, ...]
     is_constant: bool
     positive_class: str | None
+    unit_interval_class: str | None = None
 
     @property
     def size(self) -> int:
@@ -167,6 +192,7 @@ class GeneratedTree:
     intermediate_leaf_count: int
     operator_counts: tuple[tuple[str, int], ...]
     log_argument_classes: tuple[tuple[str, int], ...]
+    tan_argument_classes: tuple[tuple[str, int], ...]
     triviality_counts: tuple[tuple[str, int], ...]
     labeling_attempts: int
     labeling_rejection_reasons: tuple[tuple[str, int], ...]
@@ -186,7 +212,14 @@ class _LabelContext:
 _ShapeOption = tuple[int, int, int, int, int]
 _ANY: Literal["any"] = "any"
 _POSITIVE: Literal["positive"] = "positive"
-_Requirement = Literal["any", "positive"]
+_UNIT_INTERVAL: Literal["unit_interval"] = "unit_interval"
+_Requirement = Literal["any", "positive", "unit_interval"]
+_LabelingProfile = tuple[tuple[int, int], ...]
+_LabelingTransitions = tuple[_LabelingProfile, ...]
+_MAXIMUM_TARGET_VARIABLES = 6
+_EMPTY_LABELING_TRANSITIONS: _LabelingTransitions = tuple(
+    () for _ in range(_MAXIMUM_TARGET_VARIABLES + 1)
+)
 
 
 @cache
@@ -274,42 +307,77 @@ def _maximum_shape_leaves(
 
 
 @cache
-def _maximum_leaves_containing_arity(size: int, depth: int, arity: int) -> int:
+def _maximum_leaves_by_arity_count(
+    size: int,
+    depth: int,
+    arity: int,
+) -> tuple[tuple[int, int], ...]:
+    """Return ``(exact arity count, maximum leaves)`` pairs for exact shapes."""
+
     if size == 1 and depth == 0:
-        return 1 if arity == 0 else 0
-    maximum = 0
-    for option in _shape_options(size, depth, True, True):
-        root_arity, left_size, left_depth, right_size, right_depth = option
-        left_maximum = _maximum_shape_leaves(left_size, left_depth, True, True)
-        right_maximum = (
-            _maximum_shape_leaves(right_size, right_depth, True, True) if root_arity == 2 else 0
-        )
-        if root_arity == arity:
-            maximum = max(maximum, left_maximum + right_maximum)
-        left_with_arity = _maximum_leaves_containing_arity(
+        return ((int(arity == 0), 1),)
+
+    maximum_by_count: dict[int, int] = {}
+    for root_arity, left_size, left_depth, right_size, right_depth in _shape_options(
+        size,
+        depth,
+        True,
+        True,
+    ):
+        left_profiles = _maximum_leaves_by_arity_count(
             left_size,
             left_depth,
             arity,
         )
-        if left_with_arity:
-            maximum = max(maximum, left_with_arity + right_maximum)
-        if root_arity == 2:
-            right_with_arity = _maximum_leaves_containing_arity(
-                right_size,
-                right_depth,
-                arity,
-            )
-            if right_with_arity:
-                maximum = max(maximum, left_maximum + right_with_arity)
-    return maximum
+        right_profiles = (
+            _maximum_leaves_by_arity_count(right_size, right_depth, arity)
+            if root_arity == 2
+            else ((0, 0),)
+        )
+        for left_count, left_leaves in left_profiles:
+            for right_count, right_leaves in right_profiles:
+                count = left_count + right_count + int(root_arity == arity)
+                leaves = left_leaves + right_leaves
+                maximum_by_count[count] = max(maximum_by_count.get(count, 0), leaves)
+    return tuple(sorted(maximum_by_count.items()))
+
+
+def maximum_leaves_with_arity_count(
+    *,
+    size: int,
+    depth: int,
+    arity: int,
+    minimum_count: int,
+) -> int:
+    """Return maximum leaves in exact shapes containing enough nodes of an arity."""
+
+    if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+        raise ValueError("source shape size must be a positive integer")
+    if isinstance(depth, bool) or not isinstance(depth, int) or depth < 0:
+        raise ValueError("source shape depth must be a nonnegative integer")
+    if isinstance(arity, bool) or not isinstance(arity, int) or arity not in {0, 1, 2}:
+        raise ValueError("source operator arity must be zero, one, or two")
+    if isinstance(minimum_count, bool) or not isinstance(minimum_count, int) or minimum_count < 1:
+        raise ValueError("minimum arity count must be a positive integer")
+    return max(
+        (
+            leaves
+            for count, leaves in _maximum_leaves_by_arity_count(size, depth, arity)
+            if count >= minimum_count
+        ),
+        default=0,
+    )
 
 
 def maximum_leaves_with_arity(*, size: int, depth: int, arity: int) -> int:
     """Return the largest leaf count among exact shapes containing an arity."""
 
-    if arity not in {0, 1, 2}:
-        raise ValueError("source operator arity must be zero, one, or two")
-    return _maximum_leaves_containing_arity(size, depth, arity)
+    return maximum_leaves_with_arity_count(
+        size=size,
+        depth=depth,
+        arity=arity,
+        minimum_count=1,
+    )
 
 
 def _build_shape(
@@ -451,10 +519,44 @@ def _can_label_positive(shape: _Shape, context: _LabelContext) -> bool:
         )
         return constant_leaf or positive_variable
     if len(shape.children) == 1:
-        return _operator_is_available(context, "exp") and _can_label_any(shape.children[0], context)
+        return any(
+            _operator_is_available(context, operator) for operator in ("exp", "cosh")
+        ) and _can_label_any(shape.children[0], context)
     return any(
         _operator_is_available(context, operator) for operator in ("add", "multiply")
     ) and all(_can_label_positive(child, context) for child in shape.children)
+
+
+def _integer_bounds(
+    context: _LabelContext,
+    *,
+    positive: bool = False,
+    unit_interval: bool = False,
+) -> tuple[int, int]:
+    minimum = max(1, context.policy.integer_minimum) if positive else context.policy.integer_minimum
+    maximum = context.policy.integer_maximum
+    if unit_interval:
+        minimum = max(-1, minimum)
+        maximum = min(1, maximum)
+    return minimum, maximum
+
+
+def _can_label_unit_interval(shape: _Shape, context: _LabelContext) -> bool:
+    """Return whether a shape can carry a structural ``[-1, 1]`` certificate."""
+
+    if not shape.children:
+        minimum, maximum = _integer_bounds(context, unit_interval=True)
+        return (
+            _operator_is_available(context, "one")
+            or (_operator_is_available(context, "integer") and minimum <= maximum)
+            or (
+                _operator_is_available(context, "rational")
+                and bool(_rational_candidates(context.policy, unit_interval=True))
+            )
+        )
+    if len(shape.children) != 1 or not _can_label_any(shape.children[0], context):
+        return False
+    return any(_operator_is_available(context, operator) for operator in ("sin", "cos", "tanh"))
 
 
 def _can_label_any(shape: _Shape, context: _LabelContext) -> bool:
@@ -463,25 +565,32 @@ def _can_label_any(shape: _Shape, context: _LabelContext) -> bool:
             _operator_is_available(context, operator)
             for operator in ("symbol", "one", "integer", "rational")
         )
-    arity = len(shape.children)
-    return any(
-        (
-            _power_is_available(context)
-            if operator == "power"
-            else _operator_is_available(context, operator)
+    if len(shape.children) == 1:
+        child = shape.children[0]
+        if _can_label_any(child, context) and any(
+            _operator_is_available(context, operator)
+            for operator in ("negate", "exp", "sin", "cos", "sinh", "cosh", "tanh")
+        ):
+            return True
+        if _operator_is_available(context, "log") and _can_label_positive(child, context):
+            return True
+        return _operator_is_available(context, "tan") and _can_label_unit_interval(
+            child,
+            context,
         )
-        and operator_arity == arity
-        for operator, operator_arity in (
-            ("negate", 1),
-            ("exp", 1),
-            ("log", 1),
-            ("add", 2),
-            ("subtract", 2),
-            ("multiply", 2),
-            ("divide", 2),
-            ("power", 2),
-        )
-    )
+
+    left, right = shape.children
+    if all(_can_label_any(child, context) for child in shape.children) and any(
+        _operator_is_available(context, operator) for operator in ("add", "subtract", "multiply")
+    ):
+        return True
+    if (
+        _operator_is_available(context, "divide")
+        and _can_label_any(left, context)
+        and _can_label_positive(right, context)
+    ):
+        return True
+    return not right.children and _power_is_available(context) and _can_label_any(left, context)
 
 
 def _symbol(name: str, domain_mode: str) -> Symbol:
@@ -492,9 +601,17 @@ def _symbol(name: str, domain_mode: str) -> Symbol:
     return Symbol(name, real=True)
 
 
-def _choose_integer(context: _LabelContext, *, positive: bool) -> Integer:
-    minimum = max(1, context.policy.integer_minimum) if positive else context.policy.integer_minimum
-    maximum = context.policy.integer_maximum
+def _choose_integer(
+    context: _LabelContext,
+    *,
+    positive: bool = False,
+    unit_interval: bool = False,
+) -> Integer:
+    minimum, maximum = _integer_bounds(
+        context,
+        positive=positive,
+        unit_interval=unit_interval,
+    )
     if maximum < minimum:
         raise GrammarGenerationError(
             "integer bounds contain no value for the required sign",
@@ -504,7 +621,12 @@ def _choose_integer(context: _LabelContext, *, positive: bool) -> Integer:
 
 
 @cache
-def _rational_candidates(policy: GrammarPolicy, *, positive: bool) -> tuple[tuple[int, int], ...]:
+def _rational_candidates(
+    policy: GrammarPolicy,
+    *,
+    positive: bool = False,
+    unit_interval: bool = False,
+) -> tuple[tuple[int, int], ...]:
     minimum = (
         max(1, policy.rational_numerator_minimum) if positive else policy.rational_numerator_minimum
     )
@@ -516,13 +638,266 @@ def _rational_candidates(policy: GrammarPolicy, *, positive: bool) -> tuple[tupl
             policy.rational_denominator_minimum,
             policy.rational_denominator_maximum + 1,
         ):
+            if unit_interval and abs(numerator) > denominator:
+                continue
             if gcd(abs(numerator), denominator) == 1:
                 candidates.append((numerator, denominator))
     return tuple(candidates)
 
 
+def _freeze_labeling_outcomes(
+    outcomes: list[set[tuple[int, int]]],
+) -> _LabelingTransitions:
+    """Freeze only non-dominated coverage/remaining-variable outcomes."""
+
+    profiles: list[_LabelingProfile] = []
+    for profile in outcomes:
+        retained = tuple(
+            outcome
+            for outcome in sorted(profile)
+            if not any(
+                candidate != outcome
+                and candidate[1] <= outcome[1]
+                and candidate[0] | outcome[0] == candidate[0]
+                for candidate in profile
+            )
+        )
+        profiles.append(retained)
+    return tuple(profiles)
+
+
+@cache
+def _labeling_transitions(
+    size: int,
+    depth: int,
+    requirement: _Requirement,
+    domain_mode: str,
+    active_operators: tuple[str, ...],
+    operator_group_masks: tuple[tuple[str, int], ...],
+    policy: GrammarPolicy,
+) -> _LabelingTransitions:
+    """Return ordered labeling outcomes for every supported incoming count.
+
+    The labeler consumes variables greedily in depth-first, left-to-right order.
+    Each tuple position is an incoming variable count and contains reachable
+    ``(coverage mask, remaining variables)`` states for that count.
+    """
+
+    if size < 1 or depth < 0 or depth >= size:
+        return _EMPTY_LABELING_TRANSITIONS
+    active = frozenset(active_operators)
+    group_masks = dict(operator_group_masks)
+
+    if size == 1:
+        if depth != 0:
+            return _EMPTY_LABELING_TRANSITIONS
+        may_use_variable = requirement == _ANY or (
+            requirement == _POSITIVE and domain_mode == "positive_real"
+        )
+        candidates: list[str] = []
+
+        def add_leaf(operator: str) -> None:
+            if operator in active:
+                candidates.append(operator)
+
+        if requirement == _ANY:
+            add_leaf("symbol")
+            add_leaf("one")
+            add_leaf("integer")
+            if _rational_candidates(policy):
+                add_leaf("rational")
+        elif requirement == _POSITIVE:
+            if domain_mode == "positive_real":
+                add_leaf("symbol")
+            add_leaf("one")
+            if max(1, policy.integer_minimum) <= policy.integer_maximum:
+                add_leaf("integer")
+            if _rational_candidates(policy, positive=True):
+                add_leaf("rational")
+        else:
+            add_leaf("one")
+            if max(-1, policy.integer_minimum) <= min(1, policy.integer_maximum):
+                add_leaf("integer")
+            if _rational_candidates(policy, unit_interval=True):
+                add_leaf("rational")
+        ordinary_masks = {group_masks.get(operator, 0) for operator in candidates}
+        outcomes_by_count: list[set[tuple[int, int]]] = []
+        for remaining_variables in range(_MAXIMUM_TARGET_VARIABLES + 1):
+            if remaining_variables and may_use_variable:
+                outcomes = (
+                    {(group_masks.get("symbol", 0), remaining_variables - 1)}
+                    if "symbol" in active
+                    else set()
+                )
+            else:
+                outcomes = {(mask, remaining_variables) for mask in ordinary_masks}
+            outcomes_by_count.append(outcomes)
+        return _freeze_labeling_outcomes(outcomes_by_count)
+
+    outcomes: list[set[tuple[int, int]]] = [set() for _ in range(_MAXIMUM_TARGET_VARIABLES + 1)]
+
+    def add_unary(operator: str, child_requirement: _Requirement) -> None:
+        if operator not in active:
+            return
+        child_transitions = _labeling_transitions(
+            size - 1,
+            depth - 1,
+            child_requirement,
+            domain_mode,
+            active_operators,
+            operator_group_masks,
+            policy,
+        )
+        root_mask = group_masks.get(operator, 0)
+        for remaining_variables, child_profile in enumerate(child_transitions):
+            outcomes[remaining_variables].update(
+                (child_mask | root_mask, child_remaining)
+                for child_mask, child_remaining in child_profile
+            )
+
+    if requirement == _ANY:
+        for operator in ("negate", "exp", "sin", "cos", "sinh", "cosh", "tanh"):
+            add_unary(operator, _ANY)
+        add_unary("log", _POSITIVE)
+        add_unary("tan", _UNIT_INTERVAL)
+    elif requirement == _POSITIVE:
+        for operator in ("exp", "cosh"):
+            add_unary(operator, _ANY)
+    else:
+        for operator in ("sin", "cos", "tanh"):
+            add_unary(operator, _ANY)
+
+    if requirement == _UNIT_INTERVAL:
+        return _freeze_labeling_outcomes(outcomes)
+
+    def child_transitions(
+        child_size: int,
+        child_depth: int,
+        child_requirement: _Requirement,
+    ) -> _LabelingTransitions:
+        return _labeling_transitions(
+            child_size,
+            child_depth,
+            child_requirement,
+            domain_mode,
+            active_operators,
+            operator_group_masks,
+            policy,
+        )
+
+    for arity, left_size, left_depth, right_size, right_depth in _shape_options(
+        size,
+        depth,
+        True,
+        True,
+    ):
+        if arity != 2:
+            continue
+
+        binary_options: tuple[tuple[str, _Requirement, _Requirement], ...]
+        if requirement == _POSITIVE:
+            binary_options = (
+                ("add", _POSITIVE, _POSITIVE),
+                ("multiply", _POSITIVE, _POSITIVE),
+            )
+        else:
+            binary_options = (
+                ("add", _ANY, _ANY),
+                ("subtract", _ANY, _ANY),
+                ("multiply", _ANY, _ANY),
+                ("divide", _ANY, _POSITIVE),
+            )
+        for operator, left_requirement, right_requirement in binary_options:
+            if operator not in active:
+                continue
+            root_mask = group_masks.get(operator, 0)
+            left_transitions = child_transitions(
+                left_size,
+                left_depth,
+                left_requirement,
+            )
+            right_transitions = child_transitions(
+                right_size,
+                right_depth,
+                right_requirement,
+            )
+            for remaining_variables, left_profile in enumerate(left_transitions):
+                for left_mask, after_left in left_profile:
+                    outcomes[remaining_variables].update(
+                        (left_mask | right_mask | root_mask, after_right)
+                        for right_mask, after_right in right_transitions[after_left]
+                    )
+
+        if (
+            requirement == _ANY
+            and "power" in active
+            and "integer" in active
+            and right_size == 1
+            and right_depth == 0
+        ):
+            root_mask = group_masks.get("power", 0) | group_masks.get("integer", 0)
+            base_requirements = [_ANY]
+            if any(exponent < 0 for exponent in policy.power_exponents):
+                base_requirements.append(_POSITIVE)
+            for base_requirement in base_requirements:
+                base_transitions = child_transitions(
+                    left_size,
+                    left_depth,
+                    base_requirement,
+                )
+                for remaining_variables, base_profile in enumerate(base_transitions):
+                    outcomes[remaining_variables].update(
+                        (left_mask | root_mask, after_left)
+                        for left_mask, after_left in base_profile
+                    )
+
+    return _freeze_labeling_outcomes(outcomes)
+
+
+def target_is_label_feasible(
+    *,
+    target: DifficultyTarget,
+    domain_mode: str,
+    allowed_operators: tuple[str, ...],
+    operator_weights: Mapping[str, float],
+    policy: GrammarPolicy,
+    required_operator_groups: tuple[tuple[str, ...], ...] = (),
+) -> bool:
+    """Return whether some exact target tree can satisfy guards and variables."""
+
+    active_operators = tuple(
+        sorted(
+            operator for operator in allowed_operators if operator_weights.get(operator, 0.0) > 0
+        )
+    )
+    operator_group_masks = tuple(
+        (
+            operator,
+            sum(
+                1 << group_index
+                for group_index, group in enumerate(required_operator_groups)
+                if operator in group
+            ),
+        )
+        for operator in active_operators
+    )
+    full_mask = (1 << len(required_operator_groups)) - 1
+    transitions = _labeling_transitions(
+        target.target_size,
+        target.target_depth,
+        _ANY,
+        domain_mode,
+        active_operators,
+        operator_group_masks,
+        policy,
+    )
+    return (full_mask, 0) in transitions[target.variable_count]
+
+
 def _label_leaf(requirement: _Requirement, context: _LabelContext) -> _Node:
-    may_use_variable = requirement == _ANY or context.domain_mode == "positive_real"
+    may_use_variable = requirement == _ANY or (
+        requirement == _POSITIVE and context.domain_mode == "positive_real"
+    )
     if context.remaining_variables and may_use_variable:
         operator = "symbol"
         if not _operator_is_available(context, operator):
@@ -531,8 +906,23 @@ def _label_leaf(requirement: _Requirement, context: _LabelContext) -> _Node:
                 code="variable_placement",
             )
     else:
-        candidates = ["one", "integer", "rational"]
-        if requirement == _ANY or context.domain_mode == "positive_real":
+        candidates = ["one"]
+        integer_minimum, integer_maximum = _integer_bounds(
+            context,
+            positive=requirement == _POSITIVE,
+            unit_interval=requirement == _UNIT_INTERVAL,
+        )
+        if integer_minimum <= integer_maximum:
+            candidates.append("integer")
+        if _rational_candidates(
+            context.policy,
+            positive=requirement == _POSITIVE,
+            unit_interval=requirement == _UNIT_INTERVAL,
+        ):
+            candidates.append("rational")
+        if requirement == _ANY or (
+            requirement == _POSITIVE and context.domain_mode == "positive_real"
+        ):
             candidates.append("symbol")
         operator = _choose_operator(context, tuple(candidates))
 
@@ -545,13 +935,36 @@ def _label_leaf(requirement: _Requirement, context: _LabelContext) -> _Node:
         positive_class = "positive_variable" if context.domain_mode == "positive_real" else None
         return _Node(expression, operator, (), False, positive_class)
     if operator == "one":
-        return _Node(Integer(1), operator, (), True, "positive_constant")
+        return _Node(
+            Integer(1),
+            operator,
+            (),
+            True,
+            "positive_constant",
+            "exact_constant",
+        )
     if operator == "integer":
-        expression = _choose_integer(context, positive=requirement == _POSITIVE)
+        expression = _choose_integer(
+            context,
+            positive=requirement == _POSITIVE,
+            unit_interval=requirement == _UNIT_INTERVAL,
+        )
         positive_class = "positive_constant" if expression.is_positive else None
-        return _Node(expression, operator, (), True, positive_class)
+        unit_interval_class = "exact_constant" if abs(int(expression)) <= 1 else None
+        return _Node(
+            expression,
+            operator,
+            (),
+            True,
+            positive_class,
+            unit_interval_class,
+        )
 
-    candidates = _rational_candidates(context.policy, positive=requirement == _POSITIVE)
+    candidates = _rational_candidates(
+        context.policy,
+        positive=requirement == _POSITIVE,
+        unit_interval=requirement == _UNIT_INTERVAL,
+    )
     if not candidates:
         raise GrammarGenerationError(
             "rational bounds contain no exact non-integer value",
@@ -560,7 +973,15 @@ def _label_leaf(requirement: _Requirement, context: _LabelContext) -> _Node:
     numerator, denominator = context.rng.choice(candidates)
     expression = Rational(numerator, denominator)
     positive_class = "positive_constant" if expression.is_positive else None
-    return _Node(expression, operator, (), True, positive_class)
+    unit_interval_class = "exact_constant" if abs(numerator) <= denominator else None
+    return _Node(
+        expression,
+        operator,
+        (),
+        True,
+        positive_class,
+        unit_interval_class,
+    )
 
 
 def _label_unary(
@@ -570,14 +991,23 @@ def _label_unary(
 ) -> _Node:
     child_shape = shape.children[0]
     if requirement == _POSITIVE:
-        operator = _choose_operator(context, ("exp",))
+        operator = _choose_operator(context, ("exp", "cosh"))
+    elif requirement == _UNIT_INTERVAL:
+        operator = _choose_operator(context, ("sin", "cos", "tanh"))
     else:
-        candidates = ["negate", "exp"]
+        candidates = ["negate", "exp", "sin", "cos", "sinh", "cosh", "tanh"]
         if _can_label_positive(child_shape, context):
             candidates.append("log")
+        if _can_label_unit_interval(child_shape, context):
+            candidates.append("tan")
         operator = _choose_operator(context, tuple(candidates))
 
-    child_requirement = _POSITIVE if operator == "log" else _ANY
+    if operator == "log":
+        child_requirement = _POSITIVE
+    elif operator == "tan":
+        child_requirement = _UNIT_INTERVAL
+    else:
+        child_requirement = _ANY
     child = _label_shape(child_shape, child_requirement, context)
     if operator == "negate":
         expression = Mul(Integer(-1), child.expression, evaluate=False)
@@ -585,8 +1015,26 @@ def _label_unary(
     if operator == "exp":
         expression = exp(child.expression, evaluate=False)
         return _Node(expression, operator, (child,), child.is_constant, "exp")
-    expression = log(child.expression, evaluate=False)
-    return _Node(expression, operator, (child,), child.is_constant, None)
+    if operator == "log":
+        expression = log(child.expression, evaluate=False)
+        return _Node(expression, operator, (child,), child.is_constant, None)
+    if operator == "sin":
+        expression = sin(child.expression, evaluate=False)
+        return _Node(expression, operator, (child,), child.is_constant, None, "sin")
+    if operator == "cos":
+        expression = cos(child.expression, evaluate=False)
+        return _Node(expression, operator, (child,), child.is_constant, None, "cos")
+    if operator == "tan":
+        expression = tan(child.expression, evaluate=False)
+        return _Node(expression, operator, (child,), child.is_constant, None)
+    if operator == "sinh":
+        expression = sinh(child.expression, evaluate=False)
+        return _Node(expression, operator, (child,), child.is_constant, None)
+    if operator == "cosh":
+        expression = cosh(child.expression, evaluate=False)
+        return _Node(expression, operator, (child,), child.is_constant, "cosh")
+    expression = tanh(child.expression, evaluate=False)
+    return _Node(expression, operator, (child,), child.is_constant, None, "tanh")
 
 
 def _power_children(
@@ -681,6 +1129,11 @@ def _label_shape(
             "shape cannot satisfy the positive-expression grammar",
             code="positive_shape",
         )
+    if requirement == _UNIT_INTERVAL and not _can_label_unit_interval(shape, context):
+        raise GrammarGenerationError(
+            "shape cannot satisfy the closed-unit-interval grammar",
+            code="unit_interval_shape",
+        )
     if not shape.children:
         return _label_leaf(requirement, context)
     if len(shape.children) == 1:
@@ -692,9 +1145,10 @@ def _collect_metadata(
     root: _Node,
     *,
     root_depth: int,
-) -> tuple[Counter[str], Counter[str], Counter[str], int, int]:
+) -> tuple[Counter[str], Counter[str], Counter[str], Counter[str], int, int]:
     operator_counts: Counter[str] = Counter()
     log_classes: Counter[str] = Counter()
+    tan_classes: Counter[str] = Counter()
     triviality = Counter({feature: 0 for feature in TRIVIALITY_FEATURES})
     leaf_count = 0
     intermediate_leaf_count = 0
@@ -722,6 +1176,14 @@ def _collect_metadata(
                 triviality["log_one"] += 1
             if child.operator == "exp":
                 triviality["log_exp"] += 1
+        if node.operator == "tan":
+            child = node.children[0]
+            if child.unit_interval_class not in TAN_ARGUMENT_CLASSES:
+                raise GrammarGenerationError(
+                    "tan argument lacks a closed-unit-interval construction proof",
+                    code="tan_unit_interval_proof",
+                )
+            tan_classes[child.unit_interval_class] += 1
         if node.operator == "exp" and node.children[0].operator == "log":
             triviality["exp_log"] += 1
         if node.children and node.is_constant:
@@ -730,7 +1192,21 @@ def _collect_metadata(
             visit(child, level + 1)
 
     visit(root, 0)
-    return operator_counts, log_classes, triviality, leaf_count, intermediate_leaf_count
+    return (
+        operator_counts,
+        log_classes,
+        tan_classes,
+        triviality,
+        leaf_count,
+        intermediate_leaf_count,
+    )
+
+
+def _shape_arity_counts(shape: _Shape) -> Counter[int]:
+    counts: Counter[int] = Counter({len(shape.children): 1})
+    for child in shape.children:
+        counts.update(_shape_arity_counts(child))
+    return counts
 
 
 def triviality_violations(
@@ -756,6 +1232,7 @@ def generate_tree(
     policy: GrammarPolicy,
     rng: Random,
     minimum_leaf_count: int | None = None,
+    minimum_operator_arity_counts: Mapping[int, int] | None = None,
 ) -> GeneratedTree:
     """Generate one exact logical source tree from approved operator names.
 
@@ -763,10 +1240,29 @@ def generate_tree(
     not parser-verified metrics from the future issue 1-6 AST.
     """
 
+    if not isinstance(domain_mode, str) or domain_mode not in DOMAIN_REGISTRY:
+        raise GrammarGenerationError(
+            f"unknown domain mode {domain_mode!r}",
+            code="domain_mode",
+        )
+    if not DOMAIN_REGISTRY[domain_mode].enabled_for_generation:
+        raise GrammarGenerationError(
+            f"domain mode {domain_mode!r} is not enabled for generation",
+            code="domain_mode",
+        )
     if len(variable_names) != target.variable_count:
         raise GrammarGenerationError(
             "variable names do not match the requested variable count",
             code="variable_name_mismatch",
+        )
+    if minimum_leaf_count is not None and (
+        isinstance(minimum_leaf_count, bool)
+        or not isinstance(minimum_leaf_count, int)
+        or minimum_leaf_count < 1
+    ):
+        raise GrammarGenerationError(
+            "minimum leaf count must be a positive integer",
+            code="minimum_leaf_count",
         )
     required_leaves = target.variable_count if minimum_leaf_count is None else minimum_leaf_count
     if required_leaves < target.variable_count:
@@ -774,10 +1270,34 @@ def generate_tree(
             "minimum leaf count cannot be less than variable count",
             code="minimum_leaf_count",
         )
+    required_arity_counts = dict(minimum_operator_arity_counts or {})
+    if any(
+        isinstance(arity, bool)
+        or not isinstance(arity, int)
+        or arity not in {0, 1, 2}
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 1
+        for arity, count in required_arity_counts.items()
+    ):
+        raise GrammarGenerationError(
+            "minimum operator arity counts require arities 0, 1, or 2 and positive counts",
+            code="minimum_operator_arity_counts",
+        )
     allowed = frozenset(allowed_operators)
     unary_available = any(
         operator in allowed and operator_weights.get(operator, 0.0) > 0
-        for operator in ("negate", "exp", "log")
+        for operator in (
+            "negate",
+            "exp",
+            "log",
+            "sin",
+            "cos",
+            "tan",
+            "sinh",
+            "cosh",
+            "tanh",
+        )
     )
     binary_available = any(
         operator in allowed
@@ -798,6 +1318,20 @@ def generate_tree(
             "requested target is not realizable by the family's enabled operator arities",
             code="target_shape_infeasible",
         )
+    if any(
+        maximum_leaves_with_arity_count(
+            size=target.target_size,
+            depth=target.target_depth,
+            arity=arity,
+            minimum_count=count,
+        )
+        < required_leaves
+        for arity, count in required_arity_counts.items()
+    ):
+        raise GrammarGenerationError(
+            "requested target cannot contain the required operator arity counts",
+            code="target_required_arity_infeasible",
+        )
 
     labeling_rejections: Counter[str] = Counter()
     for labeling_attempt in range(1, policy.shape_attempts + 1):
@@ -810,6 +1344,16 @@ def generate_tree(
             rng=rng,
             minimum_leaves=required_leaves,
         )
+        shape_arity_counts = _shape_arity_counts(shape)
+        missing_arity_counts = tuple(
+            (arity, count)
+            for arity, count in sorted(required_arity_counts.items())
+            if shape_arity_counts[arity] < count
+        )
+        if missing_arity_counts:
+            details = ",".join(f"{arity}:{count}" for arity, count in missing_arity_counts)
+            labeling_rejections[f"required_shape_arity_count:{details}"] += 1
+            continue
         context = _LabelContext(
             rng=rng,
             allowed_operators=allowed,
@@ -833,9 +1377,19 @@ def generate_tree(
                     "internal source-tree accounting mismatch",
                     code="source_tree_accounting",
                 )
-            operator_counts, log_classes, triviality, leaf_count, intermediate_leaves = (
-                _collect_metadata(root, root_depth=root_depth)
-            )
+            (
+                operator_counts,
+                log_classes,
+                tan_classes,
+                triviality,
+                leaf_count,
+                intermediate_leaves,
+            ) = _collect_metadata(root, root_depth=root_depth)
+            if sum(operator_counts.values()) != root_size:
+                raise GrammarGenerationError(
+                    "operator counts do not match logical source size",
+                    code="operator_count_accounting",
+                )
         except GrammarGenerationError as error:
             labeling_rejections[f"{error.code}:{error}"] += 1
             continue
@@ -847,6 +1401,7 @@ def generate_tree(
             intermediate_leaf_count=intermediate_leaves,
             operator_counts=tuple(sorted(operator_counts.items())),
             log_argument_classes=tuple(sorted(log_classes.items())),
+            tan_argument_classes=tuple(sorted(tan_classes.items())),
             triviality_counts=tuple(
                 (feature, triviality[feature]) for feature in TRIVIALITY_FEATURES
             ),

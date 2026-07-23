@@ -47,6 +47,20 @@ def test_generation_gate_allows_only_approved_operators() -> None:
     )
 
 
+def test_all_six_real_trig_hyperbolic_operators_are_approved() -> None:
+    approved_names = ("sin", "cos", "tan", "sinh", "cosh", "tanh")
+    for name in approved_names:
+        operator = OPERATOR_REGISTRY[name]
+        assert operator.enabled_for_generation
+        assert operator.eml_construction_status is EMLConstructionStatus.APPROVED
+        assert set(operator.domain_modes) == {"safe_real", "positive_real", "nonzero_real"}
+
+
+def test_named_and_complex_source_constants_remain_disabled() -> None:
+    for name in ("e", "pi", "imaginary_unit"):
+        assert not OPERATOR_REGISTRY[name].enabled_for_generation
+
+
 def test_structural_lowerings_are_explicit() -> None:
     assert OPERATOR_REGISTRY["subtract"].sympy_encoding.startswith("Add(")
     assert "Pow(denominator" in OPERATOR_REGISTRY["divide"].sympy_encoding

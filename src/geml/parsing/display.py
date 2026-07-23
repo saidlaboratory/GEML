@@ -32,13 +32,25 @@ DISPLAY_SOURCE_OPERATORS = frozenset(
         "power",
         "exp",
         "log",
+        "sin",
+        "cos",
+        "tan",
+        "sinh",
+        "cosh",
+        "tanh",
     }
 )
 
 _SIMPLE_SYMBOL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _SYMBOL_ASSUMPTIONS = frozenset({"real", "positive", "nonzero"})
 _LEAF_LABELS = frozenset({"symbol", "one", "integer", "rational"})
-_OPERATOR_ARITIES = {"add": 2, "multiply": 2, "power": 2, "exp": 1, "log": 1}
+_FUNCTION_LABELS = frozenset({"exp", "log", "sin", "cos", "tan", "sinh", "cosh", "tanh"})
+_OPERATOR_ARITIES = {
+    "add": 2,
+    "multiply": 2,
+    "power": 2,
+    **{label: 1 for label in _FUNCTION_LABELS},
+}
 
 
 class DisplayRenderError(ValueError):
@@ -263,7 +275,7 @@ class _DisplayRenderer:
             return self._render_multiply(node)
         if node.label == "power":
             return self._render_power(node)
-        if node.label in {"exp", "log"}:
+        if node.label in _FUNCTION_LABELS:
             argument = self.render(self.view.children(node)[0])
             return _Rendered(f"{node.label}({argument.text})", _Precedence.FUNCTION)
         raise UnsupportedDisplayNodeError(node)

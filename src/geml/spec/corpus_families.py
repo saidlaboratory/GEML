@@ -91,7 +91,7 @@ CORPUS_FAMILIES: tuple[CorpusFamilySpec, ...] = (
     ),
     CorpusFamilySpec(
         family_id="trig_hyperbolic",
-        description="Planned trigonometric and hyperbolic expressions pending domain verification.",
+        description="Approved real trigonometric and hyperbolic expressions.",
         quota=40_000,
         eligible_operators=(*_ALGEBRAIC, *_TRIG_HYPERBOLIC),
         operator_family_constraints=(),
@@ -99,12 +99,13 @@ CORPUS_FAMILIES: tuple[CorpusFamilySpec, ...] = (
         policy_kind=CorpusPolicyKind.IID,
         requires_all_operators_approved=True,
         difficulty_notes=(
-            "Blocked until complex-intermediate EML constructions pass Goal 2 verification.",
+            "Constrain tan arguments to the structurally certified closed interval [-1, 1].",
+            "Sample all six approved trigonometric and hyperbolic source operators.",
         ),
     ),
     CorpusFamilySpec(
         family_id="mixed_elementary",
-        description="Planned mixtures across algebraic, exp/log, trig, and hyperbolic operators.",
+        description="Mixtures across algebraic, exp/log, trig, and hyperbolic operators.",
         quota=35_000,
         eligible_operators=_MIXED,
         operator_family_constraints=(),
@@ -112,7 +113,8 @@ CORPUS_FAMILIES: tuple[CorpusFamilySpec, ...] = (
         policy_kind=CorpusPolicyKind.IID,
         requires_all_operators_approved=True,
         difficulty_notes=(
-            "Blocked while any required trig/hyperbolic construction remains pending.",
+            "Every expression must contain exp or log and at least one trig/hyperbolic operator.",
+            "Use the same positive-log and bounded-tan structural guards as the source grammar.",
         ),
     ),
     CorpusFamilySpec(

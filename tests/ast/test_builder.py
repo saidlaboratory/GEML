@@ -160,7 +160,19 @@ def test_large_nary_fold_builds_and_hashes_without_recursive_traversal() -> None
 
 
 @pytest.mark.parametrize("constructor", ["sin", "cos", "tan", "sinh", "cosh", "tanh"])
-def test_pending_trig_and_hyperbolic_nodes_fail_explicitly(constructor: str) -> None:
+def test_trig_and_hyperbolic_nodes_preserve_unary_structure(constructor: str) -> None:
+    tree = build_ast(_record(f"{constructor}(Symbol('x', real=True))"))
+    nodes = _nodes(tree)
+    root = nodes[tree.root_id]
+    child_id = _children(tree)[root.node_id][0]
+
+    assert root.label == constructor
+    assert root.arity == 1
+    assert root.metadata == {"sympy_constructor": constructor}
+    assert nodes[child_id].value == {"name": "x", "assumptions": {"real": True}}
+
+
+def test_unknown_function_nodes_still_fail_explicitly() -> None:
     with pytest.raises(UnsupportedNodeError) as captured:
-        build_ast(_record(f"{constructor}(Symbol('x', real=True))"))
-    assert captured.value.constructor == constructor
+        build_ast(_record("erf(Symbol('x', real=True))"))
+    assert captured.value.constructor == "erf"
