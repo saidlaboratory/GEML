@@ -1,66 +1,91 @@
-# Graph Schema (frozen by 3-1)
+# Generic graph and DAG schema
 
-Generic graph/DAG shape that works the same way across AST, EML, macro,
-and motif graphs. Everything in 3-2 through 3-8 builds on this - nobody
-gets to redefine these shapes downstream.
+Goal 3 uses one graph contract for AST, pure EML, macro, and motif
+representations. The contract preserves ordered child slots, repeated child
+references, ordered roots, and exact structural identity. It does not perform
+tree-to-DAG conversion or semantic rewriting.
 
-## Core types (`src/geml/graph/schema.py`)
+## Records
 
-`ChildRef(slot, target_id)` - one edge from a parent to a kid. slot is
-just position (0 = left/base, 1 = right/exponent, whatever). If two
-slots point at the same target, both refs still exist separately - we
-never collapse them into one, that's kind of the whole point of a DAG.
+`ChildRef(slot, target_id)` is one explicit parent-to-child reference. Slots
+are zero-based and contiguous. Two slots may reference the same target; both
+records remain present and both contribute to the child-reference count.
 
-`GraphNode(node_id, family, kind, label, value, children)`
-- family - "ast" | "eml" | "macro" | "motif", which representation this is
-- kind - the actual operator/node type, e.g. "Add", "eml", "eml_add", "motif_17"
-- label - optional extra descriptor, mostly useful for motifs (template name etc)
-- value - only set for leaves (variable name, constant), None otherwise
-- children - ordered tuple of ChildRef
+`GraphRoot(root_id, target_id, representation_mode)` is one ordered root
+reference. `root_id` identifies the occurrence (normally an expression ID),
+`target_id` selects its graph node, and `representation_mode` preserves the
+exact representation label such as `ast`, `pure_eml:official_v4`, or an
+explicitly separate compiler mode. Root IDs are unique, while multiple roots
+may deliberately reference the same target node.
 
-`Graph(nodes, roots)` - nodes is just a dict keyed by id. roots is a
-tuple not a single value on purpose - one shared DAG can back thousands
-of expressions at once, so you need room for many entry points.
+`GraphNode(node_id, family, kind, label, value, children)` contains:
 
-`GraphStatistics` - node_count, edge_count, leaf_count, root_count,
-max_depth. Heads up: edge_count can end up bigger than node_count - 1
-once sharing kicks in. That's not a bug - a plain tree always has
-exactly node_count - 1 edges, but a DAG can have more since one node
-gets pointed at from multiple places.
+- a graph-local node identity;
+- one representation family: `ast`, `eml`, `macro`, or `motif`;
+- structural kind, label, and JSON-compatible value fields;
+- an immutable tuple of ordered child references.
 
-## Signatures (`src/geml/graph/signatures.py`)
+`Graph(nodes, roots)` snapshots its input mapping and root records. Every
+graph has at least one root, every node is reachable from a root, and all nodes
+in one graph use the same representation family.
 
-compute_signature(graph, node_id) builds a string out of family, kind,
-label, value, arity, and each child's own signature in order.
+`GraphStatistics` reports unique nodes, explicit child references
+(`edge_count` and its `child_reference_count` alias), leaves, roots, and
+leaf-zero maximum depth. Statistics are computed only after validation, so
+missing references, cycles, or unreachable components cannot be silently
+excluded.
 
-- Same shape → same signature.
-- Swap the child order → different signature (slot number's baked into the string).
-- This is structural only. x+x and 2*x mean the exact same thing
-  mathematically but look different structurally, so they get
-  different signatures - on purpose. Actually proving two things are
-  mathematically equal is a goal 4 problem (e-graphs), not something
-  this schema tries to solve.
+## Canonical structural signatures
 
-## Validation (`src/geml/graph/validate.py`)
+`compute_signature(graph, node_id)` returns a deterministic 64-character
+lowercase SHA-256 digest. Each node payload includes:
 
-validate_graph(graph) runs five checks and collects every failure it
-finds - doesn't just bail after the first one.
+- signature format version;
+- representation family;
+- node kind, label, and typed JSON value;
+- arity;
+- every child slot and the corresponding child signature in slot order.
 
-1. Roots actually exist - every id in roots needs to be a real node.
-2. Child slots make sense - every ref has to point somewhere real, and no
-   two children on one node can claim the same slot.
-3. Reachability - nothing's allowed to just sit there disconnected
-   from every root.
-4. No cycles - a node can't end up being its own ancestor.
-5. Purity per family - ast nodes have to use approved ast operators,
-   eml nodes can only use eml/Var/Const. macro/motif aren't checked here
-   since those are compiler-generated and don't have one fixed vocabulary.
+Node IDs are deliberately excluded. Isomorphic subtrees therefore have the
+same signature even when their local IDs differ. Representation changes,
+typed value changes, and ordered-child changes produce different signatures.
+The implementation is iterative and memoizes shared descendants, so signing a
+DAG does not re-expand it.
 
-Heads up: the AST/EML vocab lists in step 5 are placeholders for now,
-waiting on 1-2 and 2-1 to actually merge their real contracts. Once
-they do, swap AST_VOCAB/EML_VOCAB in validate.py for the real thing.
+Signatures establish structural identity only. For example, `x + x` and
+`2 * x` remain distinct even where a mathematical domain makes them
+semantically equivalent.
 
-## What's NOT in here
+## Validation
 
-No tree-to-DAG conversion, no compression - that's 3-2 and 3-3. This
-issue is just the shape and the rules for checking it, nothing more.
+`validate_graph` retains all detected failures and checks:
+
+1. nonempty records, supported representation families, mapping-key identity,
+   nonblank fields, and finite JSON-compatible values;
+2. root existence;
+3. child target existence, nonnegative unique slots, and contiguous slot
+   coverage;
+4. reachability from the declared roots;
+5. acyclicity across every component;
+6. representation-specific purity.
+
+The authoritative AST contract intentionally leaves `node_kind` and `label`
+producer-defined. AST purity therefore enforces the frozen binary arity and
+record rules without inventing an operator allowlist.
+
+Pure EML graphs mirror the concrete Goal 2 IR exactly:
+
+- an internal `eml` node is labeled `eml`, has no value, and has slots 0 and 1;
+- a `variable` leaf uses the same valid source name as its label and value;
+- a primitive `one` leaf is labeled `1` and has the exact integer value `1`.
+
+No constant, macro, template, derived operation, or compound source syntax is
+accepted inside a pure EML graph. Macro and motif families remain
+representation-neutral because their vocabularies belong to later owning
+issues.
+
+## Scope
+
+This schema defines graph records, identity, statistics, and validation only.
+AST conversion, EML conversion, direct compilation, experiment processing,
+analysis, and semantic equivalence are owned by later Goal 3 issues.

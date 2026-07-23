@@ -21,9 +21,28 @@ eml(x, y) = exp(x) − ln(y)
 
 Any continuous mathematical expression therefore maps to a strict binary tree in which **every internal node is the same operation**. GEML asks whether that homogeneity is *useful for machine learning*: instead of feeding math to a model as a token sequence (`[sin, (, x, +, 1, )]`), we feed the structural topology of the EML tree to a graph neural network that only has to learn *where things connect*, never *what the operator is*.
 
-This repository will host the production pipeline. The v0 prototype (data generation, expansion study, and three families of compression) lives in [geml_experiments](https://github.com/sahilsinghthefirst/geml_experiments) and is **complete through Goal 5R** with 262/262 tests green.
+This repository hosts the clean-room production rebuild of Goals 1–5. The v0 prototype (data generation, expansion study, and three families of compression) lives in [geml_experiments](https://github.com/sahilsinghthefirst/geml_experiments) and is **complete through Goal 5R** with 262/262 tests green.
 
-> ⚠️ **Note for contributors using coding agents:** do *not* hand the whole prototype repo to an agent as a template. It is a prototype — the agent will copy its structure, which is not suitable for a large-scale pipeline. Use it to understand *what was measured and why*; reimplement from scratch here (see [Issue tracker](../../issues)).
+> ⚠️ **Clean-room warning for contributors and coding agents:** the prototype is historical context only. Do not inspect or reuse its code, tests, schemas, helpers, architecture, or history. Implement from the current repository specifications, assigned issues, and authoritative public sources. See [`AGENTS.md`](AGENTS.md) and [`docs/CLEANROOM_RULES.md`](docs/CLEANROOM_RULES.md).
+
+### Development setup
+
+GEML is a Python 3.12 package using a `src/` layout. Runtime code lives under
+`src/geml/`, while unit tests use only small local or temporary fixtures.
+
+Install the package and development tools:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Run the standard validation suite:
+
+```bash
+python -m pytest
+python -m ruff check .
+python -m ruff format . --check
+```
 
 ## 2. What changed since the original proposal
 
