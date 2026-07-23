@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from decimal import ROUND_DOWN, Decimal, Inexact, localcontext
 from fractions import Fraction
 from pathlib import Path
 
@@ -273,6 +274,7 @@ def _patch_public_readers(
     rows: list[dict[str, object]],
     *,
     chunked: bool,
+    telemetry_payloads: tuple[dict[str, object], ...] | None = None,
 ) -> None:
     success_count = sum(row["status"] == "success" for row in rows)
     failure_count = len(rows) - success_count
@@ -305,7 +307,7 @@ def _patch_public_readers(
     monkeypatch.setattr(
         goal3_metrics,
         "iter_shard_telemetry",
-        lambda _path: iter(_telemetry()),
+        lambda _path: iter(telemetry_payloads or _telemetry()),
     )
 
 
@@ -352,7 +354,14 @@ def test_analysis_stratifies_exact_metrics_and_retains_failures(
     assert report.overall.all_processed_count == 4
     assert report.overall.valid_count == 3
     assert report.overall.failure_count == 1
-    assert report.overall.ratio_mean("eml_compression").fraction == Fraction(71, 15)
+    compression_mean = report.overall.ratio_mean("eml_compression")
+    assert compression_mean is not None
+    assert compression_mean.decimal_value == Decimal(
+        "4.7333333333333333333333333333333333333333333333333"
+    )
+    assert compression_mean.sample_count == 3
+    assert compression_mean.as_dict()["approximate"] is True
+    assert "exact" not in compression_mean.as_dict()
     assert {table.axis for table in report.strata} == set(StratificationAxis)
     strata = {table.axis: table for table in report.strata}
     assert {group.key for group in strata[StratificationAxis.FAMILY].groups} == {
@@ -385,6 +394,29 @@ def test_analysis_stratifies_exact_metrics_and_retains_failures(
     assert report.outcomes.structurally_competitive_count == 1
 
 
+def test_outcome_rankings_compare_exact_fractions_when_floats_collide() -> None:
+    lower_mapping = _processed_mapping(0)
+    higher_mapping = _processed_mapping(1)
+    denominator = 2**54
+    _set_ratio(lower_mapping, "eml_compression", denominator + 1, denominator)
+    _set_ratio(higher_mapping, "eml_compression", denominator + 2, denominator)
+    lower = AnalysisRow.from_mapping(lower_mapping)
+    higher = AnalysisRow.from_mapping(higher_mapping)
+    assert lower.metrics is not None
+    assert higher.metrics is not None
+    assert float(lower.metrics.ratio("eml_compression")) == float(
+        higher.metrics.ratio("eml_compression")
+    )
+
+    miner = OutcomeMiner(limit=1)
+    miner.add(lower)
+    miner.add(higher)
+    outcomes = miner.finish()
+
+    assert outcomes.lowest_compression[0].expression_id == lower.expression_id
+    assert outcomes.highest_compression[0].expression_id == higher.expression_id
+
+
 def test_analysis_is_independent_of_table_chunking(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -398,6 +430,14 @@ def test_analysis_is_independent_of_table_chunking(
 
     assert chunked.fingerprint == combined.fingerprint
     assert chunked.as_dict() == combined.as_dict()
+
+
+def test_decimal_mean_compensation_recovers_a_low_order_term() -> None:
+    accumulator = goal3_metrics._DecimalMeanAccumulator()
+    for value in (Fraction(10**80), Fraction(1), Fraction(-(10**80))):
+        accumulator.add(value)
+
+    assert accumulator.mean().decimal == ("0.33333333333333333333333333333333333333333333333333")
 
 
 def test_runtime_and_stability_use_exact_cumulative_prefixes(
@@ -422,8 +462,14 @@ def test_runtime_and_stability_use_exact_cumulative_prefixes(
     assert first.valid_count == 2
     assert second.valid_count == 3
     assert second.failure_count == 1
-    assert second.ratio_mean("eml_compression").fraction == Fraction(71, 15)
-    assert len(stability_deltas(report.stability_curve, "eml_compression")) == 1
+    checkpoint_mean = second.ratio_mean("eml_compression")
+    assert checkpoint_mean is not None
+    assert checkpoint_mean.decimal_value == Decimal(
+        "4.7333333333333333333333333333333333333333333333333"
+    )
+    deltas = stability_deltas(report.stability_curve, "eml_compression")
+    assert len(deltas) == 1
+    assert deltas[0].approximate is True
     assert plot_data_payload(report.stability_curve)["x_axis"]["values"] == [2, 4]
     assert STANDARD_SCALE_CHECKPOINTS == (10_000, 50_000, 100_000, 250_000)
 
@@ -478,7 +524,7 @@ def test_all_failure_run_preserves_denominators_and_plot_gaps(
     assert report.overall.valid_count == 0
     assert report.overall.failure_count == 4
     assert report.overall.ratio_means == ()
-    assert payload["metric_stability"]["eml_compression"]["exact"] == [None, None]
+    assert payload["metric_stability"]["eml_compression"]["decimal"] == [None, None]
     assert payload["metric_stability"]["eml_compression"]["valid_denominator"] == [0, 0]
     with pytest.raises(PlotDataError, match="no valid-only denominator"):
         stability_deltas(report.stability_curve, "eml_compression")
@@ -545,6 +591,121 @@ def test_saving_is_deterministic_and_never_edits_source_artifacts(
 
     with pytest.raises(AnalysisArtifactError, match="outside"):
         save_analysis(report, source_root / "analysis")
+
+
+def _first_primes(count: int) -> tuple[int, ...]:
+    primes: list[int] = []
+    candidate = 2
+    while len(primes) < count:
+        if all(candidate % prime for prime in primes if prime * prime <= candidate):
+            primes.append(candidate)
+        candidate += 1
+    return tuple(primes)
+
+
+def _coprime_ratio_rows(count: int) -> list[dict[str, object]]:
+    template = _processed_mapping(0)
+    rows: list[dict[str, object]] = []
+    for index, denominator in enumerate(_first_primes(count)):
+        row = dict(template)
+        row["expression_id"] = hashlib.sha256(f"coprime-{index}".encode()).hexdigest()
+        row["input_row_index"] = index
+        for name in RATIO_NAMES:
+            _set_ratio(row, name, denominator + 1, denominator)
+        rows.append(row)
+    return rows
+
+
+def _single_checkpoint_telemetry(count: int) -> tuple[dict[str, object], ...]:
+    return (
+        {
+            "telemetry_scope": (
+                "input read excluded; direct row processing, Parquet construction, "
+                "and process-tree RSS sampling included"
+            ),
+            "processing_wall_seconds": 1.0,
+            "peak_resident_memory_bytes": 100,
+            "progress_samples": [
+                {
+                    "global_processed_count": count,
+                    "shard_processed_count": count,
+                    "processing_wall_seconds": 1.0,
+                    "peak_resident_memory_bytes": 100,
+                }
+            ],
+        },
+    )
+
+
+def test_decimal_aggregation_ignores_ambient_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    denominator = 3 * 10**100
+    rows = [_processed_mapping(0), _processed_mapping(1)]
+    for numerator, row in enumerate(rows, start=1):
+        for name in RATIO_NAMES:
+            _set_ratio(row, name, numerator, denominator)
+
+    manifest = tmp_path / "manifest.json"
+    _patch_public_readers(
+        monkeypatch,
+        manifest,
+        rows,
+        chunked=True,
+        telemetry_payloads=_single_checkpoint_telemetry(2),
+    )
+    baseline = analyze_goal3_artifacts(manifest, scale_checkpoints=(2,))
+
+    with localcontext() as ambient:
+        ambient.prec = 2
+        ambient.rounding = ROUND_DOWN
+        ambient.Emin = -9
+        ambient.Emax = 9
+        ambient.capitals = 0
+        ambient.clamp = 1
+        ambient.traps[Inexact] = True
+        contaminated = analyze_goal3_artifacts(manifest, scale_checkpoints=(2,))
+
+    mean = contaminated.overall.ratio_mean("raw_tree_alpha")
+    assert mean is not None
+    assert "E" in mean.decimal
+    assert baseline.fingerprint == contaminated.fingerprint
+    assert baseline.as_dict() == contaminated.as_dict()
+
+
+def test_coprime_denominators_have_bounded_aggregate_artifact_size(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_sizes: list[int] = []
+    for count in (25, 1_000):
+        source_root = tmp_path / f"source-{count}"
+        source_root.mkdir()
+        manifest = source_root / "manifest.json"
+        _patch_public_readers(
+            monkeypatch,
+            manifest,
+            _coprime_ratio_rows(count),
+            chunked=True,
+            telemetry_payloads=_single_checkpoint_telemetry(count),
+        )
+        report = analyze_goal3_artifacts(
+            manifest,
+            scale_checkpoints=(count,),
+            ranking_limit=5,
+        )
+        saved = save_analysis(report, tmp_path / f"analysis-{count}")
+        observed_sizes.append(saved.metrics_path.stat().st_size)
+        mean = report.overall.ratio_mean("raw_tree_alpha")
+        assert mean is not None
+        assert len(mean.decimal) <= 60
+        assert mean.sample_count == count
+        assert mean.as_dict()["approximate"] is True
+
+    small_size, large_size = observed_sizes
+    assert large_size < 200_000
+    assert large_size <= small_size + 10_000
 
 
 def test_cli_reports_upstream_artifact_errors_as_json(

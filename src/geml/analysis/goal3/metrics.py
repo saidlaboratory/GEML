@@ -14,6 +14,15 @@ import os
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import (
+    ROUND_HALF_EVEN,
+    Context,
+    Decimal,
+    DivisionByZero,
+    InvalidOperation,
+    Overflow,
+    localcontext,
+)
 from enum import StrEnum
 from fractions import Fraction
 from pathlib import Path
@@ -35,8 +44,21 @@ if TYPE_CHECKING:
     from geml.analysis.goal3.failures import OutcomeReport
     from geml.plots.goal3 import StabilityPoint
 
-ANALYSIS_SCHEMA_VERSION: Final = "geml-goal3-analysis-v1"
-ANALYSIS_ARTIFACT_SCHEMA_VERSION: Final = "geml-goal3-analysis-artifacts-v1"
+ANALYSIS_SCHEMA_VERSION: Final = "geml-goal3-analysis-v2"
+ANALYSIS_ARTIFACT_SCHEMA_VERSION: Final = "geml-goal3-analysis-artifacts-v2"
+AGGREGATE_MEAN_METHOD: Final = "ordered_compensated_decimal_mean"
+AGGREGATE_WORKING_PRECISION_DIGITS: Final = 80
+AGGREGATE_REPORTED_PRECISION_DIGITS: Final = 50
+AGGREGATE_ROUNDING: Final = "ROUND_HALF_EVEN"
+AGGREGATE_CONTEXT_EMIN: Final = -999_999_999
+AGGREGATE_CONTEXT_EMAX: Final = 999_999_999
+AGGREGATE_CONTEXT_CAPITALS: Final = 1
+AGGREGATE_CONTEXT_CLAMP: Final = 0
+AGGREGATE_CONTEXT_TRAPS: Final = (
+    "InvalidOperation",
+    "DivisionByZero",
+    "Overflow",
+)
 UNAVAILABLE_STRATUM: Final = "<unavailable>"
 RATIO_NAMES: Final = (
     "raw_tree_alpha",
@@ -162,6 +184,129 @@ class ExactMean:
             "value": self.value,
             "sample_count": self.sample_count,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class DecimalMean:
+    """A bounded-size, explicitly approximate mean of exact input ratios."""
+
+    decimal: str
+    sample_count: int
+    method: str = AGGREGATE_MEAN_METHOD
+    working_precision_digits: int = AGGREGATE_WORKING_PRECISION_DIGITS
+    reported_precision_digits: int = AGGREGATE_REPORTED_PRECISION_DIGITS
+    rounding: str = AGGREGATE_ROUNDING
+
+    def __post_init__(self) -> None:
+        if self.sample_count <= 0:
+            raise ValueError("decimal means require a positive sample count")
+        if not isinstance(self.decimal, str) or not self.decimal:
+            raise ValueError("decimal mean text must be nonblank")
+        try:
+            value = Decimal(self.decimal)
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError("decimal mean text must be a valid Decimal") from error
+        if not value.is_finite():
+            raise ValueError("decimal means must be finite")
+        if self.method != AGGREGATE_MEAN_METHOD:
+            raise ValueError("decimal mean method is not the pinned analysis method")
+        if (
+            self.working_precision_digits != AGGREGATE_WORKING_PRECISION_DIGITS
+            or self.reported_precision_digits != AGGREGATE_REPORTED_PRECISION_DIGITS
+            or self.rounding != AGGREGATE_ROUNDING
+        ):
+            raise ValueError("decimal mean precision policy is not pinned")
+
+    @property
+    def decimal_value(self) -> Decimal:
+        return Decimal(self.decimal)
+
+    @property
+    def value(self) -> float:
+        return float(self.decimal_value)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "decimal": self.decimal,
+            "value": self.value,
+            "approximate": True,
+            "sample_count": self.sample_count,
+            "method": self.method,
+            "working_precision_digits": self.working_precision_digits,
+            "reported_precision_digits": self.reported_precision_digits,
+            "rounding": self.rounding,
+        }
+
+
+def aggregate_decimal_context(*, precision: int) -> Context:
+    """Return a fresh Decimal context independent of ambient process settings."""
+
+    if precision <= 0:
+        raise ValueError("decimal precision must be positive")
+    return Context(
+        prec=precision,
+        rounding=ROUND_HALF_EVEN,
+        Emin=AGGREGATE_CONTEXT_EMIN,
+        Emax=AGGREGATE_CONTEXT_EMAX,
+        capitals=AGGREGATE_CONTEXT_CAPITALS,
+        clamp=AGGREGATE_CONTEXT_CLAMP,
+        flags=[],
+        traps=[InvalidOperation, DivisionByZero, Overflow],
+    )
+
+
+def aggregate_mean_policy() -> dict[str, object]:
+    """Describe the complete deterministic aggregate Decimal policy."""
+
+    return {
+        "method": AGGREGATE_MEAN_METHOD,
+        "working_precision_digits": AGGREGATE_WORKING_PRECISION_DIGITS,
+        "reported_precision_digits": AGGREGATE_REPORTED_PRECISION_DIGITS,
+        "rounding": AGGREGATE_ROUNDING,
+        "context": {
+            "Emin": AGGREGATE_CONTEXT_EMIN,
+            "Emax": AGGREGATE_CONTEXT_EMAX,
+            "capitals": AGGREGATE_CONTEXT_CAPITALS,
+            "clamp": AGGREGATE_CONTEXT_CLAMP,
+            "traps": list(AGGREGATE_CONTEXT_TRAPS),
+        },
+        "order": "authoritative corpus row order",
+        "input": "exact per-row rational numerator and denominator",
+    }
+
+
+@dataclass(slots=True)
+class _DecimalMeanAccumulator:
+    """Fixed-memory compensated summation of exact rational observations."""
+
+    total: Decimal = field(default_factory=lambda: Decimal(0))
+    compensation: Decimal = field(default_factory=lambda: Decimal(0))
+    sample_count: int = 0
+
+    def add(self, value: Fraction) -> None:
+        context = aggregate_decimal_context(precision=AGGREGATE_WORKING_PRECISION_DIGITS)
+        with localcontext(context):
+            decimal_value = Decimal(value.numerator) / Decimal(value.denominator)
+            corrected = decimal_value - self.compensation
+            updated = self.total + corrected
+            self.compensation = (updated - self.total) - corrected
+            self.total = updated
+        self.sample_count += 1
+
+    def mean(self) -> DecimalMean:
+        if self.sample_count <= 0:
+            raise ValueError("cannot compute an empty decimal mean")
+        working_context = aggregate_decimal_context(precision=AGGREGATE_WORKING_PRECISION_DIGITS)
+        with localcontext(working_context):
+            mean = self.total / Decimal(self.sample_count)
+        reported_context = aggregate_decimal_context(precision=AGGREGATE_REPORTED_PRECISION_DIGITS)
+        with localcontext(reported_context):
+            reported = +mean
+            decimal_text = str(reported)
+        return DecimalMean(
+            decimal=decimal_text,
+            sample_count=self.sample_count,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,7 +531,7 @@ class ReuseAggregate:
     mean_excess_reference_count: ExactMean
     mean_child_reference_overhead: ExactMean
     mean_reuse_depth: ExactMean | None
-    mean_sharing_concentration: ExactMean
+    mean_sharing_concentration: DecimalMean
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -414,7 +559,7 @@ class GroupStatistics:
     all_processed_count: int
     valid_count: int
     failure_count: int
-    ratio_means: tuple[tuple[str, ExactMean], ...]
+    ratio_means: tuple[tuple[str, DecimalMean], ...]
     ast_reuse: ReuseAggregate | None
     eml_reuse: ReuseAggregate | None
 
@@ -422,7 +567,7 @@ class GroupStatistics:
         if self.all_processed_count != self.valid_count + self.failure_count:
             raise ValueError("group denominators do not account for every processed row")
 
-    def ratio_mean(self, name: str) -> ExactMean | None:
+    def ratio_mean(self, name: str) -> DecimalMean | None:
         for candidate, value in self.ratio_means:
             if candidate == name:
                 return value
@@ -456,14 +601,14 @@ class StratifiedTable:
 
 @dataclass(frozen=True, slots=True)
 class CheckpointMetrics:
-    """Exact cumulative metric state at one authoritative corpus prefix."""
+    """High-precision cumulative metric state at an exact corpus prefix."""
 
     processed_count: int
     valid_count: int
     failure_count: int
-    ratio_means: tuple[tuple[str, ExactMean], ...]
+    ratio_means: tuple[tuple[str, DecimalMean], ...]
 
-    def ratio_mean(self, name: str) -> ExactMean | None:
+    def ratio_mean(self, name: str) -> DecimalMean | None:
         for candidate, value in self.ratio_means:
             if candidate == name:
                 return value
@@ -505,7 +650,11 @@ class AnalysisReport:
                 "stage": self.source_stage,
             },
             "metric_definitions": {
-                "ratio_means": "arithmetic mean of exact per-expression ratios",
+                "ratio_means": (
+                    "approximate arithmetic mean of exact per-expression ratios "
+                    "using the pinned bounded-size Decimal policy"
+                ),
+                "aggregate_mean_policy": aggregate_mean_policy(),
                 "reuse_depth": (
                     "reused-node-weighted mean of minimum root-to-node child-reference distance"
                 ),
@@ -558,7 +707,7 @@ class _ReuseAccumulator:
     max_reuse_indegree: int = 0
     reuse_depth_sum: int = 0
     reuse_depth_count: int = 0
-    concentration_sum: Fraction = field(default_factory=Fraction)
+    concentration_mean: _DecimalMeanAccumulator = field(default_factory=_DecimalMeanAccumulator)
 
     def add(self, reuse: RowReuse) -> None:
         self.valid_count += 1
@@ -572,7 +721,7 @@ class _ReuseAccumulator:
         )
         self.reuse_depth_sum += reuse.reuse_depth_sum
         self.reuse_depth_count += reuse.reuse_depth_count
-        self.concentration_sum += reuse.sharing_concentration
+        self.concentration_mean.add(reuse.sharing_concentration)
 
     def finish(self) -> ReuseAggregate:
         if self.valid_count <= 0:
@@ -604,10 +753,7 @@ class _ReuseAccumulator:
                 if self.reuse_depth_count
                 else None
             ),
-            mean_sharing_concentration=ExactMean.from_total(
-                self.concentration_sum,
-                self.valid_count,
-            ),
+            mean_sharing_concentration=self.concentration_mean.mean(),
         )
 
 
@@ -615,8 +761,8 @@ class _ReuseAccumulator:
 class _GroupAccumulator:
     all_processed_count: int = 0
     valid_count: int = 0
-    ratio_totals: dict[str, Fraction] = field(
-        default_factory=lambda: {name: Fraction() for name in RATIO_NAMES}
+    ratio_means: dict[str, _DecimalMeanAccumulator] = field(
+        default_factory=lambda: {name: _DecimalMeanAccumulator() for name in RATIO_NAMES}
     )
     ast_reuse: _ReuseAccumulator = field(default_factory=_ReuseAccumulator)
     eml_reuse: _ReuseAccumulator = field(default_factory=_ReuseAccumulator)
@@ -627,16 +773,16 @@ class _GroupAccumulator:
             return
         self.valid_count += 1
         for name in RATIO_NAMES:
-            self.ratio_totals[name] += row.metrics.ratio(name)
+            self.ratio_means[name].add(row.metrics.ratio(name))
         self.ast_reuse.add(row.metrics.ast_reuse)
         self.eml_reuse.add(row.metrics.eml_reuse)
 
     def finish(self, key: str) -> GroupStatistics:
-        ratio_means = (
+        means = (
             tuple(
                 (
                     name,
-                    ExactMean.from_total(self.ratio_totals[name], self.valid_count),
+                    self.ratio_means[name].mean(),
                 )
                 for name in RATIO_NAMES
             )
@@ -648,7 +794,7 @@ class _GroupAccumulator:
             all_processed_count=self.all_processed_count,
             valid_count=self.valid_count,
             failure_count=self.all_processed_count - self.valid_count,
-            ratio_means=ratio_means,
+            ratio_means=means,
             ast_reuse=self.ast_reuse.finish() if self.valid_count else None,
             eml_reuse=self.eml_reuse.finish() if self.valid_count else None,
         )
