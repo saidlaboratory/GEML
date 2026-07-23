@@ -1,164 +1,234 @@
-"""
-eml.py - bottom-up hash-consing, pure eml trees to dags
+"""Exact structural sharing for materialized pure EML trees."""
 
-owned by 3-3
-
-reuses 3-1's real graph/signature stuff. EmlNode below is a
-placeholder pending 2-1's real compiler output.
-
-update: found the actual paper (arXiv:2603.21852v2, eq 3 and 5) and
-confirmed two real constructions directly from it:
-  exp(x) = eml(x, 1)
-  ln(z)  = eml(1, eml(eml(1,z), 1))
-both verified numerically, not just quoted. addition/multiplication/
-powers are NOT in the parts of the paper fetched so far (Table 4
-mentions multiplication needs depth 8, but doesn't give the tree) -
-still placeholders below, asked Sahil whether he has the real compiler
-output for those
-"""
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Any
-import math
+from fractions import Fraction
 
-from geml.graph.schema import Graph, GraphNode, ChildRef, compute_statistics
-from geml.graph.signatures import compute_signature
+from geml.eml.ir import EML, EMLTerm, One, Variable
+from geml.eml.validate import PureEMLStatistics, validate_pure_eml
+from geml.graph.schema import (
+    EML_FAMILY,
+    EML_ONE_KIND,
+    EML_OPERATOR_KIND,
+    EML_VARIABLE_KIND,
+    ChildRef,
+    Graph,
+    GraphNode,
+    GraphRoot,
+    compute_statistics,
+)
+from geml.graph.signatures import signature_from_parts
+from geml.graph.validate import ValidationResult, validate_graph
 
-
-# TODO(Sahil/Quang): placeholder pending 2-1's real ir.py
-@dataclass(frozen=True)
-class EmlNode:
-    kind: str  # "eml" | "Var" | "Const"
-    children: tuple["EmlNode", ...] = ()
-    value: Any = None  # should always be 1 for Const in real pure eml
-
-
-def make_exp(arg: EmlNode) -> EmlNode:
-    """exp(x) = eml(x, 1) - verified, arXiv:2603.21852v2 eq 3/example."""
-    return EmlNode("eml", (arg, EmlNode("Const", value=1)))
-
-
-def make_ln(arg: EmlNode) -> EmlNode:
-    """ln(z) = eml(1, eml(eml(1,z), 1)) - verified, arXiv:2603.21852v2 eq 5."""
-    inner = EmlNode("eml", (EmlNode("Const", value=1), arg))
-    middle = EmlNode("eml", (inner, EmlNode("Const", value=1)))
-    return EmlNode("eml", (EmlNode("Const", value=1), middle))
+_NODE_ID_PREFIX = "eml-"
+DEFAULT_REPRESENTATION_MODE = "pure_eml"
 
 
-def eml_to_dag(root: EmlNode) -> Graph:
-    # same hash-consing as 3-2's ast version, just restricted to
-    # family="eml" and the eml/Var/Const node set
-    nodes: dict[str, GraphNode] = {}
-    signature_to_id: dict[str, str] = {}
-    counter = [0]
+@dataclass(frozen=True, slots=True)
+class EMLDagStatistics:
+    """Exact source-tree and structurally shared DAG statistics."""
 
-    def next_id() -> str:
-        counter[0] += 1
-        return f"n{counter[0]}"
-
-    def convert(eml_node: EmlNode) -> str:
-        child_refs = tuple(
-            ChildRef(slot=i, target_id=convert(child))
-            for i, child in enumerate(eml_node.children)
-        )
-        tentative_id = next_id()
-        candidate = GraphNode(
-            node_id=tentative_id,
-            family="eml",
-            kind=eml_node.kind,
-            value=eml_node.value,
-            children=child_refs,
-        )
-        nodes[tentative_id] = candidate
-        sig = compute_signature(Graph(nodes=nodes, roots=(tentative_id,)), tentative_id)
-
-        if sig in signature_to_id:
-            del nodes[tentative_id]
-            return signature_to_id[sig]
-
-        signature_to_id[sig] = tentative_id
-        return tentative_id
-
-    root_id = convert(root)
-    return Graph(nodes=nodes, roots=(root_id,))
-
-
-@dataclass
-class EmlPurityResult:
-    valid: bool
-    errors: list[str]
-
-
-def validate_eml_purity(graph: Graph) -> EmlPurityResult:
-    # stricter than 3-1's generic family check - pure eml leaves aren't
-    # just "any Const", they're supposed to be exactly the constant 1
-    errors = []
-    for node in graph.nodes.values():
-        if node.kind not in ("eml", "Var", "Const"):
-            errors.append(f"node {node.node_id!r} has kind {node.kind!r} - not eml/Var/Const")
-        if node.kind == "Const" and node.value != 1:
-            errors.append(f"node {node.node_id!r} is a Const with value {node.value!r} - pure eml leaves can only be 1")
-        if node.kind == "eml" and len(node.children) != 2:
-            errors.append(f"node {node.node_id!r} is kind eml but has {len(node.children)} children, needs exactly 2")
-    return EmlPurityResult(valid=(len(errors) == 0), errors=errors)
-
-
-@dataclass
-class EmlDagStats:
     tree_node_count: int
+    tree_child_reference_count: int
+    tree_depth: int
     dag_node_count: int
-    dag_edge_count: int
-    dag_max_depth: int
-    compression_ratio: float
+    dag_child_reference_count: int
+    dag_depth: int
+    compression_ratio: Fraction
+
+    @property
+    def dag_edge_count(self) -> int:
+        """Compatibility name for the explicit child-reference count."""
+
+        return self.dag_child_reference_count
 
 
-def _tree_node_count(node: EmlNode) -> int:
-    if not node.children:
-        return 1
-    return 1 + sum(_tree_node_count(c) for c in node.children)
+def _postorder_terms(root: EMLTerm) -> list[EMLTerm]:
+    """Return unique Python objects in iterative child-before-parent order."""
+
+    order: list[EMLTerm] = []
+    completed: set[int] = set()
+    stack: list[tuple[EMLTerm, bool]] = [(root, False)]
+    while stack:
+        term, leaving = stack.pop()
+        term_id = id(term)
+        if term_id in completed:
+            continue
+        if leaving:
+            completed.add(term_id)
+            order.append(term)
+        elif isinstance(term, EML):
+            stack.append((term, True))
+            stack.append((term.right, False))
+            stack.append((term.left, False))
+        else:
+            completed.add(term_id)
+            order.append(term)
+    return order
 
 
-def convert_with_stats(root: EmlNode) -> tuple[Graph, EmlDagStats]:
-    graph = eml_to_dag(root)
-    tree_count = _tree_node_count(root)
-    dag_stats = compute_statistics(graph)
-    ratio = tree_count / dag_stats.node_count if dag_stats.node_count else 0.0
+def _node_fields(term: EMLTerm) -> tuple[str, str, str | int | None]:
+    if isinstance(term, One):
+        return EML_ONE_KIND, "1", 1
+    if isinstance(term, Variable):
+        return EML_VARIABLE_KIND, term.name, term.name
+    return EML_OPERATOR_KIND, "eml", None
 
-    return graph, EmlDagStats(
-        tree_node_count=tree_count,
-        dag_node_count=dag_stats.node_count,
-        dag_edge_count=dag_stats.edge_count,
-        dag_max_depth=dag_stats.max_depth,
-        compression_ratio=ratio,
+
+def _convert_validated(
+    root: EMLTerm,
+    *,
+    root_id: str,
+    representation_mode: str,
+    tree_statistics: PureEMLStatistics,
+) -> tuple[Graph, EMLDagStatistics]:
+    source_to_dag: dict[int, str] = {}
+    dag_nodes: dict[str, GraphNode] = {}
+
+    for term in _postorder_terms(root):
+        if isinstance(term, EML):
+            child_nodes = (
+                (0, source_to_dag[id(term.left)]),
+                (1, source_to_dag[id(term.right)]),
+            )
+        else:
+            child_nodes = ()
+        kind, label, value = _node_fields(term)
+        signature = signature_from_parts(
+            family=EML_FAMILY,
+            kind=kind,
+            label=label,
+            value=value,
+            children=(
+                (slot, child_id.removeprefix(_NODE_ID_PREFIX)) for slot, child_id in child_nodes
+            ),
+        )
+        node_id = f"{_NODE_ID_PREFIX}{signature}"
+        if node_id not in dag_nodes:
+            dag_nodes[node_id] = GraphNode(
+                node_id=node_id,
+                family=EML_FAMILY,
+                kind=kind,
+                label=label,
+                value=value,
+                children=tuple(
+                    ChildRef(slot=slot, target_id=child_id) for slot, child_id in child_nodes
+                ),
+            )
+        source_to_dag[id(term)] = node_id
+
+    graph = Graph(
+        nodes=dag_nodes,
+        roots=(
+            GraphRoot(
+                root_id=root_id,
+                target_id=source_to_dag[id(root)],
+                representation_mode=representation_mode,
+            ),
+        ),
+    )
+    validation = validate_eml_dag(graph)
+    if not validation.valid:  # pragma: no cover - protects the public boundary
+        raise RuntimeError(
+            "EML-to-DAG conversion produced an invalid graph: " + "; ".join(validation.errors)
+        )
+
+    dag_statistics = compute_statistics(graph)
+    return graph, EMLDagStatistics(
+        tree_node_count=tree_statistics.node_count,
+        tree_child_reference_count=tree_statistics.edge_count,
+        tree_depth=tree_statistics.depth,
+        dag_node_count=dag_statistics.node_count,
+        dag_child_reference_count=dag_statistics.child_reference_count,
+        dag_depth=dag_statistics.max_depth,
+        compression_ratio=Fraction(
+            tree_statistics.node_count,
+            dag_statistics.node_count,
+        ),
     )
 
 
-def evaluate_tree(node: EmlNode, bindings: dict[str, float]) -> float:
-    # evaluates directly on the original tree, before any dedup. the
-    # eml formula itself (exp(x) - ln(y)) is the one thing here i'm
-    # actually sure about, it's the literal definition
-    if node.kind == "Var":
-        return bindings[node.value]
-    if node.kind == "Const":
-        return node.value
-    if node.kind == "eml":
-        x = evaluate_tree(node.children[0], bindings)
-        y = evaluate_tree(node.children[1], bindings)
-        return math.exp(x) - math.log(y)
-    raise ValueError(f"can't evaluate kind {node.kind!r}")
+def eml_to_dag(
+    root: EMLTerm,
+    *,
+    root_id: str = "root",
+    representation_mode: str = DEFAULT_REPRESENTATION_MODE,
+) -> Graph:
+    """Share only exactly identical structural subtrees in ``root``."""
+
+    tree_statistics = validate_pure_eml(root)
+    graph, _ = _convert_validated(
+        root,
+        root_id=root_id,
+        representation_mode=representation_mode,
+        tree_statistics=tree_statistics,
+    )
+    return graph
 
 
-def evaluate_dag(graph: Graph, node_id: str, bindings: dict[str, float]) -> float:
-    # same evaluation but on the dag (post-sharing) - used to prove
-    # sharing never changes the actual value
-    node = graph.nodes[node_id]
-    if node.kind == "Var":
-        return bindings[node.value]
-    if node.kind == "Const":
-        return node.value
-    if node.kind == "eml":
-        ordered = sorted(node.children, key=lambda c: c.slot)
-        x = evaluate_dag(graph, ordered[0].target_id, bindings)
-        y = evaluate_dag(graph, ordered[1].target_id, bindings)
-        return math.exp(x) - math.log(y)
-    raise ValueError(f"can't evaluate kind {node.kind!r}")
+def convert_with_stats(
+    root: EMLTerm,
+    *,
+    root_id: str = "root",
+    representation_mode: str = DEFAULT_REPRESENTATION_MODE,
+) -> tuple[Graph, EMLDagStatistics]:
+    """Convert one pure EML tree and return exact compression statistics."""
+
+    tree_statistics = validate_pure_eml(root)
+    return _convert_validated(
+        root,
+        root_id=root_id,
+        representation_mode=representation_mode,
+        tree_statistics=tree_statistics,
+    )
+
+
+def validate_eml_dag(graph: Graph) -> ValidationResult:
+    """Validate a graph and require the exact pure EML representation family."""
+
+    validation = validate_graph(graph)
+    errors = list(validation.errors)
+    if any(node.family != EML_FAMILY for node in graph.nodes.values()):
+        errors.append("every node in a pure EML DAG must use the eml family")
+    return ValidationResult(not errors, tuple(errors))
+
+
+def dag_to_eml(graph: Graph, root_id: str) -> EMLTerm:
+    """Reconstruct a pure EML value graph for audit and evaluation.
+
+    Shared descendants remain shared Python objects. Callers that evaluate the
+    result still observe every ordered syntactic occurrence.
+    """
+
+    validation = validate_eml_dag(graph)
+    if not validation.valid:
+        raise ValueError("cannot reconstruct an invalid EML DAG: " + "; ".join(validation.errors))
+    if root_id not in graph.nodes:
+        raise KeyError(f"graph node {root_id!r} does not exist")
+
+    terms: dict[str, EMLTerm] = {}
+    stack: list[tuple[str, bool]] = [(root_id, False)]
+    while stack:
+        node_id, leaving = stack.pop()
+        if node_id in terms:
+            continue
+        node = graph.nodes[node_id]
+        if leaving:
+            if node.kind == EML_ONE_KIND:
+                terms[node_id] = One()
+            elif node.kind == EML_VARIABLE_KIND:
+                terms[node_id] = Variable(str(node.value))
+            else:
+                children = sorted(node.children, key=lambda child: child.slot)
+                terms[node_id] = EML(
+                    terms[children[0].target_id],
+                    terms[children[1].target_id],
+                )
+            continue
+        stack.append((node_id, True))
+        for child in reversed(sorted(node.children, key=lambda ref: ref.slot)):
+            if child.target_id not in terms:
+                stack.append((child.target_id, False))
+
+    return terms[root_id]
