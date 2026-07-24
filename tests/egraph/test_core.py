@@ -26,7 +26,13 @@ from geml.egraph.ir import (
     sub,
     var,
 )
-from geml.egraph.policy import ResourceLimits
+from geml.egraph.policy import ResourceLimits, RewriteMode
+from geml.egraph.rewrite_engine import (
+    RewriteContext,
+    SaturationLimits,
+    saturate,
+)
+from geml.egraph.rules_safe import SAFE_RULES
 from geml.egraph.union_find import UnionFind, UnknownEClassError
 
 
@@ -406,6 +412,51 @@ class TestResourceLimits:
         graph.merge(graph.add(var("x")), graph.add(var("y")))
         report = graph.rebuild()
         assert report.congruence_closed is False
+        assert graph.pending_repairs == 1
+
+    def test_node_limited_rebuild_retains_source_and_a_unique_index(self):
+        x, y, u = var("x"), var("y"), var("u")
+        minus_one = const(-1)
+        expression = add(
+            add(
+                mul(
+                    mul(
+                        minus_one,
+                        mul(minus_one, mul(minus_one, x)),
+                    ),
+                    y,
+                ),
+                add(u, u),
+            ),
+            add(mul(minus_one, const(1)), x),
+        )
+        limits = ResourceLimits(
+            max_iterations=50,
+            max_egraph_nodes=100,
+            max_rewrite_attempts=2500,
+            timeout_seconds=2,
+        )
+        graph = EGraph(limits=limits)
+        root = graph.add(expression)
+
+        outcome = saturate(
+            graph,
+            SAFE_RULES,
+            RewriteContext(mode=RewriteMode.SAFE_REAL),
+            SaturationLimits(resources=limits),
+        )
+
+        assert outcome.report.status.value == "node_limit"
+        assert graph.lookup_expr(expression) == graph.find(root)
+        canonical_owners: dict[ENode, EClassId] = {}
+        for eclass in graph.eclasses():
+            for node in eclass.nodes:
+                canonical = graph.canonicalize_node(node)
+                assert canonical_owners.setdefault(canonical, eclass.eclass_id) == (
+                    eclass.eclass_id
+                )
+                assert graph.lookup(canonical) == eclass.eclass_id
+        assert len(canonical_owners) == graph.stats().node_count
 
 
 class TestDeterminism:

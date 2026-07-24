@@ -191,28 +191,51 @@ class EGraph:
         self._worklist.clear()
         return pending
 
-    def parents_of(self, eclass: EClassId) -> tuple[tuple[ENode, EClassId], ...]:
-        return tuple(self._classes[self.find(eclass)].parents.items())
+    def repair_congruence_pass(self) -> tuple[int, int]:
+        """Canonicalize all retained nodes and rebuild indexes without interleaved mutation.
 
-    def replace_parents(
-        self,
-        eclass: EClassId,
-        removed: tuple[tuple[ENode, EClassId], ...],
-        added: tuple[tuple[ENode, EClassId], ...],
-    ) -> None:
-        target = self._classes[self.find(eclass)]
-        for node, _owner in removed:
-            target.parents.pop(node, None)
-        for node, owner in added:
-            target.parents[node] = self.find(owner)
+        The immutable snapshot is essential.  A stale e-node can equal another node's
+        canonical replacement; removing and inserting those entries one at a time can
+        otherwise erase a retained expression.  Collisions introduced by merges enqueue
+        another bounded pass.
+        """
+        pending = self.take_worklist()
+        if not pending:
+            return 0, 0
+        repaired = len({self.find(eclass) for eclass in pending})
+        snapshot = tuple((root, tuple(self._classes[root].nodes)) for root in sorted(self._classes))
 
-    def rekey_hashcons(self, old_node: ENode, new_node: ENode, eclass: EClassId) -> None:
-        self._hashcons.pop(old_node, None)
-        self._hashcons[new_node] = self.find(eclass)
-        target = self._classes[self.find(eclass)]
-        if old_node != new_node:
-            target.nodes.pop(old_node, None)
-        target.nodes[new_node] = None
+        owner_by_node: dict[ENode, EClassId] = {}
+        merges = 0
+        for owner, nodes in snapshot:
+            for node in nodes:
+                canonical = self.canonicalize_node(node)
+                previous = owner_by_node.get(canonical)
+                if previous is None:
+                    owner_by_node[canonical] = self.find(owner)
+                    continue
+                if self.merge(previous, owner):
+                    merges += 1
+                owner_by_node[canonical] = self.find(previous)
+
+        normalized: dict[EClassId, dict[ENode, None]] = {root: {} for root in self._classes}
+        for owner, nodes in snapshot:
+            root = self.find(owner)
+            target = normalized[root]
+            for node in nodes:
+                target[self.canonicalize_node(node)] = None
+
+        for root, nodes in normalized.items():
+            self._classes[root].nodes = nodes
+            self._classes[root].parents.clear()
+
+        self._hashcons.clear()
+        for root in sorted(self._classes):
+            for node in self._classes[root].nodes:
+                self._hashcons.setdefault(node, root)
+                for child in node.children:
+                    self._classes[self.find(child)].parents[node] = root
+        return repaired, merges
 
     def lookup(self, node: ENode) -> EClassId | None:
         """Return the e-class holding a node congruent to ``node``, if any."""

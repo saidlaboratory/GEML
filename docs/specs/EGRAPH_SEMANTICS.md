@@ -103,6 +103,13 @@ make the exact stopping frontier machine-dependent; deterministic claims apply t
 structural bounds and to runs that do not race a wall-clock boundary. Every stop status and
 reason is retained.
 
+Every merge schedules congruence repair. A bounded repair pass snapshots all retained
+e-nodes before mutation, canonicalizes child e-classes, merges canonical collisions, and
+then replaces the hash-cons and parent indexes atomically. Passes continue to a fixed point
+or report that the rebuild-iteration limit was reached. This whole-graph pass is intentional:
+interleaving removal and insertion for individual stale parents can erase a retained node
+when one parent's old key is another parent's canonical replacement.
+
 ## Candidate validation and selection
 
 The source expression is a required extraction anchor. Selection is disabled if it is not
