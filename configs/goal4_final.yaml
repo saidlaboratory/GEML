@@ -1,0 +1,50 @@
+# Goal 4 production command, run from the repository root:
+# python -m geml.experiments.goal4.run \
+#   --config configs/goal4_final.yaml \
+#   --stage final \
+#   --manifest outputs/final/goal1/final/run/manifests/corpus.manifest.json
+schema_version: geml-goal4-config-v1
+output_root: outputs/final/goal4
+
+# Safe rules always run; the domain library is added only in positive_real_formal mode.
+# The opt-in OPTIONAL domain tier stays disabled so benchmark rows are not silently altered.
+include_optional_domain_rules: false
+
+# Both rewrite modes run independently for every expression and are never merged.
+modes:
+  - safe_real
+  - positive_real_formal
+
+sampling:
+  seed: 20260724
+  target_size: 30000
+  balance_axes:
+    - operator_family
+    - domain_mode
+    - split
+    - size_bucket
+  size_bucket_edges: [4, 8, 16, 32, 64]
+
+resources:
+  max_iterations: 200
+  max_egraph_nodes: 20000
+  saturation_timeout_seconds: 5.0
+  max_eclasses: null
+  extraction_max_depth: 24
+  extraction_beam_width: 8
+  extraction_max_candidates: 64
+  extraction_max_nodes: 100000
+  extraction_timeout_seconds: 5.0
+
+processing:
+  chunk_size: 256
+  checkpoint_every_chunks: 4
+  resume: true
+
+stages:
+  smoke:
+    expected_count: 25
+    row_limit: 25
+  final:
+    expected_count: 30000
+    row_limit: null
