@@ -13,6 +13,8 @@ from fractions import Fraction
 from types import MappingProxyType
 from typing import NewType
 
+from geml.eml.ir import is_valid_source_variable_name
+
 EClassId = NewType("EClassId", int)
 
 type LeafPayload = str | Fraction
@@ -78,8 +80,10 @@ def _validate_operator(operator: object) -> Operator:
 
 def _validate_payload(operator: Operator, payload: LeafPayload | None) -> None:
     if operator is Operator.VARIABLE:
-        if not isinstance(payload, str) or not payload.strip():
-            raise MalformedNodeError("a variable node requires a non-blank string payload")
+        if not is_valid_source_variable_name(payload):
+            raise MalformedNodeError(
+                "a variable node requires a non-blank ASCII identifier payload"
+            )
         return
     if operator is Operator.CONSTANT:
         if not isinstance(payload, Fraction):
@@ -115,8 +119,10 @@ class ENode:
                 f"{len(self.children)} children"
             )
         for child in self.children:
-            if not isinstance(child, int) or isinstance(child, bool):
-                raise MalformedNodeError("every child must be an integer e-class identifier")
+            if not isinstance(child, int) or isinstance(child, bool) or child < 0:
+                raise MalformedNodeError(
+                    "every child must be a nonnegative integer e-class identifier"
+                )
         _validate_payload(operator, self.payload)
 
     @property
@@ -176,9 +182,13 @@ def var(name: str) -> Expr:
 
 def const(value: Fraction | int | str) -> Expr:
     """Return an exact rational constant leaf; floating point input is rejected."""
-    if isinstance(value, float):
+    if isinstance(value, bool | float):
         raise MalformedNodeError("constants must be exact; pass an int, str, or Fraction")
-    return Expr(op=Operator.CONSTANT, payload=Fraction(value))
+    try:
+        exact = Fraction(value)
+    except (TypeError, ValueError, ZeroDivisionError) as error:
+        raise MalformedNodeError("constants must be a valid exact rational") from error
+    return Expr(op=Operator.CONSTANT, payload=exact)
 
 
 def add(left: Expr, right: Expr) -> Expr:

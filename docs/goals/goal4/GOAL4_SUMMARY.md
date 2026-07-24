@@ -1,44 +1,126 @@
-# Goal 4 Summary — Verifier-Gated E-Graph Optimization
+# Goal 4 summary: verifier-gated e-graph optimization
 
 ## Objective
 
-Goal 4 adds an **optional** semantic-canonicalization stage on top of the Pure EML
-representation established in Goals 1–3. Given a source expression, it searches for an
-equivalent expression that is cheaper under the **official Goal 3 exact EML DAG cost**,
-subject to explicit resource limits and a verification gate. Pure EML remains the canonical
-representation; Goal 4 never replaces it and never bypasses official EML compilation.
+Goal 4 adds an optional, deterministic, non-ML search over source forms on top of Goals
+1–3. It uses equality saturation to discover equivalent expressions and selects by the
+official Goal 3 exact Pure EML DAG cost. Pure EML remains canonical.
 
-The stage is deliberately conservative. It reports what it found among the candidates it
-enumerated and validated, under the resource limits it was given. It does not claim global
-optimality, symbolic completeness, or complex-domain correctness.
+No result is described as a global optimum. The selected form is only the cheapest
+candidate retained and validated under the configured resource limits.
 
-## Methodology
+## Clean-room lineage
 
-The pipeline processes every selected expression independently through a fixed sequence of
-stages, each of which produces an explicit status:
+The Goal 4 branch is built directly on the completed Goal 3 branch. Its implementation
+authority is the current repository specifications, issues 4-1 through 4-9, the
+authoritative sources named by those specifications, and official dependency
+documentation. No prototype implementation or prototype history is an implementation
+source.
 
-1. **Compile** the source AST into the e-graph operator vocabulary. Trigonometric and
-   hyperbolic operators are outside that vocabulary and are recorded as retained
-   `unsupported_operator` rows.
-2. **Cost the input** with the official Goal 3 EML DAG cost API (`eml_dag_cost_before`).
-3. **Saturate** an e-graph with bounded equality saturation, using the safe rule library in
-   every mode and adding the guarded domain rules only in `positive_real_formal` mode.
-4. **Extract** candidate expressions with the cycle-safe, bounded enumerator.
-5. **Validate** every candidate: same root e-class, official Pure EML compilation, numeric
-   semantic verification, and domain verification. Invalid candidates are retained with an
-   explicit reason.
-6. **Cost and rank** the valid candidates with the frozen Goal 3 API and the deterministic
-   tie-break order (exact EML DAG cost, exact EML tree cost, AST DAG size, AST tree size,
-   stable lexical signature), then select the best.
-7. **Record** one fully audited row, including `eml_dag_cost_after` and the improvement.
+## Pipeline
 
-Every stage status, rule application, guard outcome, branch-sensitive application, and
-resource sample is written to the row. Failures are first-class rows, never dropped.
+For every selected expression, the runner creates two independent work units:
+`safe_real` and `positive_real_formal`.
 
-## Experiment setup
+1. Build the frozen source AST and convert it to the closed e-graph vocabulary.
+2. Compute the input cost with Goal 3's direct source-AST-to-Pure-EML-DAG compiler.
+3. Run bounded equality saturation with complete application provenance and exact attempt
+   aggregates.
+4. Run bounded, cycle-safe candidate extraction while forcing the source expression to
+   remain as a safety anchor.
+5. Independently confirm each candidate's concrete membership in the root e-class.
+6. Require an explicit source reference, official direct compilation, exact count-only EML
+   tree accounting, and a deterministic domain-aware source-semantics audit.
+7. Rank valid candidates by exact EML DAG, EML tree, AST DAG, AST tree, and stable
+   signature.
+8. Retain one terminal row for the work unit, including failures and resource stops.
 
-The runner (`geml.experiments.goal4.run`) executes stages over a JSONL result file with a
-create-only checkpoint. The production command is:
+The source anchor is costed by the same path as rewritten candidates. Therefore a
+successful selection cannot be more expensive than the source. Any observed degradation is
+classified as an integrity failure rather than reported as unchanged.
+
+## Rewrite modes and assumptions
+
+- `safe_real` uses the branch-insensitive finite-real library.
+- `positive_real_formal` adds the guarded domain library.
+
+Mode selection does not itself declare a variable positive. The runner derives declarations
+from each corpus record's `domain_mode`: `positive_real` supplies positivity,
+`nonzero_real` supplies nonzero, and other supported modes supply realness only. Every row
+records those declarations and every domain-rule application records its guard and
+assumption.
+
+Positive-real results are conditional findings. They are not presented as universal
+complex identities.
+
+## Deterministic subset
+
+The final stage selects 30,000 expressions, within the required 25,000–40,000 range.
+Round-robin strata include:
+
+- operator family;
+- corpus domain mode;
+- split;
+- achieved source-AST-size bucket; and
+- generator `difficulty_profile`.
+
+Achieved AST size comes from `generator_metadata.achieved_source_ast_size`; a row explicitly
+labels the rare fallback to `target_ast_size`. A seeded SHA-256 rank makes selection
+independent of input order.
+
+## Resource policy
+
+The production configuration records and enforces:
+
+- 50 saturation iterations;
+- 500 e-nodes;
+- 2,500 rewrite attempts;
+- 0.5 seconds of saturation wall time;
+- extraction depth 8, beam width 3, and 12 root candidates;
+- 10,000 extraction node visits and 20,000 extraction iterations;
+- 0.25 seconds of extraction wall time; and
+- eight worker processes.
+
+These bounds are scientific parameters, not hidden implementation details. A structural or
+wall-clock stop retains its partial result and explicit reason. Wall-clock stops can depend
+on machine load, so reproducibility claims are strongest for rows stopped by structural
+bounds or a fixed point.
+
+## Artifact integrity and resume
+
+The run ID hashes the configuration, schema versions, manifest SHA-256, corpus identity,
+selected expression IDs and strata, compiler mode, both rewrite modes, and implementation
+commit. Rows and checkpoints carry this ID.
+
+Resume rejects:
+
+- an incompatible schema or run ID;
+- duplicate or unexpected work units;
+- malformed completed JSONL records;
+- stale checkpoints; and
+- a checkpoint that claims a row absent from durable storage.
+
+A crash-truncated final JSONL fragment is the only repaired case. Valid rows are flushed and
+`fsync`ed before a checkpoint advances.
+
+## Metrics and denominators
+
+Each mode and stratum reports:
+
+- `improved / costed`: the success-only after-rate;
+- `improved / processed`: the all-processed after-rate;
+- `costed / processed`: cost coverage;
+- improved, unchanged, degraded, failure, and timeout counts;
+- signed and positive-only total improvement; and
+- exact mean absolute and relative improvement ratios.
+
+Unsupported operators, timeouts, validation failures, and internal failures stay in the
+processed denominator. `costed / processed` is not mislabeled as an all-processed success
+rate.
+
+## Production commands
+
+Run from a clean committed checkout:
 
 ```bash
 python -m geml.experiments.goal4.run \
@@ -47,95 +129,27 @@ python -m geml.experiments.goal4.run \
   --manifest outputs/final/goal1/final/run/manifests/corpus.manifest.json
 ```
 
-All experiment parameters live in `configs/goal4_final.yaml`; nothing is hardcoded.
+Then generate the strict summary, failure audit, plot data, and six plots:
 
-### Subset construction
+```bash
+python -m geml.analysis.goal4.summary \
+  --rows outputs/final/goal4/final/final.rows.jsonl \
+  --output-dir outputs/final/goal4/analysis
+```
 
-The final stage draws a deterministic, balanced subset of 30,000 expressions (within the
-25,000–40,000 target band). Expressions are grouped into strata by operator family, domain
-mode, dataset split, and a size bucket; each stratum is ordered by a seeded hash of its
-expression ids, and the subset is filled round-robin across strata. The selection is a pure
-function of the corpus and the configuration: the same configuration always yields the same
-subset, independent of input order.
+## Production result
 
-### Rewrite modes
+<!-- production-results:start -->
+The corrected production run has not yet been inserted into this document. Do not infer a
+scientific after-rate from the smoke fixtures.
+<!-- production-results:end -->
 
-Each expression is optimized **independently** in both modes, and the two are never merged,
-averaged, or mixed:
+## Claim boundaries
 
-- `safe_real` — only the branch-insensitive safe rule library.
-- `positive_real_formal` — the safe library plus the guarded domain rules, which fire only
-  when the caller-declared domain assumptions (derived from the corpus domain mode) satisfy
-  each rule's guard.
-
-Every output row identifies its rewrite mode, declared assumptions, and rule library.
-
-### Resource limits
-
-Per expression the runner bounds saturation iterations, e-graph node count, e-class count,
-and wall-clock time, and separately bounds extraction depth, beam width, candidate count,
-node visits, and wall-clock time. Every limit and stop reason is recorded. A per-expression
-timeout is enforced through the frozen saturation and extraction wall-clock budgets; a row
-that hit a limit is retained with its stop reason and `timeout` flag.
-
-### Checkpoint and resume
-
-Result rows are appended durably (flush + fsync) to a per-stage JSONL file, which is the
-unit of progress. A create-only JSON checkpoint records completed `(expression_id, mode)`
-units. On resume, units already present in the rows file are skipped, so completed work is
-never recomputed and never overwritten. A truncated final line from an interrupted append
-is tolerated on read.
-
-## Success metrics
-
-For every rewrite mode, and for each stratum, the analysis reports two denominators side by
-side:
-
-- **Success-only** — improved rows over costed rows (`improved / costed`).
-- **All-processed** — costed rows over every processed row (`costed / processed`), so
-  failures remain in the denominator.
-
-Improvement is the exact difference between the official EML DAG cost of the input and of
-the selected candidate. All ratios are stored as exact reduced fractions alongside a float
-rendering.
-
-## Failure metrics
-
-Every retained failure is categorized (`unsupported_operator`, `compile_failed`,
-`cost_failed`, `no_candidate`) and attributed to operator-family and size strata so any bias
-is visible. Timeouts and resource stops are counted separately. No failed row is removed
-from any statistic.
-
-## Key observations
-
-The mechanism is demonstrated on tiny fixtures by the smoke tests; the scientific numbers
-come from the production run and are recorded in the output rows, not asserted here. Two
-structural observations hold by construction:
-
-- The two modes are reported strictly separately, so any difference between `safe_real` and
-  `positive_real_formal` is attributable to the guarded domain rules alone.
-- Where the safe library alone reduces cost, the reduction comes from commutativity,
-  identity, inverse, double-negation, subtraction lowering, and exact constant folding —
-  none of which requires any domain assumption.
-
-## Limitations
-
-- **Not optimal.** The selected candidate is the best among the candidates that were
-  enumerated and validated under the configured limits. A larger beam, deeper extraction, or
-  more saturation iterations could find a cheaper candidate. No optimality is claimed.
-- **Not universal.** Domain rules apply only under explicitly declared assumptions and only
-  in `positive_real_formal` mode. They are not complex-domain identities.
-- **Not a theorem prover.** Semantic verification is numeric probing at a fixed set of
-  sample points, not a proof. It can flag inequivalence and retain the row; it does not
-  certify equivalence.
-- **Vocabulary bound.** Trigonometric and hyperbolic source expressions are outside the
-  e-graph vocabulary and are recorded as unsupported, not optimized.
-
-## Future work
-
-- Extend the e-graph vocabulary to trigonometric and hyperbolic operators once guarded
-  domain rules and counterexamples are documented for each.
-- Add verified-guarded rules gated by the Goal 2 semantic verifier rather than numeric
-  probing.
-- Study the cost/quality trade-off of larger extraction beams and longer saturation budgets
-  on the improvement rate, per mode and per operator family.
+- Same-e-class membership is formal evidence relative to the enabled rule set and recorded
+  assumptions; numeric probing is an independent bug-detection audit, not a theorem prover.
+- Candidate extraction is bounded and beam-limited.
+- Trigonometric and hyperbolic source operators are outside the Goal 4 e-graph vocabulary
+  and are retained as unsupported rows.
+- The study does not claim global minimality, symbolic completeness, unrestricted complex
+  equivalence, or machine-independent wall-clock frontiers.

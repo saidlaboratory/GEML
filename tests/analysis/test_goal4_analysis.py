@@ -1,4 +1,4 @@
-"""Tiny-fixture tests for the Goal 4 result analysis, failure accounting, and plots."""
+"""Tiny strict fixtures for Goal 4 summaries, failures, and plots."""
 
 from __future__ import annotations
 
@@ -8,10 +8,17 @@ from pathlib import Path
 import pytest
 
 from geml.analysis.goal4.failures import analyze_failures
-from geml.analysis.goal4.summary import ExactRatio, SummaryError, parse_row, summarize
+from geml.analysis.goal4.summary import (
+    ExactRatio,
+    SummaryError,
+    parse_row,
+    summarize,
+)
+from geml.experiments.goal4.run import ROW_SCHEMA_VERSION
 from geml.plots.goal4 import build_plot_data, render_plots
 
 _HAS_MATPLOTLIB = importlib.util.find_spec("matplotlib") is not None
+_RUN_ID = "f" * 64
 
 
 def _row(
@@ -23,45 +30,79 @@ def _row(
     after: int | None = None,
     family: str = "algebraic_core",
     size: str = "<= 8",
+    difficulty: str = "ordinary",
     applied: dict[str, int] | None = None,
     saturation: str | None = "success",
     timeout: bool = False,
     reason: str | None = None,
-    wall: float = 0.02,
+    wall: float | None = 0.02,
     memory: int | None = None,
+    validation_failures: dict[str, int] | None = None,
 ) -> dict:
+    successful = status in {"optimized", "unchanged"}
+    improvement = None if before is None or after is None else before - after
+    provenance = (
+        None
+        if saturation is None
+        else {
+            "application_log_complete": True,
+            "attempt_aggregates_complete": True,
+            "individual_nonapplication_attempts_retained": False,
+            "attempt_count": sum((applied or {}).values()),
+            "attempt_digest_sha256": "a" * 64,
+            "per_rule": [],
+            "applications": [],
+            "applied_rules": applied or {},
+            "branch_sensitive_applications": (1 if applied and "DOMAIN" in "".join(applied) else 0),
+            "assumptions_used": [],
+        }
+    )
     return {
+        "schema_version": ROW_SCHEMA_VERSION,
+        "run_id": _RUN_ID,
         "expression_id": expression_id,
         "rewrite_mode": mode,
         "domain_mode": "safe_real",
         "operator_family": family,
         "split": "train",
         "size_bucket": size,
-        "rule_library": "safe_real" if mode == "safe_real" else "safe_plus_domain",
+        "difficulty_profile": difficulty,
+        "rule_library": ("safe_real" if mode == "safe_real" else "safe_plus_domain"),
         "stage_status": status,
         "saturation_status": saturation,
-        "extraction_status": "success",
-        "validation_status": "valid",
+        "extraction_status": (None if saturation is None else "success"),
+        "validation_status": "valid" if successful else None,
         "timeout": timeout,
+        "failure_stage": None if successful else "fixture_stage",
         "failure_reason": reason,
-        "rewrites_applied": 1 if applied else 0,
-        "candidate_count": 2,
-        "provenance": {
-            "applied_rules": applied or {},
-            "branch_sensitive_applications": 1 if applied and "DOMAIN" in "".join(applied) else 0,
-            "guard_outcomes": {},
-            "assumptions_used": [],
-        },
+        "rewrites_applied": (None if saturation is None else sum((applied or {}).values())),
+        "candidate_count": None if saturation is None else 2,
+        "provenance": provenance,
+        "validation_failures": validation_failures,
         "eml_dag_cost_before": before,
         "eml_dag_cost_after": after,
-        "resources": {"wall_seconds": wall, "cpu_seconds": wall, "peak_memory_bytes": memory},
+        "absolute_improvement": improvement,
+        "resources": {
+            "wall_seconds": wall,
+            "cpu_seconds": wall,
+            "rss_bytes_before": memory,
+            "rss_bytes_after": memory,
+        },
     }
 
 
 def _fixture_rows() -> list[dict]:
-    """Return a tiny, fixed, mode-balanced result set covering success and failure."""
+    """Mode-balanced rows covering improvement, unchanged, and failures."""
     return [
-        _row("a", "safe_real", "optimized", before=30, after=20, applied={"SAFE-ADD-ZERO": 1}),
+        _row(
+            "a",
+            "safe_real",
+            "optimized",
+            before=30,
+            after=20,
+            applied={"SAFE-ADD-ZERO": 1},
+            memory=100,
+        ),
         _row("b", "safe_real", "unchanged", before=22, after=22),
         _row(
             "c",
@@ -72,7 +113,15 @@ def _fixture_rows() -> list[dict]:
             saturation=None,
         ),
         _row(
-            "d", "safe_real", "no_candidate", before=14, reason="no valid candidate", size="<= 16"
+            "d",
+            "safe_real",
+            "no_candidate",
+            before=14,
+            reason="no valid candidate",
+            size="<= 16",
+            difficulty="stress",
+            timeout=True,
+            validation_failures={"inconclusive": 2},
         ),
         _row(
             "a",
@@ -81,8 +130,15 @@ def _fixture_rows() -> list[dict]:
             before=30,
             after=16,
             applied={"DOMAIN-LOG-EXP": 1},
+            memory=100,
         ),
-        _row("b", "positive_real_formal", "unchanged", before=22, after=22),
+        _row(
+            "b",
+            "positive_real_formal",
+            "unchanged",
+            before=22,
+            after=22,
+        ),
         _row(
             "c",
             "positive_real_formal",
@@ -98,6 +154,9 @@ def _fixture_rows() -> list[dict]:
             before=14,
             reason="no valid candidate",
             size="<= 16",
+            difficulty="stress",
+            timeout=True,
+            validation_failures={"inconclusive": 2},
         ),
     ]
 
@@ -118,6 +177,35 @@ class TestRowParsing:
         assert parsed.improved
         assert parsed.absolute_improvement == 10
 
+    @pytest.mark.parametrize(
+        ("field", "value", "message"),
+        [
+            ("timeout", "false", "boolean"),
+            ("eml_dag_cost_before", True, "integer"),
+            ("expression_id", None, "non-blank"),
+        ],
+    )
+    def test_lax_coercions_are_rejected(self, field, value, message):
+        row = dict(_fixture_rows()[0])
+        row[field] = value
+        with pytest.raises(SummaryError, match=message):
+            parse_row(row)
+
+    def test_inconsistent_improvement_is_rejected(self):
+        row = dict(_fixture_rows()[0])
+        row["absolute_improvement"] = 999
+        with pytest.raises(SummaryError, match="does not match"):
+            parse_row(row)
+
+    def test_duplicate_units_are_rejected(self):
+        rows = _fixture_rows()
+        with pytest.raises(SummaryError, match="duplicate"):
+            summarize([*rows, rows[0]])
+
+    def test_unpaired_modes_are_rejected(self):
+        with pytest.raises(SummaryError, match="exactly both"):
+            summarize(_fixture_rows()[:-1])
+
 
 class TestExactRatio:
     def test_reduces_fraction(self):
@@ -132,133 +220,139 @@ class TestExactRatio:
 class TestSummaryDenominators:
     def test_modes_are_separated(self):
         summary = summarize(_fixture_rows())
-        assert set(summary.modes) == {"safe_real", "positive_real_formal"}
+        assert set(summary.modes) == {
+            "safe_real",
+            "positive_real_formal",
+        }
+        assert summary.total_expressions == 4
 
     def test_success_only_denominator_is_costed(self):
-        summary = summarize(_fixture_rows())
-        safe = summary.modes["safe_real"].overall
+        safe = summarize(_fixture_rows()).modes["safe_real"].overall
         assert safe.costed_count == 2
         assert safe.improved_count == 1
-        assert safe.success_rate.as_dict()["exact"] == "1/2"
+        assert safe.improved_over_costed.as_dict()["exact"] == "1/2"
 
-    def test_all_processed_denominator_includes_failures(self):
-        summary = summarize(_fixture_rows())
-        safe = summary.modes["safe_real"].overall
+    def test_all_processed_after_rate_includes_failures(self):
+        safe = summarize(_fixture_rows()).modes["safe_real"].overall
         assert safe.processed_count == 4
         assert safe.failure_count == 2
-        assert safe.processing_success_rate.as_dict()["exact"] == "1/2"
+        assert safe.improved_over_processed.as_dict()["exact"] == "1/4"
+        assert safe.costed_over_processed.as_dict()["exact"] == "1/2"
 
-    def test_total_absolute_improvement_is_exact(self):
-        summary = summarize(_fixture_rows())
-        assert summary.modes["positive_real_formal"].overall.total_absolute_improvement == 14
+    def test_signed_and_positive_totals_are_explicit(self):
+        formal = summarize(_fixture_rows()).modes["positive_real_formal"].overall
+        assert formal.signed_total_improvement == 14
+        assert formal.positive_total_improvement == 14
 
     def test_modes_are_not_averaged_together(self):
         summary = summarize(_fixture_rows())
-        safe = summary.modes["safe_real"].overall.total_absolute_improvement
-        formal = summary.modes["positive_real_formal"].overall.total_absolute_improvement
-        assert safe == 10
-        assert formal == 14
+        assert summary.modes["safe_real"].overall.signed_total_improvement == 10
+        assert summary.modes["positive_real_formal"].overall.signed_total_improvement == 14
 
-    def test_no_row_is_dropped_from_processed(self):
+    def test_no_row_is_dropped(self):
         rows = _fixture_rows()
         summary = summarize(rows)
-        processed = sum(report.overall.processed_count for report in summary.modes.values())
-        assert processed == len(rows)
+        assert sum(report.overall.processed_count for report in summary.modes.values()) == len(rows)
 
 
-class TestStratification:
-    def test_stratifies_by_operator_family(self):
-        summary = summarize(_fixture_rows())
-        strata = summary.modes["safe_real"].strata["operator_family"]
-        assert "algebraic_core" in strata
-        assert "trigonometric" in strata
+class TestStratificationAndExamples:
+    def test_stratifies_by_family_and_difficulty(self):
+        report = summarize(_fixture_rows()).modes["safe_real"]
+        assert "trigonometric" in report.strata["operator_family"]
+        assert "stress" in report.strata["difficulty_profile"]
 
-    def test_stratum_failures_are_visible(self):
-        summary = summarize(_fixture_rows())
-        trig = summary.modes["safe_real"].strata["operator_family"]["trigonometric"]
-        assert trig.failure_count == 1
-        assert trig.costed_count == 0
+    def test_nontrivial_and_identity_heavy_are_reported(self):
+        report = summarize(_fixture_rows()).modes["safe_real"]
+        assert report.nontrivial.processed_count == 1
+        assert report.identity_heavy.improved_count == 1
 
-    def test_nontrivial_subgroup_excludes_no_rewrites(self):
-        summary = summarize(_fixture_rows())
-        nontrivial = summary.modes["safe_real"].nontrivial
-        assert nontrivial.processed_count == 1
-
-    def test_identity_heavy_subgroup_is_reported(self):
-        summary = summarize(_fixture_rows())
-        assert summary.modes["safe_real"].identity_heavy.improved_count == 1
+    def test_top_success_and_failure_examples_are_retained(self):
+        report = summarize(_fixture_rows()).modes["safe_real"]
+        assert report.top_improvements[0].expression_id == "a"
+        assert {item.expression_id for item in report.top_failures} == {
+            "c",
+            "d",
+        }
 
 
 class TestFailureAccounting:
     def test_every_failure_is_categorized(self):
-        report = analyze_failures(_fixture_rows())
-        safe = report.modes["safe_real"]
-        categories = {category.category for category in safe.categories}
-        assert categories == {"unsupported_operator", "no_candidate"}
+        safe = analyze_failures(_fixture_rows()).modes["safe_real"]
+        assert {category.category for category in safe.categories} == {
+            "unsupported_operator",
+            "no_candidate",
+        }
 
-    def test_failure_counts_match_processed(self):
-        report = analyze_failures(_fixture_rows())
-        safe = report.modes["safe_real"]
-        assert safe.processed_count == 4
+    def test_failure_timeout_and_validation_counts_are_separate(self):
+        safe = analyze_failures(_fixture_rows()).modes["safe_real"]
         assert safe.failure_count == 2
+        assert safe.timeout_count == 1
+        assert safe.validation_failure_count == 1
 
-    def test_family_bias_exposes_trig_failures(self):
-        report = analyze_failures(_fixture_rows())
-        bias = {entry.stratum: entry for entry in report.modes["safe_real"].family_bias}
-        assert bias["trigonometric"].failure_rate_permille == 1000
-        assert bias["trigonometric"].failure_count == 1
-        assert bias["algebraic_core"].failure_count == 1
-        assert bias["algebraic_core"].processed_count == 3
+    def test_family_and_difficulty_bias_are_visible(self):
+        safe = analyze_failures(_fixture_rows()).modes["safe_real"]
+        family = {entry.stratum: entry for entry in safe.family_bias}
+        assert family["trigonometric"].failure_rate_permille == 1000
+        difficulty = {entry.stratum: entry for entry in safe.difficulty_bias}
+        assert difficulty["stress"].failure_rate_permille == 1000
 
-    def test_example_reasons_are_retained(self):
-        report = analyze_failures(_fixture_rows())
-        reasons = report.modes["safe_real"].example_reasons
-        assert any("sin" in reason for reason in reasons)
-
-    def test_modes_are_separated_in_failures(self):
-        report = analyze_failures(_fixture_rows())
-        assert set(report.modes) == {"safe_real", "positive_real_formal"}
+    def test_provenance_audit_examples_keep_reasons(self):
+        safe = analyze_failures(_fixture_rows()).modes["safe_real"]
+        assert any(example.failure_reason == "sin" for example in safe.provenance_audit_examples)
 
 
 class TestPlots:
     def test_plot_data_keeps_modes_separate(self):
         data = build_plot_data(_fixture_rows())
         assert data.modes == ("safe_real", "positive_real_formal")
-        assert set(data.success_rate.series) == {"safe_real", "positive_real_formal"}
+        assert set(data.success_rate.series) == set(data.modes)
 
     def test_success_series_uses_processed_costed_improved(self):
         data = build_plot_data(_fixture_rows())
-        assert data.success_rate.edges == ("processed", "costed", "improved")
+        assert data.success_rate.edges == (
+            "processed",
+            "costed",
+            "improved",
+        )
         assert data.success_rate.series["safe_real"] == (4, 2, 1)
 
-    def test_failure_breakdown_matches_failure_report(self):
+    def test_missing_runtime_is_not_binned_as_zero(self):
+        rows = _fixture_rows()
+        rows[0]["resources"]["wall_seconds"] = None
+        data = build_plot_data(rows)
+        assert sum(data.runtime_distribution.series["safe_real"]) == 3
+
+    def test_memory_availability_uses_honest_rss_snapshot(self):
         data = build_plot_data(_fixture_rows())
-        assert "no_candidate" in data.failure_breakdown.categories
-        assert "unsupported_operator" in data.failure_breakdown.categories
+        assert data.memory_availability["safe_real"] == {
+            "present": 1,
+            "absent": 3,
+        }
+
+    def test_failure_breakdown_matches_failure_report(self):
+        categories = build_plot_data(_fixture_rows()).failure_breakdown.categories
+        assert "no_candidate" in categories
+        assert "unsupported_operator" in categories
 
     def test_plot_data_is_deterministic(self):
         rows = _fixture_rows()
         assert build_plot_data(rows).as_dict() == build_plot_data(rows).as_dict()
 
-    @pytest.mark.skipif(not _HAS_MATPLOTLIB, reason="matplotlib is not installed")
-    def test_render_writes_png_files(self, tmp_path: Path):
-        data = build_plot_data(_fixture_rows())
-        paths = render_plots(data, tmp_path / "plots")
-        assert paths
+    @pytest.mark.skipif(
+        not _HAS_MATPLOTLIB,
+        reason="matplotlib is not installed",
+    )
+    def test_render_writes_all_six_png_files(self, tmp_path: Path):
+        paths = render_plots(
+            build_plot_data(_fixture_rows()),
+            tmp_path / "plots",
+        )
+        assert len(paths) == 6
         assert all(path.is_file() and path.suffix == ".png" for path in paths)
 
 
 class TestDeterminism:
-    def test_summary_is_deterministic(self):
+    def test_summary_and_failure_report_are_order_independent(self):
         rows = _fixture_rows()
-        assert summarize(rows).as_dict() == summarize(rows).as_dict()
-
-    def test_failure_report_is_deterministic(self):
-        rows = _fixture_rows()
-        assert analyze_failures(rows).as_dict() == analyze_failures(rows).as_dict()
-
-    def test_summary_is_order_independent(self):
-        rows = _fixture_rows()
-        forward = summarize(rows).as_dict()
-        backward = summarize(list(reversed(rows))).as_dict()
-        assert forward == backward
+        assert summarize(rows).as_dict() == summarize(list(reversed(rows))).as_dict()
+        assert analyze_failures(rows).as_dict() == analyze_failures(list(reversed(rows))).as_dict()

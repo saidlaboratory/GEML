@@ -56,6 +56,8 @@ class RewriteRecord:
     guard: GuardOutcome
     outcome: ApplicationOutcome
     branch_sensitive: bool
+    verifier_required: bool
+    justification: str
     assumptions: frozenset[str]
     source_eclass: EClassId
     result_eclass: EClassId | None
@@ -90,6 +92,8 @@ class ProvenanceLog:
         guard: GuardOutcome,
         outcome: ApplicationOutcome,
         branch_sensitive: bool,
+        verifier_required: bool,
+        justification: str,
         assumptions: frozenset[str],
         source_eclass: EClassId,
         result_eclass: EClassId | None,
@@ -108,6 +112,8 @@ class ProvenanceLog:
             guard=guard,
             outcome=outcome,
             branch_sensitive=branch_sensitive,
+            verifier_required=verifier_required,
+            justification=justification,
             assumptions=assumptions,
             source_eclass=source_eclass,
             result_eclass=result_eclass,

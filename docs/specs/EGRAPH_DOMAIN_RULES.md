@@ -204,9 +204,11 @@ no domain rule, regardless of the mode it was configured with.
 ## Reproducibility
 
 Rule construction is static and ordered, guards are pure functions of the e-graph and the
-declared environment, and no rule consults wall-clock time or randomness. Two runs over
-the same expression, mode, and assumption environment produce identical e-graph
-signatures, identical saturation reports, and identical provenance record sequences.
+declared environment, and no rule consults randomness. With the same structural bounds,
+two runs that do not hit a wall-clock boundary produce identical e-graph signatures and
+provenance sequences. A run that races the configured wall-clock deadline may stop at a
+different frontier on a differently loaded machine; its explicit timeout status and
+partial provenance remain part of the result.
 
 ## What is not implemented
 

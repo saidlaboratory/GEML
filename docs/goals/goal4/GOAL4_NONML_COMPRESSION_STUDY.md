@@ -1,116 +1,115 @@
-# Goal 4 Non-ML Compression Study
+# Goal 4 non-ML compression study
 
-This study explains, **without invoking any machine learning**, why the Goal 4 e-graph
-stage can reduce the official Pure EML DAG cost of an expression, and exactly where those
-reductions come from. Every mechanism here is a deterministic rewrite or an exact
-arithmetic fold; none of it is learned, statistical, or heuristic beyond the fixed,
-configured resource limits.
+## What is optimized
 
-## The three size measures
+Goal 4 optimizes the exact node count of the official Pure EML DAG produced from a source
+AST. Three structural quantities remain separate:
 
-Three structural sizes are relevant, and they are not interchangeable:
+- source AST tree size;
+- source AST DAG size after exact structural sharing; and
+- official Pure EML DAG size after direct compilation and hash-consing.
 
-- **AST tree size** — the node count of the source expression as a plain tree.
-- **AST DAG size** — the node count after exact structural sharing of identical AST
-  subtrees.
-- **EML DAG size** — the node count of the expression after official compilation to Pure
-  EML and exact structural sharing (the frozen Goal 3 cost).
+A source operator can expand into many primitive EML nodes. Equivalent source forms can
+therefore have different exact EML DAG costs even when their AST sizes are similar.
 
-The EML DAG size is the quantity Goal 4 optimizes, because it is the canonical, official
-cost. A single source operator can expand into many primitive EML nodes (the `eml(x, y) =
-exp(x) − ln(y)` construction is not one-to-one with source operators), so two source
-expressions that are semantically equal can have very different EML DAG sizes. That gap is
-the opportunity Goal 4 exploits.
+## Why equality saturation can help
 
-## Why an e-graph helps
+An e-graph stores multiple source forms in shared equivalence classes. Documented rewrites
+add forms; cycle-safe extraction turns a bounded portion of that space back into concrete
+expressions; the frozen Goal 3 cost boundary ranks them.
 
-An e-graph represents many equivalent expressions in one shared structure. Equality
-saturation applies the rewrite rules to a fixed point (or a resource limit), populating the
-e-graph with every expression reachable from the input by the enabled rules. Extraction
-then enumerates concrete expressions from that structure, and the cost stage picks the one
-whose official EML DAG cost is smallest.
+The process is not learned. It has:
 
-The key point is that the *choice of source form* changes the EML DAG cost even when the
-mathematical value is identical. For example, the two operand orders of a commutative
-operator compile to structurally different EML DAGs with different amounts of sharing, so
-one order can be strictly cheaper than the other. The e-graph makes both orders available;
-extraction and the Goal 3 cost pick the cheaper one. No assumption and no approximation is
-involved — only a search over equivalent forms and an exact cost comparison.
+- a static rule catalogue;
+- explicit guards;
+- exact rational folding;
+- deterministic structural tie-breaks; and
+- externally configured limits.
 
-## Where the improvements come from
+The source expression is forcibly retained among the candidates. Thus the search can
+improve or preserve the official cost, but it cannot legitimately degrade it.
 
-### Easy identities and safe rewrites
+## Sources of reductions
 
-The safe rule library (branch-insensitive, enabled in both modes) supplies the
-assumption-free reductions:
+### Operand order and grouping
 
-- commutativity and associativity, which expose cheaper operand orders and groupings;
-- additive and multiplicative identities (`x + 0`, `x · 1`) and multiplication by zero,
-  which delete whole subtrees;
-- double negation and additive inverse, which cancel structure;
-- subtraction lowering (`a − b = a + (−b)`), whose backward orientation lets extraction
-  recover a `sub` node when that compiles to a smaller EML DAG.
+Addition and multiplication are commutative and associative under the finite-real source
+contract. Different orderings and groupings can expose different exact sharing after EML
+compilation. The cost boundary, not an AST heuristic, decides which retained form is
+cheapest.
 
-These never require a domain assumption and are the source of every improvement in
-`safe_real` mode.
+### Identities and cancellation
 
-### Constant folding
+The safe library includes additive and multiplicative identities, multiplication by zero,
+double negation, additive inverse, and subtraction lowering. Rules that delete an operand
+are scoped to finite real operands on the validated source domain; this assumption is
+documented in `EGRAPH_SEMANTICS.md`.
 
-Exact constant folding replaces an operator applied to exact rational constants with the
-exact result, using `fractions.Fraction` throughout. Folding removes operator nodes
-outright and is bounded: a result beyond a digit bound, a division by zero, a non-integer
-exponent, or zero raised to a non-positive power is declined and recorded, never
-approximated. Because a folded constant compiles to a smaller EML construction than the
-un-folded arithmetic, folding is a direct EML DAG reduction.
+Subtraction lowering is bidirectional. This lets extraction recover a `sub` node when the
+official subtraction formula is cheaper than an equivalent addition-of-negation form.
 
-### Domain-aware rewrites
+### Exact constant folding
 
-In `positive_real_formal` mode only, the guarded domain rules add reductions that are valid
-only under explicit assumptions — for example `log(exp(x)) → x` when `x` is declared real,
-or `exp(log(x)) → x` when `x` is declared positive. Each such rule fires only when a guard
-confirms the caller declared the required property; nothing is inferred from the shape of
-the expression. These rules can collapse large EML constructions (a `log`/`exp` pair expands
-into many primitive nodes), so where they apply they can produce the largest reductions —
-but strictly within the declared domain.
+Integer and rational folds use `fractions.Fraction`. Division by zero, non-integer power
+folds, zero to a non-positive power, exponents outside the configured bound, and results
+outside the exact digit bound are explicitly declined and counted. No float approximation
+or hidden simplifier participates.
 
-## Relationship between the layers
+### Guarded domain rules
 
-The pipeline composes these layers in a fixed order:
+The formal mode can collapse structures such as `log(exp(x))` or `exp(log(x))` only when a
+named guard confirms the needed declaration. Product-log, exponential-sum, and power rules
+retain their direction, branch flag, assumptions, and counterexample-backed justification
+in provenance.
 
-```
-source AST  --(compile)-->  e-graph expression
-     |                              |
-     |                     equality saturation (safe rules; + domain rules in formal mode)
-     |                              |
-     |                     cycle-safe bounded extraction  -->  candidate expressions
-     |                              |
-     |                     validation (compile / semantic / domain)  -->  valid candidates
-     |                              |
-     +----- Goal 3 exact EML DAG cost of input      Goal 3 exact EML DAG cost of candidates
-                              \            /
-                               deterministic ranking + selection
-```
+These gains are conditional on the declared real or positive-real domain and must not be
+reported as universal complex identities.
 
-Rule application widens the space of equivalent forms; extraction turns that space back into
-concrete expressions; the Goal 3 cost decides which form is cheapest. Compression is thus a
-*consequence* of searching equivalent forms and costing them officially — not a heuristic
-size estimate and not a learned model.
+## Exact scalable costing
 
-## Limitations
+Goal 4 does not materialize expanded EML trees in production:
 
-- **Resource constraints.** Saturation and extraction are bounded. A cheaper equivalent form
-  can exist beyond the iteration, node, depth, beam, candidate, or time limits and simply not
-  be found. Every stop reason is recorded.
-- **Candidate limits.** Extraction enumerates a bounded, beam-limited set of candidates. The
-  selected candidate is the best of those enumerated, not of all equivalent expressions.
-- **Rewrite limits.** Only the enabled rules participate. The safe library is intentionally
-  small, and the domain library is intentionally guarded; identities outside them are not
-  applied.
-- **Branch-sensitive assumptions.** Every domain-aware reduction is conditional on
-  caller-declared assumptions and is confined to `positive_real_formal` mode. Without those
-  assumptions, the corresponding reductions do not occur, by design.
+- EML DAG cost uses Goal 3's direct source-AST compiler and structural hash-consing.
+- EML tree size uses Goal 2's count-only counterparts of the frozen compiler formulas.
+- AST DAG and tree sizes use the frozen AST graph/statistics interfaces.
 
-The honest reading is therefore: Goal 4 compresses EML DAG cost by searching a bounded space
-of provably equivalent (or, in formal mode, assumption-conditioned) forms and selecting the
-cheapest under the official cost — a deterministic, auditable, non-ML procedure whose reach
-is exactly the reach of its rules and its resource budget.
+Materializing the recursive EML expansion would create an avoidable memory risk and would
+discard Goal 3's scalable direct-cost interface.
+
+## Validation layers
+
+Each selected form is supported by several independent checks:
+
+1. extraction metadata names the root e-class;
+2. non-mutating structural lookup finds the concrete expression in that root;
+3. the original source is independently found in the same root;
+4. the candidate compiles through the official direct EML DAG boundary;
+5. exact count-only construction succeeds; and
+6. deterministic real-domain probes find neither a value mismatch nor a definedness
+   mismatch and produce finite evidence.
+
+The e-class relationship is the formal evidence under the enabled rules and assumptions.
+The numeric layer is deliberately described as an audit: finitely many probes cannot prove
+a universal identity. Zero finite evidence is inconclusive, not valid.
+
+## Provenance representation
+
+Every e-graph-changing application is durable. A per-row rule catalog stores the rule ID,
+name, tier, mode, direction, justification, assumptions, branch flag, verifier flag, and
+substitution field order once. Compact application tuples then retain sequence, iteration,
+catalog index, guard outcome, source/result e-classes, substitution values, and detail.
+
+All no-op, guard-rejected, unsupported, and limit-stopped attempts remain in exact per-rule
+outcome aggregates. An ordered-log digest provides an integrity binding without inflating
+every row with repeated policy text.
+
+## Honest limitations
+
+- The candidate set is depth-, beam-, count-, node-, iteration-, and time-bounded.
+- A cheaper equivalent expression may exist outside the retained frontier.
+- Wall-clock limits can stop at different frontiers under different machine load.
+- Finite-real and declared-domain assumptions do not imply unrestricted complex
+  equivalence.
+- Unsupported trigonometric/hyperbolic rows are failures in the all-processed denominator,
+  not silently removed.
+- “Best” always means best among retained, validated candidates under the stated limits.

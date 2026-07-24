@@ -166,14 +166,23 @@ def match_in_eclass(egraph: EGraph, pattern: Pattern, eclass: EClassId) -> tuple
     return tuple(ordered)
 
 
-def search_pattern(egraph: EGraph, pattern: Pattern) -> tuple[Match, ...]:
-    """Return every match of ``pattern`` in ``egraph``; the pattern root must be an operator."""
+def search_pattern(
+    egraph: EGraph,
+    pattern: Pattern,
+    *,
+    max_matches: int | None = None,
+) -> tuple[Match, ...]:
+    """Return matches in deterministic order, optionally capped by ``max_matches``."""
     if not isinstance(pattern, PatternNode):
         raise PatternError("a searchable pattern must have an operator at its root")
+    if max_matches is not None and (type(max_matches) is not int or max_matches < 1):
+        raise PatternError("max_matches must be null or a positive integer")
     matches: list[Match] = []
     for root in egraph.roots():
         for substitution in match_in_eclass(egraph, pattern, root):
             matches.append(Match(eclass=root, substitution=substitution))
+            if max_matches is not None and len(matches) >= max_matches:
+                return tuple(matches)
     return tuple(matches)
 
 

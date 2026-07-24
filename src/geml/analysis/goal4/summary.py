@@ -1,15 +1,4 @@
-"""Deterministic, claim-disciplined summary of Goal 4 experiment rows.
-
-This module reads the JSONL rows emitted by :mod:`geml.experiments.goal4.run` and produces
-mode-separated statistics with explicit denominators.  Two denominators are always reported
-side by side: a success-only view (over rows that produced an official cost improvement
-measurement) and an all-processed view (over every retained row, including failures).  The
-two rewrite modes are never merged, averaged, or mixed.
-
-Nothing here asserts optimality.  An "improvement" is only the difference between the
-official Goal 3 EML DAG cost of the input and of the best enumerated, validated candidate
-under the configured resource limits.
-"""
+"""Strict, denominator-explicit analysis of Goal 4 result rows."""
 
 from __future__ import annotations
 
@@ -17,56 +6,61 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 
-_OPTIMIZED = "optimized"
-_UNCHANGED = "unchanged"
-_COSTED_STATUSES = frozenset({_OPTIMIZED, _UNCHANGED})
+from geml.egraph.policy import RewriteMode
+from geml.experiments.goal4.run import ROW_SCHEMA_VERSION, StageStatus
+
+_SUCCESS_STATUSES = frozenset({StageStatus.OPTIMIZED.value, StageStatus.UNCHANGED.value})
+_EXPECTED_MODES = frozenset(mode.value for mode in RewriteMode)
 
 
 class SummaryError(ValueError):
-    """A Goal 4 result row is missing a required field or is malformed."""
+    """A result row or result set violates the Goal 4 audit contract."""
 
 
 @dataclass(frozen=True, slots=True)
 class ResultRow:
-    """One validated Goal 4 result row projected to the fields the analysis needs.
+    """Strict analysis projection of one retained experiment row."""
 
-    ``cost_before`` and ``cost_after`` are present only for rows that reached official cost
-    evaluation; every other field is always present so failed rows remain fully accountable.
-    """
-
+    run_id: str
     expression_id: str
     rewrite_mode: str
     domain_mode: str
     operator_family: str
     split: str
     size_bucket: str
+    difficulty_profile: str
     rule_library: str
     stage_status: str
     saturation_status: str | None
     extraction_status: str | None
     validation_status: str | None
     timeout: bool
+    failure_stage: str | None
     failure_reason: str | None
     rewrites_applied: int | None
     candidate_count: int | None
     branch_sensitive_applications: int
     applied_rules: Mapping[str, int]
+    validation_failure_count: int
     cost_before: int | None
     cost_after: int | None
+    wall_seconds: float | None
+    rss_bytes_after: int | None
 
     @property
     def costed(self) -> bool:
-        """Return whether the row carries a before/after official cost measurement."""
         return self.cost_before is not None and self.cost_after is not None
 
     @property
     def improved(self) -> bool:
-        """Return whether the best candidate strictly reduced the official EML DAG cost."""
         return self.costed and self.cost_after < self.cost_before  # type: ignore[operator]
 
     @property
+    def degraded(self) -> bool:
+        return self.costed and self.cost_after > self.cost_before  # type: ignore[operator]
+
+    @property
     def absolute_improvement(self) -> int | None:
-        """Return the exact cost reduction, or ``None`` when uncosted."""
         if not self.costed:
             return None
         return self.cost_before - self.cost_after  # type: ignore[operator]
@@ -78,81 +72,274 @@ def _require(row: Mapping[str, object], key: str) -> object:
     return row[key]
 
 
-def _as_int_or_none(value: object) -> int | None:
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise SummaryError(f"expected an integer or null, got {value!r}")
+def _required_str(row: Mapping[str, object], key: str) -> str:
+    value = _require(row, key)
+    if not isinstance(value, str) or not value:
+        raise SummaryError(f"{key} must be a non-blank string")
     return value
 
 
+def _optional_str(value: object, *, field: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise SummaryError(f"{field} must be a string or null")
+    return value
+
+
+def _int_or_none(
+    value: object,
+    *,
+    field: str,
+    minimum: int = 0,
+) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise SummaryError(f"{field} must be null or an integer greater than or equal to {minimum}")
+    return value
+
+
+def _number_or_none(
+    value: object,
+    *,
+    field: str,
+) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise SummaryError(f"{field} must be a finite nonnegative number or null")
+    number = float(value)
+    if number < 0 or number != number or number == float("inf"):
+        raise SummaryError(f"{field} must be a finite nonnegative number or null")
+    return number
+
+
+def _positive_mapping(value: object, *, field: str) -> dict[str, int]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise SummaryError(f"{field} must be a mapping")
+    result: dict[str, int] = {}
+    for key, count in value.items():
+        if (
+            not isinstance(key, str)
+            or not key
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count < 1
+        ):
+            raise SummaryError(f"{field} must map non-blank strings to positive integers")
+        result[key] = count
+    return result
+
+
 def parse_row(row: Mapping[str, object]) -> ResultRow:
-    """Project one raw JSON row into a typed :class:`ResultRow`."""
-    provenance = row.get("provenance") or {}
-    if not isinstance(provenance, Mapping):
-        raise SummaryError("provenance must be a mapping when present")
-    applied = provenance.get("applied_rules") or {}
-    if not isinstance(applied, Mapping):
-        raise SummaryError("applied_rules must be a mapping when present")
-    branch_sensitive = provenance.get("branch_sensitive_applications") or 0
-    if isinstance(branch_sensitive, bool) or not isinstance(branch_sensitive, int):
-        raise SummaryError("branch_sensitive_applications must be an integer")
+    """Validate and project one row without coercing malformed values."""
+    if not isinstance(row, Mapping):
+        raise SummaryError("each result row must be a mapping")
+    if _require(row, "schema_version") != ROW_SCHEMA_VERSION:
+        raise SummaryError("result row has an incompatible schema_version")
+
+    rewrite_mode = _required_str(row, "rewrite_mode")
+    if rewrite_mode not in _EXPECTED_MODES:
+        raise SummaryError(f"unknown rewrite_mode {rewrite_mode!r}")
+    stage_status = _required_str(row, "stage_status")
+    if stage_status not in {status.value for status in StageStatus}:
+        raise SummaryError(f"unknown stage_status {stage_status!r}")
+    timeout = _require(row, "timeout")
+    if type(timeout) is not bool:
+        raise SummaryError("timeout must be a boolean")
+
+    provenance = row.get("provenance")
+    if provenance is None:
+        applied_rules: dict[str, int] = {}
+        branch_sensitive = 0
+    else:
+        if not isinstance(provenance, Mapping):
+            raise SummaryError("provenance must be a mapping or null")
+        if (
+            provenance.get("application_log_complete") is not True
+            or provenance.get("attempt_aggregates_complete") is not True
+        ):
+            raise SummaryError(
+                "present provenance must declare complete application and attempt accounting"
+            )
+        applied_rules = _positive_mapping(
+            provenance.get("applied_rules"),
+            field="provenance.applied_rules",
+        )
+        branch_sensitive = _int_or_none(
+            provenance.get("branch_sensitive_applications", 0),
+            field="branch_sensitive_applications",
+        )
+        assert branch_sensitive is not None
+
+    validation_failures = row.get("validation_failures")
+    validation_failure_counts = _positive_mapping(
+        validation_failures,
+        field="validation_failures",
+    )
+    before = _int_or_none(
+        row.get("eml_dag_cost_before"),
+        field="eml_dag_cost_before",
+        minimum=1,
+    )
+    after = _int_or_none(
+        row.get("eml_dag_cost_after"),
+        field="eml_dag_cost_after",
+        minimum=1,
+    )
+    if before is None and after is not None:
+        raise SummaryError("a cost_after cannot exist without cost_before")
+    costed = before is not None and after is not None
+    recorded_improvement = row.get("absolute_improvement")
+    if costed:
+        if (
+            isinstance(recorded_improvement, bool)
+            or not isinstance(recorded_improvement, int)
+            or recorded_improvement != before - after
+        ):
+            raise SummaryError("absolute_improvement does not match before - after")
+    elif recorded_improvement is not None:
+        raise SummaryError("uncosted rows cannot report absolute_improvement")
+
+    failure_reason = _optional_str(
+        row.get("failure_reason"),
+        field="failure_reason",
+    )
+    if stage_status in _SUCCESS_STATUSES:
+        if not costed:
+            raise SummaryError("successful rows require before and after costs")
+        if failure_reason is not None:
+            raise SummaryError("successful rows cannot carry a failure_reason")
+        if stage_status == StageStatus.OPTIMIZED.value and not after < before:
+            raise SummaryError("optimized rows require a strict cost reduction")
+        if stage_status == StageStatus.UNCHANGED.value and after != before:
+            raise SummaryError("unchanged rows require equal before and after costs")
+    if stage_status == StageStatus.DEGRADED_REJECTED.value and (not costed or not after > before):
+        raise SummaryError("degraded_rejected rows require after > before")
+
+    resources = _require(row, "resources")
+    if not isinstance(resources, Mapping):
+        raise SummaryError("resources must be a mapping")
+    wall_seconds = _number_or_none(
+        resources.get("wall_seconds"),
+        field="resources.wall_seconds",
+    )
+    rss_after = _int_or_none(
+        resources.get("rss_bytes_after"),
+        field="resources.rss_bytes_after",
+    )
     return ResultRow(
-        expression_id=str(_require(row, "expression_id")),
-        rewrite_mode=str(_require(row, "rewrite_mode")),
-        domain_mode=str(row.get("domain_mode", "")),
-        operator_family=str(row.get("operator_family", "")),
-        split=str(row.get("split", "")),
-        size_bucket=str(row.get("size_bucket", "")),
-        rule_library=str(row.get("rule_library", "")),
-        stage_status=str(_require(row, "stage_status")),
-        saturation_status=_optional_str(row.get("saturation_status")),
-        extraction_status=_optional_str(row.get("extraction_status")),
-        validation_status=_optional_str(row.get("validation_status")),
-        timeout=bool(row.get("timeout", False)),
-        failure_reason=_optional_str(row.get("failure_reason")),
-        rewrites_applied=_as_int_or_none(row.get("rewrites_applied")),
-        candidate_count=_as_int_or_none(row.get("candidate_count")),
+        run_id=_required_str(row, "run_id"),
+        expression_id=_required_str(row, "expression_id"),
+        rewrite_mode=rewrite_mode,
+        domain_mode=_required_str(row, "domain_mode"),
+        operator_family=_required_str(row, "operator_family"),
+        split=_required_str(row, "split"),
+        size_bucket=_required_str(row, "size_bucket"),
+        difficulty_profile=_required_str(row, "difficulty_profile"),
+        rule_library=_required_str(row, "rule_library"),
+        stage_status=stage_status,
+        saturation_status=_optional_str(
+            row.get("saturation_status"),
+            field="saturation_status",
+        ),
+        extraction_status=_optional_str(
+            row.get("extraction_status"),
+            field="extraction_status",
+        ),
+        validation_status=_optional_str(
+            row.get("validation_status"),
+            field="validation_status",
+        ),
+        timeout=timeout,
+        failure_stage=_optional_str(
+            row.get("failure_stage"),
+            field="failure_stage",
+        ),
+        failure_reason=failure_reason,
+        rewrites_applied=_int_or_none(
+            row.get("rewrites_applied"),
+            field="rewrites_applied",
+        ),
+        candidate_count=_int_or_none(
+            row.get("candidate_count"),
+            field="candidate_count",
+        ),
         branch_sensitive_applications=branch_sensitive,
-        applied_rules={str(name): int(count) for name, count in applied.items()},
-        cost_before=_as_int_or_none(row.get("eml_dag_cost_before")),
-        cost_after=_as_int_or_none(row.get("eml_dag_cost_after")),
+        applied_rules=applied_rules,
+        validation_failure_count=sum(validation_failure_counts.values()),
+        cost_before=before,
+        cost_after=after,
+        wall_seconds=wall_seconds,
+        rss_bytes_after=rss_after,
     )
 
 
-def _optional_str(value: object) -> str | None:
-    return None if value is None else str(value)
-
-
-def parse_rows(rows: Iterable[Mapping[str, object]]) -> tuple[ResultRow, ...]:
-    """Project every raw row, preserving order and dropping nothing."""
-    return tuple(parse_row(row) for row in rows)
+def parse_rows(
+    rows: Iterable[Mapping[str, object]],
+) -> tuple[ResultRow, ...]:
+    """Validate a complete paired-mode result set and reject duplicates."""
+    parsed = tuple(parse_row(row) for row in rows)
+    if not parsed:
+        return ()
+    run_ids = {row.run_id for row in parsed}
+    if len(run_ids) != 1:
+        raise SummaryError("result rows mix multiple run_id values")
+    seen: set[tuple[str, str]] = set()
+    by_expression: dict[str, list[ResultRow]] = {}
+    for row in parsed:
+        key = (row.expression_id, row.rewrite_mode)
+        if key in seen:
+            raise SummaryError(f"duplicate result work unit {key!r}")
+        seen.add(key)
+        by_expression.setdefault(row.expression_id, []).append(row)
+    for expression_id, expression_rows in by_expression.items():
+        modes = {row.rewrite_mode for row in expression_rows}
+        if modes != _EXPECTED_MODES:
+            raise SummaryError(
+                f"expression {expression_id!r} does not have exactly both rewrite modes"
+            )
+        metadata = {
+            (
+                row.domain_mode,
+                row.operator_family,
+                row.split,
+                row.size_bucket,
+                row.difficulty_profile,
+            )
+            for row in expression_rows
+        }
+        if len(metadata) != 1:
+            raise SummaryError(f"expression {expression_id!r} has inconsistent cross-mode metadata")
+    return parsed
 
 
 @dataclass(frozen=True, slots=True)
 class ExactRatio:
-    """A ratio stored as both an exact reduced fraction and a float rendering."""
+    """An exact reduced ratio with a convenience float rendering."""
 
     numerator: int
     denominator: int
 
     @classmethod
     def of(cls, numerator: int, denominator: int) -> ExactRatio:
-        """Build a reduced ratio; a zero denominator yields ``0/0`` sentinel."""
         if denominator == 0:
             return cls(0, 0)
-        fraction = Fraction(numerator, denominator)
-        return cls(fraction.numerator, fraction.denominator)
+        value = Fraction(numerator, denominator)
+        return cls(value.numerator, value.denominator)
+
+    @classmethod
+    def from_fraction(cls, value: Fraction) -> ExactRatio:
+        return cls(value.numerator, value.denominator)
 
     @property
     def value(self) -> float | None:
-        """Return the float value, or ``None`` when the denominator is zero."""
-        if self.denominator == 0:
-            return None
-        return self.numerator / self.denominator
+        return None if self.denominator == 0 else self.numerator / self.denominator
 
     def as_dict(self) -> dict[str, object]:
-        """Return a JSON-friendly copy with both exact and float renderings."""
         return {
             "exact": f"{self.numerator}/{self.denominator}",
             "value": self.value,
@@ -161,28 +348,41 @@ class ExactRatio:
 
 @dataclass(frozen=True, slots=True)
 class GroupSummary:
-    """Success-only and all-processed statistics for one group of rows.
-
-    Every rate carries its explicit denominator.  ``success_rate`` is over costed rows;
-    ``processing_success_rate`` is over every processed row in the group, so failures stay
-    visible in the denominator.
-    """
+    """Outcome, coverage, and after-rate metrics for one single-mode group."""
 
     label: str
     rewrite_mode: str
     processed_count: int
     costed_count: int
     improved_count: int
+    unchanged_count: int
+    degraded_count: int
     failure_count: int
     timeout_count: int
-    total_absolute_improvement: int
-    success_rate: ExactRatio
-    processing_success_rate: ExactRatio
-    mean_absolute_improvement_over_costed: ExactRatio
-    mean_relative_improvement_permille_over_improved: ExactRatio
+    signed_total_improvement: int
+    positive_total_improvement: int
+    improved_over_costed: ExactRatio
+    improved_over_processed: ExactRatio
+    costed_over_processed: ExactRatio
+    mean_signed_improvement_over_costed: ExactRatio
+    mean_relative_improvement_over_costed: ExactRatio
+
+    @property
+    def success_rate(self) -> ExactRatio:
+        """Compatibility name for the explicitly costed denominator."""
+        return self.improved_over_costed
+
+    @property
+    def processing_success_rate(self) -> ExactRatio:
+        """Compatibility name for cost coverage, not an all-processed after-rate."""
+        return self.costed_over_processed
+
+    @property
+    def total_absolute_improvement(self) -> int:
+        """Compatibility name; signed so degradation cannot be hidden."""
+        return self.signed_total_improvement
 
     def as_dict(self) -> dict[str, object]:
-        """Return a JSON-friendly copy."""
         return {
             "label": self.label,
             "rewrite_mode": self.rewrite_mode,
@@ -190,82 +390,112 @@ class GroupSummary:
                 "processed": self.processed_count,
                 "costed": self.costed_count,
                 "improved": self.improved_count,
+                "unchanged": self.unchanged_count,
+                "degraded": self.degraded_count,
                 "failures": self.failure_count,
                 "timeouts": self.timeout_count,
             },
-            "total_absolute_improvement": self.total_absolute_improvement,
-            "improved_over_costed": self.success_rate.as_dict(),
-            "costed_over_processed": self.processing_success_rate.as_dict(),
-            "mean_absolute_improvement_over_costed": (
-                self.mean_absolute_improvement_over_costed.as_dict()
+            "signed_total_improvement": self.signed_total_improvement,
+            "positive_total_improvement": self.positive_total_improvement,
+            "improved_over_costed": self.improved_over_costed.as_dict(),
+            "improved_over_processed": self.improved_over_processed.as_dict(),
+            "costed_over_processed": self.costed_over_processed.as_dict(),
+            "mean_signed_improvement_over_costed": (
+                self.mean_signed_improvement_over_costed.as_dict()
             ),
-            "mean_relative_improvement_permille_over_improved": (
-                self.mean_relative_improvement_permille_over_improved.as_dict()
+            "mean_relative_improvement_over_costed": (
+                self.mean_relative_improvement_over_costed.as_dict()
             ),
         }
 
 
-def summarize_group(label: str, rewrite_mode: str, rows: Sequence[ResultRow]) -> GroupSummary:
-    """Summarize one already-filtered, single-mode group of rows.
-
-    The caller is responsible for restricting ``rows`` to a single rewrite mode; this
-    function never mixes modes.
-    """
+def summarize_group(
+    label: str,
+    rewrite_mode: str,
+    rows: Sequence[ResultRow],
+) -> GroupSummary:
     processed = len(rows)
     costed = [row for row in rows if row.costed]
     improved = [row for row in costed if row.improved]
-    failures = [row for row in rows if row.stage_status not in _COSTED_STATUSES]
-    timeouts = [row for row in rows if row.timeout]
-    total_improvement = sum(row.absolute_improvement or 0 for row in improved)
-    relative_permille_sum = sum(_relative_permille(row) for row in improved if row.cost_before)
+    unchanged = [row for row in costed if row.cost_before == row.cost_after]
+    degraded = [row for row in costed if row.degraded]
+    failures = [row for row in rows if row.stage_status not in _SUCCESS_STATUSES]
+    signed_total = sum(row.absolute_improvement or 0 for row in costed)
+    positive_total = sum(row.absolute_improvement or 0 for row in improved)
+    relative_sum = sum(
+        (
+            Fraction(row.absolute_improvement or 0, row.cost_before)
+            for row in costed
+            if row.cost_before is not None
+        ),
+        start=Fraction(),
+    )
+    mean_relative = Fraction(0, 1) if not costed else relative_sum / len(costed)
     return GroupSummary(
         label=label,
         rewrite_mode=rewrite_mode,
         processed_count=processed,
         costed_count=len(costed),
         improved_count=len(improved),
+        unchanged_count=len(unchanged),
+        degraded_count=len(degraded),
         failure_count=len(failures),
-        timeout_count=len(timeouts),
-        total_absolute_improvement=total_improvement,
-        success_rate=ExactRatio.of(len(improved), len(costed)),
-        processing_success_rate=ExactRatio.of(len(costed), processed),
-        mean_absolute_improvement_over_costed=ExactRatio.of(total_improvement, len(costed)),
-        mean_relative_improvement_permille_over_improved=ExactRatio.of(
-            relative_permille_sum, len(improved)
+        timeout_count=sum(1 for row in rows if row.timeout),
+        signed_total_improvement=signed_total,
+        positive_total_improvement=positive_total,
+        improved_over_costed=ExactRatio.of(len(improved), len(costed)),
+        improved_over_processed=ExactRatio.of(len(improved), processed),
+        costed_over_processed=ExactRatio.of(len(costed), processed),
+        mean_signed_improvement_over_costed=ExactRatio.of(
+            signed_total,
+            len(costed),
         ),
+        mean_relative_improvement_over_costed=ExactRatio.from_fraction(mean_relative),
     )
-
-
-def _relative_permille(row: ResultRow) -> int:
-    """Return the per-mille relative improvement as an exact rounded integer."""
-    if not row.cost_before:
-        return 0
-    improvement = row.absolute_improvement or 0
-    return (improvement * 1000) // row.cost_before
 
 
 _STRATIFICATION_AXES: tuple[str, ...] = (
     "operator_family",
     "size_bucket",
+    "difficulty_profile",
     "split",
     "domain_mode",
     "stage_status",
     "saturation_status",
+    "extraction_status",
+    "validation_status",
 )
 
 
 @dataclass(frozen=True, slots=True)
-class ModeReport:
-    """The full stratified summary for one rewrite mode."""
+class OutcomeExample:
+    expression_id: str
+    stage_status: str
+    absolute_improvement: int | None
+    failure_reason: str | None
+    applied_rules: tuple[str, ...]
 
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "expression_id": self.expression_id,
+            "stage_status": self.stage_status,
+            "absolute_improvement": self.absolute_improvement,
+            "failure_reason": self.failure_reason,
+            "applied_rules": list(self.applied_rules),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ModeReport:
     rewrite_mode: str
     overall: GroupSummary
     nontrivial: GroupSummary
     identity_heavy: GroupSummary
     strata: Mapping[str, Mapping[str, GroupSummary]]
+    top_improvements: tuple[OutcomeExample, ...]
+    top_failures: tuple[OutcomeExample, ...]
 
     def as_dict(self) -> dict[str, object]:
-        """Return a JSON-friendly copy."""
         return {
             "rewrite_mode": self.rewrite_mode,
             "overall": self.overall.as_dict(),
@@ -275,49 +505,55 @@ class ModeReport:
                 axis: {key: group.as_dict() for key, group in groups.items()}
                 for axis, groups in self.strata.items()
             },
+            "top_improvements": [example.as_dict() for example in self.top_improvements],
+            "top_failures": [example.as_dict() for example in self.top_failures],
         }
 
 
 @dataclass(frozen=True, slots=True)
 class Goal4Summary:
-    """The complete Goal 4 summary, always separated by rewrite mode."""
-
+    run_id: str | None
     total_rows: int
+    total_expressions: int
     modes: Mapping[str, ModeReport]
 
     def as_dict(self) -> dict[str, object]:
-        """Return a JSON-friendly copy."""
         return {
+            "run_id": self.run_id,
             "total_rows": self.total_rows,
+            "total_expressions": self.total_expressions,
             "modes": {mode: report.as_dict() for mode, report in self.modes.items()},
         }
 
 
 def _is_nontrivial(row: ResultRow) -> bool:
-    """Return whether a row's saturation applied at least one rewrite."""
     return bool(row.rewrites_applied)
 
 
 def _is_identity_heavy(row: ResultRow) -> bool:
-    """Return whether a row's improvement came mainly from identity/fold rules.
-
-    A row is identity-heavy when it improved and every applied rule name contains one of
-    the identity, inverse, fold, or zero markers; this is a descriptive label, not a claim
-    about optimality.
-    """
     if not row.improved or not row.applied_rules:
         return False
     markers = ("ZERO", "ONE", "INVERSE", "NEG", "FOLD")
-    return all(any(marker in name.upper() for marker in markers) for name in row.applied_rules)
+    applied = [name for name, count in row.applied_rules.items() if count > 0]
+    return bool(applied) and all(
+        any(marker in name.upper() for marker in markers) for name in applied
+    )
 
 
-def summarize(rows: Iterable[Mapping[str, object]]) -> Goal4Summary:
-    """Build the complete mode-separated Goal 4 summary from raw JSON rows.
+def _example(row: ResultRow) -> OutcomeExample:
+    return OutcomeExample(
+        expression_id=row.expression_id,
+        stage_status=row.stage_status,
+        absolute_improvement=row.absolute_improvement,
+        failure_reason=row.failure_reason,
+        applied_rules=tuple(sorted(row.applied_rules)),
+    )
 
-    Rows are grouped by rewrite mode and never mixed.  For each mode the summary reports an
-    overall group, a nontrivial subgroup, an identity-heavy subgroup, and one group per
-    stratum value along every stratification axis.
-    """
+
+def summarize(
+    rows: Iterable[Mapping[str, object]],
+) -> Goal4Summary:
+    """Build a complete paired-mode summary with both required denominators."""
     parsed = parse_rows(rows)
     by_mode: dict[str, list[ResultRow]] = {}
     for row in parsed:
@@ -332,18 +568,87 @@ def summarize(rows: Iterable[Mapping[str, object]]) -> Goal4Summary:
             for row in mode_rows:
                 groups.setdefault(str(getattr(row, axis)), []).append(row)
             strata[axis] = {
-                key: summarize_group(f"{axis}={key}", mode, sorted_rows)
-                for key, sorted_rows in sorted(groups.items())
+                key: summarize_group(f"{axis}={key}", mode, grouped)
+                for key, grouped in sorted(groups.items())
             }
+        improvements = sorted(
+            (row for row in mode_rows if row.improved),
+            key=lambda row: (
+                -(row.absolute_improvement or 0),
+                row.expression_id,
+            ),
+        )
+        failures = sorted(
+            (row for row in mode_rows if row.stage_status not in _SUCCESS_STATUSES),
+            key=lambda row: (row.stage_status, row.expression_id),
+        )
         reports[mode] = ModeReport(
             rewrite_mode=mode,
             overall=summarize_group("overall", mode, mode_rows),
             nontrivial=summarize_group(
-                "nontrivial", mode, [row for row in mode_rows if _is_nontrivial(row)]
+                "nontrivial",
+                mode,
+                [row for row in mode_rows if _is_nontrivial(row)],
             ),
             identity_heavy=summarize_group(
-                "identity_heavy", mode, [row for row in mode_rows if _is_identity_heavy(row)]
+                "identity_heavy",
+                mode,
+                [row for row in mode_rows if _is_identity_heavy(row)],
             ),
             strata=strata,
+            top_improvements=tuple(_example(row) for row in improvements[:10]),
+            top_failures=tuple(_example(row) for row in failures[:10]),
         )
-    return Goal4Summary(total_rows=len(parsed), modes=reports)
+    return Goal4Summary(
+        run_id=None if not parsed else parsed[0].run_id,
+        total_rows=len(parsed),
+        total_expressions=len({row.expression_id for row in parsed}),
+        modes=reports,
+    )
+
+
+def write_analysis_artifacts(
+    rows_path: str,
+    output_dir: str,
+) -> tuple[str, ...]:
+    """Write the complete summary, failure audit, plot data, and six plots.
+
+    Production rows are read-only inputs.  JSON publication is create-only and permits
+    only a byte-identical resumed result.
+    """
+    from pathlib import Path
+
+    from geml.analysis.goal4.failures import analyze_failures
+    from geml.experiments.goal4.runtime import atomic_write_json, iter_jsonl
+    from geml.plots.goal4 import build_plot_data, render_plots
+
+    summary = summarize(iter_jsonl(rows_path))
+    failures = analyze_failures(iter_jsonl(rows_path))
+    plot_data = build_plot_data(iter_jsonl(rows_path))
+    directory = Path(output_dir)
+    paths = (
+        atomic_write_json(directory / "summary.json", summary.as_dict()),
+        atomic_write_json(directory / "failures.json", failures.as_dict()),
+        atomic_write_json(directory / "plot_data.json", plot_data.as_dict()),
+        *render_plots(plot_data, directory / "plots"),
+    )
+    return tuple(str(path) for path in paths)
+
+
+def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Analyze a complete Goal 4 rows artifact.")
+    parser.add_argument("--rows", required=True)
+    parser.add_argument("--output-dir", required=True)
+    arguments = parser.parse_args(argv)
+    for path in write_analysis_artifacts(
+        arguments.rows,
+        arguments.output_dir,
+    ):
+        print(path)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

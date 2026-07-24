@@ -66,8 +66,13 @@ class TestOperatorVocabulary:
             ENode(op=Operator.NEG, children=(EClassId(0),), payload="x")
 
     def test_variable_requires_non_blank_name(self):
-        with pytest.raises(MalformedNodeError, match="non-blank string payload"):
+        with pytest.raises(MalformedNodeError, match="ASCII identifier"):
             ENode(op=Operator.VARIABLE, payload="  ")
+
+    @pytest.mark.parametrize("name", ["1x", "x+y", "log(x)", "é"])
+    def test_variable_rejects_concealed_source_syntax(self, name):
+        with pytest.raises(MalformedNodeError, match="ASCII identifier"):
+            var(name)
 
     def test_constant_requires_exact_value(self):
         with pytest.raises(MalformedNodeError, match="exact Fraction payload"):
@@ -76,6 +81,14 @@ class TestOperatorVocabulary:
     def test_float_constants_are_rejected(self):
         with pytest.raises(MalformedNodeError, match="constants must be exact"):
             const(0.5)
+
+    def test_boolean_constants_are_rejected(self):
+        with pytest.raises(MalformedNodeError, match="constants must be exact"):
+            const(True)
+
+    def test_negative_eclass_child_is_rejected(self):
+        with pytest.raises(MalformedNodeError, match="nonnegative"):
+            ENode(op=Operator.NEG, children=(EClassId(-1),))
 
     def test_rational_constants_are_exact(self):
         assert const("1/3").payload == Fraction(1, 3)
@@ -166,6 +179,15 @@ class TestInsertionAndSharing:
     def test_distinct_expressions_are_not_shared(self):
         graph = EGraph(limits=_tiny_limits())
         assert graph.add(var("x")) != graph.add(var("y"))
+
+    def test_lookup_expr_is_nonmutating_and_exact(self):
+        graph = EGraph(limits=_tiny_limits())
+        expression = add(var("x"), const(1))
+        root = graph.add(expression)
+        signature = graph.signature()
+        assert graph.lookup_expr(expression) == root
+        assert graph.lookup_expr(add(var("x"), const(2))) is None
+        assert graph.signature() == signature
 
     def test_all_operators_insert(self):
         graph = EGraph(limits=_tiny_limits())

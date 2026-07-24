@@ -82,6 +82,8 @@ def extract_candidates(
     egraph: EGraph,
     root: EClassId,
     limits: ExtractionLimits | None = None,
+    *,
+    required_expressions: tuple[Expr, ...] = (),
 ) -> ExtractionResult:
     """Enumerate candidate expressions for ``root`` under ``limits``.
 
@@ -92,10 +94,22 @@ def extract_candidates(
     if not isinstance(egraph, EGraph):
         raise TypeError("extract_candidates requires an EGraph")
     active_limits = limits if limits is not None else ExtractionLimits()
+    if not isinstance(required_expressions, tuple) or any(
+        not isinstance(expression, Expr) for expression in required_expressions
+    ):
+        raise TypeError("required_expressions must be a tuple of Expr values")
     root_id = egraph.find(root)
 
     extractor = CycleSafeExtractor(egraph, active_limits)
     expressions, telemetry = extractor.enumerate(root_id)
+    expressions, telemetry = _retain_required(
+        egraph,
+        root_id,
+        expressions,
+        required_expressions,
+        active_limits,
+        telemetry,
+    )
 
     candidates = tuple(
         Candidate(
@@ -120,6 +134,52 @@ def extract_candidates(
         nodes_visited=telemetry.nodes_visited,
         iterations=telemetry.iterations,
         elapsed_seconds=telemetry.elapsed_seconds,
+    )
+
+
+def _retain_required(
+    egraph: EGraph,
+    root: EClassId,
+    expressions: tuple[Expr, ...],
+    required: tuple[Expr, ...],
+    limits: ExtractionLimits,
+    telemetry: EnumerationTelemetry,
+) -> tuple[tuple[Expr, ...], EnumerationTelemetry]:
+    """Retain caller-designated root members as safety anchors.
+
+    The experiment designates the source expression as one such anchor.  Including it
+    guarantees that bounded enumeration cannot force selection of a more expensive form.
+    Required expressions must already be present in the requested root e-class; this helper
+    never mutates the e-graph.
+    """
+    required_by_signature: dict[str, Expr] = {}
+    for expression in required:
+        found = egraph.lookup_expr(expression)
+        if found is None or egraph.find(found) != root:
+            raise ValueError("a required expression is not present in the extraction root")
+        required_by_signature.setdefault(expr_signature(expression), expression)
+    if len(required_by_signature) > limits.max_candidates:
+        raise ValueError("required expressions exceed the configured candidate limit")
+
+    merged = {expr_signature(expression): expression for expression in expressions}
+    merged.update(required_by_signature)
+    ordered_keys = sorted(merged)
+    if len(ordered_keys) <= limits.max_candidates:
+        return tuple(merged[key] for key in ordered_keys), telemetry
+
+    optional_keys = [key for key in ordered_keys if key not in required_by_signature]
+    keep = set(required_by_signature)
+    keep.update(optional_keys[: limits.max_candidates - len(keep)])
+    retained = tuple(merged[key] for key in ordered_keys if key in keep)
+    return (
+        retained,
+        EnumerationTelemetry(
+            nodes_visited=telemetry.nodes_visited,
+            iterations=telemetry.iterations,
+            elapsed_seconds=telemetry.elapsed_seconds,
+            exhaustive=False,
+            halted_status=telemetry.halted_status,
+        ),
     )
 
 

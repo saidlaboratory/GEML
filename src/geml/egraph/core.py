@@ -216,7 +216,47 @@ class EGraph:
 
     def lookup(self, node: ENode) -> EClassId | None:
         """Return the e-class holding a node congruent to ``node``, if any."""
-        return self._hashcons.get(self.canonicalize_node(node))
+        result = self._hashcons.get(self.canonicalize_node(node))
+        return None if result is None else self.find(result)
+
+    def lookup_expr(self, expr: Expr) -> EClassId | None:
+        """Return the class containing an existing expression without mutating the graph.
+
+        This is the validation counterpart of :meth:`add`: it performs the same iterative
+        post-order construction of e-node keys, but returns ``None`` as soon as any node is
+        absent.  Candidate validation uses it to prove membership independently of
+        extraction metadata.
+        """
+        if not isinstance(expr, Expr):
+            raise EGraphError("EGraph.lookup_expr accepts only an Expr tree")
+
+        memo: dict[int, EClassId | None] = {}
+        stack: list[tuple[Expr, bool]] = [(expr, False)]
+        while stack:
+            current, expanded = stack.pop()
+            key = id(current)
+            if key in memo:
+                continue
+            if not expanded:
+                stack.append((current, True))
+                for child in reversed(current.children):
+                    stack.append((child, False))
+                continue
+            children: list[EClassId] = []
+            missing = False
+            for child in current.children:
+                child_class = memo[id(child)]
+                if child_class is None:
+                    missing = True
+                    break
+                children.append(child_class)
+            if missing:
+                memo[key] = None
+                continue
+            memo[key] = self.lookup(
+                ENode(op=current.op, children=tuple(children), payload=current.payload)
+            )
+        return memo[id(expr)]
 
     def eclass(self, element: EClassId) -> EClass:
         """Return an immutable snapshot of the e-class containing ``element``."""

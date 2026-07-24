@@ -39,6 +39,7 @@ from geml.egraph.provenance import (
     ProvenanceLog,
     RewriteDirection,
 )
+from geml.eml.ir import is_valid_source_variable_name
 
 if TYPE_CHECKING:
     from geml.egraph.core import EGraph
@@ -73,6 +74,29 @@ class AssumptionEnvironment:
 
     declarations: tuple[tuple[str, frozenset[Assumption]], ...] = ()
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.declarations, tuple):
+            raise TypeError("assumption declarations must be a tuple")
+        names: list[str] = []
+        for declaration in self.declarations:
+            if not isinstance(declaration, tuple) or len(declaration) != 2:
+                raise TypeError("each assumption declaration must be a (name, assumptions) pair")
+            name, assumptions = declaration
+            if not is_valid_source_variable_name(name):
+                raise ValueError(f"invalid source variable name in assumptions: {name!r}")
+            if not isinstance(assumptions, frozenset) or any(
+                not isinstance(value, Assumption) for value in assumptions
+            ):
+                raise TypeError("declared assumptions must be a frozenset of Assumption values")
+            closed: set[Assumption] = set()
+            for assumption in assumptions:
+                closed |= _ASSUMPTION_CLOSURE[assumption]
+            if frozenset(closed) != assumptions:
+                raise ValueError(f"assumptions for {name!r} are not implication-closed")
+            names.append(name)
+        if names != sorted(set(names)):
+            raise ValueError("assumption declarations must be unique and sorted by variable name")
+
     @classmethod
     def of(cls, **variables: Iterable[Assumption | str]) -> AssumptionEnvironment:
         """Build an environment from ``name=("positive", ...)`` keyword arguments."""
@@ -101,6 +125,12 @@ class RewriteContext:
 
     mode: RewriteMode = RewriteMode.SAFE_REAL
     assumptions: AssumptionEnvironment = field(default_factory=AssumptionEnvironment)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mode, RewriteMode):
+            raise TypeError("rewrite mode must be a RewriteMode")
+        if not isinstance(self.assumptions, AssumptionEnvironment):
+            raise TypeError("assumptions must be an AssumptionEnvironment")
 
 
 @runtime_checkable
@@ -171,6 +201,8 @@ class RewriteRule:
     rhs: Pattern | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.policy, RulePolicy):
+            raise RuleConfigurationError("rewrite rule policy must be a RulePolicy")
         if not isinstance(self.lhs, PatternNode):
             raise RuleConfigurationError(
                 f"rule {self.policy.rule_id}: the left-hand side must have an operator at its root"
@@ -185,6 +217,18 @@ class RewriteRule:
         if self.policy.tier is RuleTier.UNSAFE:
             raise RuleConfigurationError(
                 f"rule {self.policy.rule_id}: unsafe rules must never be constructed for execution"
+            )
+        if (
+            self.policy.tier
+            in (
+                RuleTier.GUARDED,
+                RuleTier.VERIFIED_GUARDED,
+                RuleTier.OPTIONAL,
+            )
+            and self.guard is None
+        ):
+            raise RuleConfigurationError(
+                f"rule {self.policy.rule_id}: {self.policy.tier.value} rules require a guard"
             )
 
     @property
@@ -237,6 +281,12 @@ class RuleSet:
 
     rules: tuple[RewriteRule, ...] = ()
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.rules, tuple) or any(
+            not isinstance(rule, RewriteRule) for rule in self.rules
+        ):
+            raise TypeError("rules must be a tuple of RewriteRule values")
+
     def __iter__(self) -> Iterator[RewriteRule]:
         return iter(self.rules)
 
@@ -260,6 +310,14 @@ class SaturationLimits:
 
     resources: ResourceLimits = field(default_factory=ResourceLimits)
     max_eclasses: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.resources, ResourceLimits):
+            raise TypeError("resources must be ResourceLimits")
+        if self.max_eclasses is not None and (
+            type(self.max_eclasses) is not int or self.max_eclasses < 1
+        ):
+            raise ValueError("max_eclasses must be null or a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,9 +372,19 @@ def saturate(
             reason = f"timeout_seconds={resources.timeout_seconds} elapsed"
             break
 
-        matches = [
-            (rule, match) for rule in active_rules for match in search_pattern(egraph, rule.lhs)
-        ]
+        remaining_attempts = resources.max_rewrite_attempts - attempted
+        if remaining_attempts <= 0:
+            status = ExtractionStatus.ITERATION_LIMIT
+            reason = f"max_rewrite_attempts={resources.max_rewrite_attempts} reached"
+            break
+        matches: list[tuple[RewriteRule, Match]] = []
+        for rule in active_rules:
+            remaining = remaining_attempts - len(matches)
+            if remaining <= 0:
+                break
+            matches.extend(
+                (rule, match) for match in search_pattern(egraph, rule.lhs, max_matches=remaining)
+            )
         if not matches:
             saturated = True
             status = ExtractionStatus.SUCCESS
@@ -325,6 +393,10 @@ def saturate(
 
         changed = False
         for rule, match in matches:
+            if attempted >= resources.max_rewrite_attempts:
+                status = ExtractionStatus.ITERATION_LIMIT
+                reason = f"max_rewrite_attempts={resources.max_rewrite_attempts} reached"
+                break
             limit_status, limit_reason = _limit_hit(egraph, active_limits, started)
             if limit_status is not None:
                 _record(
@@ -407,6 +479,10 @@ def saturate(
 
         if status is not None:
             break
+        if attempted >= resources.max_rewrite_attempts:
+            status = ExtractionStatus.ITERATION_LIMIT
+            reason = f"max_rewrite_attempts={resources.max_rewrite_attempts} reached"
+            break
         if not rebuild_report.congruence_closed:
             status = ExtractionStatus.PARTIAL_SUCCESS
             reason = "congruence closure did not converge within max_iterations"
@@ -453,7 +529,7 @@ def _finish(
     )
 
 
-def _expired(started: float, timeout_seconds: int) -> bool:
+def _expired(started: float, timeout_seconds: float) -> bool:
     return time.monotonic() - started >= timeout_seconds
 
 
@@ -510,6 +586,8 @@ def _record(
         guard=guard,
         outcome=outcome,
         branch_sensitive=rule.policy.branch_sensitive,
+        verifier_required=rule.policy.verifier_required,
+        justification=rule.policy.justification,
         assumptions=rule.policy.assumptions,
         source_eclass=match.eclass,
         result_eclass=result_eclass,

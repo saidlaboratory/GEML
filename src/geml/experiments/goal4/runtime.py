@@ -108,6 +108,30 @@ def atomic_write_json(path: str | Path, payload: object, *, resume_identical: bo
     return atomic_write_bytes(path, encoded, resume_identical=resume_identical)
 
 
+def atomic_replace_json(path: str | Path, payload: object) -> Path:
+    """Atomically publish a replaceable JSON snapshot after flushing it to disk."""
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    encoded = (
+        json.dumps(payload, allow_nan=False, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".geml-goal4-checkpoint-",
+        suffix=".tmp",
+        dir=destination.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return destination
+
+
 def load_json(path: str | Path, *, label: str) -> Any:
     """Load one JSON document with a useful artifact error."""
     source = Path(path)
@@ -127,6 +151,7 @@ def append_jsonl(path: str | Path, rows: Iterable[Mapping[str, object]]) -> int:
     """
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    _repair_trailing_jsonl_record(destination)
     written = 0
     with destination.open("a", encoding="utf-8") as stream:
         for row in rows:
@@ -137,47 +162,116 @@ def append_jsonl(path: str | Path, rows: Iterable[Mapping[str, object]]) -> int:
     return written
 
 
-def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
-    """Read every well-formed row from a JSONL file, ignoring a trailing partial line.
+def iter_jsonl(path: str | Path) -> Iterator[dict[str, Any]]:
+    """Yield rows while tolerating only one trailing partial record.
 
-    A crash mid-append can leave one truncated final line; it is skipped rather than raising,
-    which is what makes an interrupted run resumable without manual repair.
+    Keeping this reader lazy is important for production analysis: provenance-rich Goal 4
+    rows can be large even though the parsed analysis projection is compact.
     """
     source = Path(path)
     if not source.is_file():
-        return []
-    rows: list[dict[str, Any]] = []
-    with source.open("r", encoding="utf-8") as stream:
-        for line in stream:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                value = json.loads(stripped)
-            except json.JSONDecodeError:
+        return
+    size = source.stat().st_size
+    with source.open("rb") as stream:
+        line_number = 0
+        while True:
+            raw = stream.readline()
+            if not raw:
                 break
-            if isinstance(value, dict):
-                rows.append(value)
-    return rows
+            line_number += 1
+            is_final = stream.tell() == size
+            terminated = raw.endswith(b"\n")
+            try:
+                text = raw.decode("utf-8")
+                if not text.strip():
+                    raise ValueError("blank JSONL records are not permitted")
+                value = json.loads(text)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+                if is_final and not terminated:
+                    break
+                raise Goal4RuntimeError(
+                    f"invalid JSONL record at {source}:{line_number}"
+                ) from error
+            if not isinstance(value, dict):
+                raise Goal4RuntimeError(f"JSONL record at {source}:{line_number} must be an object")
+            yield value
+
+
+def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    """Read all rows into memory.
+
+    Callers processing production artifacts should prefer :func:`iter_jsonl`; this eager
+    compatibility helper remains useful for bounded resume state and tests.
+    """
+    return list(iter_jsonl(path))
+
+
+def _repair_trailing_jsonl_record(path: Path) -> None:
+    """Repair a crash-truncated tail before appending.
+
+    A valid final object missing only its newline gets that newline.  An invalid final
+    fragment is truncated back to the previous newline.  Corruption in any completed line
+    remains a hard error and is detected by :func:`read_jsonl`.
+    """
+    if not path.is_file() or path.stat().st_size == 0:
+        return
+    with path.open("r+b") as stream:
+        stream.seek(0, os.SEEK_END)
+        end = stream.tell()
+        stream.seek(end - 1)
+        if stream.read(1) == b"\n":
+            return
+
+        cursor = end
+        start = 0
+        block_size = 8192
+        while cursor > 0:
+            block_start = max(0, cursor - block_size)
+            stream.seek(block_start)
+            block = stream.read(cursor - block_start)
+            newline = block.rfind(b"\n")
+            if newline >= 0:
+                start = block_start + newline + 1
+                break
+            cursor = block_start
+        stream.seek(start)
+        tail = stream.read(end - start)
+        valid = False
+        try:
+            decoded = tail.decode("utf-8")
+            value = json.loads(decoded)
+            valid = isinstance(value, dict)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            valid = False
+        if valid:
+            stream.seek(0, os.SEEK_END)
+            stream.write(b"\n")
+        else:
+            stream.truncate(start)
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 @dataclass(frozen=True, slots=True)
 class ResourceSample:
     """A resource snapshot for one processed expression.
 
-    ``peak_memory_bytes`` is ``None`` when ``psutil`` is unavailable; it is never estimated.
+    RSS is sampled honestly before and after the unit.  It is not mislabeled as a
+    per-expression peak; both values are ``None`` when ``psutil`` is unavailable.
     """
 
     wall_seconds: float
     cpu_seconds: float | None
-    peak_memory_bytes: int | None
+    rss_bytes_before: int | None
+    rss_bytes_after: int | None
 
     def as_dict(self) -> dict[str, object]:
         """Return a JSON-friendly copy."""
         return {
             "wall_seconds": self.wall_seconds,
             "cpu_seconds": self.cpu_seconds,
-            "peak_memory_bytes": self.peak_memory_bytes,
+            "rss_bytes_before": self.rss_bytes_before,
+            "rss_bytes_after": self.rss_bytes_after,
         }
 
 
@@ -200,6 +294,7 @@ class CheckpointState:
     """
 
     schema_version: str
+    run_id: str
     stage: str
     total_units: int
     completed_ids: tuple[str, ...]
@@ -209,6 +304,7 @@ class CheckpointState:
         """Return a JSON-friendly copy."""
         return {
             "schema_version": self.schema_version,
+            "run_id": self.run_id,
             "stage": self.stage,
             "total_units": self.total_units,
             "completed_ids": list(self.completed_ids),
@@ -218,15 +314,42 @@ class CheckpointState:
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> CheckpointState:
         """Rebuild a checkpoint from its JSON form."""
+        required = {
+            "schema_version",
+            "run_id",
+            "stage",
+            "total_units",
+            "completed_ids",
+            "chunk_index",
+        }
+        missing = required - value.keys()
+        if missing:
+            raise Goal4RuntimeError(f"checkpoint is missing fields: {sorted(missing)}")
         completed = value.get("completed_ids", [])
         if not isinstance(completed, list):
             raise Goal4RuntimeError("checkpoint completed_ids must be a list")
+        if any(not isinstance(item, str) or not item for item in completed):
+            raise Goal4RuntimeError("checkpoint completed_ids must contain non-blank strings")
+        if len(set(completed)) != len(completed):
+            raise Goal4RuntimeError("checkpoint completed_ids contains duplicates")
+        schema_version = value["schema_version"]
+        run_id = value["run_id"]
+        stage = value["stage"]
+        total_units = value["total_units"]
+        chunk_index = value["chunk_index"]
+        if any(not isinstance(item, str) or not item for item in (schema_version, run_id, stage)):
+            raise Goal4RuntimeError("checkpoint identity fields must be non-blank strings")
+        if isinstance(total_units, bool) or not isinstance(total_units, int) or total_units < 0:
+            raise Goal4RuntimeError("checkpoint total_units must be nonnegative")
+        if isinstance(chunk_index, bool) or not isinstance(chunk_index, int) or chunk_index < 0:
+            raise Goal4RuntimeError("checkpoint chunk_index must be nonnegative")
         return cls(
-            schema_version=str(value["schema_version"]),
-            stage=str(value["stage"]),
-            total_units=int(value["total_units"]),  # type: ignore[arg-type]
-            completed_ids=tuple(str(item) for item in completed),
-            chunk_index=int(value["chunk_index"]),  # type: ignore[arg-type]
+            schema_version=schema_version,
+            run_id=run_id,
+            stage=stage,
+            total_units=total_units,
+            completed_ids=tuple(completed),
+            chunk_index=chunk_index,
         )
 
 
@@ -243,6 +366,8 @@ def assumption_environment_for(domain_mode: str, variables: Iterable[str]) -> As
     declares every variable nonzero, and every other mode declares only real variables.
     """
     names = tuple(variables)
+    if len(set(names)) != len(names):
+        raise Goal4RuntimeError("source variables must be unique")
     if domain_mode == "positive_real":
         assumption: tuple[Assumption, ...] = (Assumption.POSITIVE,)
     elif domain_mode == "nonzero_real":

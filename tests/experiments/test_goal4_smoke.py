@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from geml.experiments.goal4.run import (
     CONFIG_SCHEMA_VERSION,
     Goal4Config,
     StageStatus,
+    _load_corpus_records,
     item_from_record,
     load_checkpoint,
     load_goal4_config,
@@ -28,13 +30,20 @@ from geml.experiments.goal4.run import (
     run_stage,
     select_subset,
 )
-from geml.experiments.goal4.runtime import Goal4RuntimeError, read_jsonl
+from geml.experiments.goal4.runtime import (
+    Goal4RuntimeError,
+    append_jsonl,
+    read_jsonl,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PRODUCTION_CONFIG = _REPO_ROOT / "configs" / "goal4_final.yaml"
 
 _REQUIRED_ROW_FIELDS = (
     "expression_id",
+    "schema_version",
+    "run_id",
+    "config_sha256",
     "rewrite_mode",
     "domain_mode",
     "operator_family",
@@ -53,6 +62,9 @@ _REQUIRED_ROW_FIELDS = (
     "eml_dag_cost_after",
     "absolute_improvement",
     "relative_improvement",
+    "difficulty_profile",
+    "observed_ast_size",
+    "resource_limits",
 )
 
 _SPLITS = tuple(CorpusSplit)
@@ -86,7 +98,10 @@ def _record(index: int) -> ExpressionRecord:
         target_ast_size=3 + index % 5,
         target_depth=1,
         generator_seed=index,
-        generator_metadata={},
+        generator_metadata={
+            "achieved_source_ast_size": 3 + index % 5,
+            "difficulty_profile": "stress" if index % 5 == 0 else "ordinary",
+        },
     )
 
 
@@ -94,7 +109,7 @@ def _records(count: int = 25) -> list[ExpressionRecord]:
     return [_record(index) for index in range(count)]
 
 
-def _config_dict(output_root: str, *, saturation_timeout: float = 5.0) -> dict:
+def _config_dict(output_root: str, *, saturation_timeout: float = 0.2) -> dict:
     return {
         "schema_version": CONFIG_SCHEMA_VERSION,
         "output_root": output_root,
@@ -103,21 +118,34 @@ def _config_dict(output_root: str, *, saturation_timeout: float = 5.0) -> dict:
         "sampling": {
             "seed": 7,
             "target_size": 25,
-            "balance_axes": ["operator_family", "domain_mode", "split", "size_bucket"],
+            "balance_axes": [
+                "operator_family",
+                "domain_mode",
+                "split",
+                "size_bucket",
+                "difficulty_profile",
+            ],
             "size_bucket_edges": [4, 8, 16, 32],
         },
         "resources": {
-            "max_iterations": 40,
-            "max_egraph_nodes": 5000,
+            "max_iterations": 20,
+            "max_egraph_nodes": 1000,
+            "max_rewrite_attempts": 2000,
             "saturation_timeout_seconds": saturation_timeout,
             "max_eclasses": None,
-            "extraction_max_depth": 12,
-            "extraction_beam_width": 6,
-            "extraction_max_candidates": 24,
-            "extraction_max_nodes": 20000,
-            "extraction_timeout_seconds": 5.0,
+            "extraction_max_depth": 6,
+            "extraction_beam_width": 3,
+            "extraction_max_candidates": 8,
+            "extraction_max_nodes": 5000,
+            "extraction_max_iterations": 10000,
+            "extraction_timeout_seconds": 0.2,
         },
-        "processing": {"chunk_size": 8, "checkpoint_every_chunks": 1, "resume": True},
+        "processing": {
+            "chunk_size": 8,
+            "checkpoint_every_chunks": 1,
+            "worker_processes": 1,
+            "resume": True,
+        },
         "stages": {"smoke": {"expected_count": 25, "row_limit": 25}},
     }
 
@@ -145,6 +173,8 @@ class TestConfigurationLoading:
         assert config.schema_version == CONFIG_SCHEMA_VERSION
         assert 25_000 <= config.sampling.target_size <= 40_000
         assert config.resolved_modes()
+        assert "difficulty_profile" in config.sampling.balance_axes
+        assert config.processing.worker_processes > 1
 
     def test_temp_config_round_trips(self, tmp_path: Path):
         config_path = tmp_path / "goal4_smoke.yaml"
@@ -164,6 +194,31 @@ class TestConfigurationLoading:
         path.write_text(yaml.safe_dump(data))
         with pytest.raises(Goal4RuntimeError, match="schema version"):
             load_goal4_config(path)
+
+    @pytest.mark.parametrize(
+        ("mutator", "message"),
+        [
+            (
+                lambda data: data["modes"].pop(),
+                "exactly safe_real and positive_real_formal",
+            ),
+            (
+                lambda data: data["sampling"].update(
+                    {"balance_axes": ["operator_family", "unknown"]}
+                ),
+                "unknown balance axes",
+            ),
+            (
+                lambda data: data["sampling"].update({"size_bucket_edges": [8, 4]}),
+                "strictly increasing",
+            ),
+        ],
+    )
+    def test_invalid_scientific_config_is_rejected(self, tmp_path: Path, mutator, message):
+        data = _config_dict(str(tmp_path / "out"))
+        mutator(data)
+        with pytest.raises(ValueError, match=message):
+            Goal4Config.model_validate(data)
 
 
 class TestSubsetConstruction:
@@ -186,6 +241,19 @@ class TestSubsetConstruction:
         forward = select_subset(items, config.sampling)
         backward = select_subset(list(reversed(items)), config.sampling)
         assert [item.expression_id for item in forward] == [item.expression_id for item in backward]
+
+    def test_balancing_uses_observed_size_and_difficulty(self, tmp_path: Path):
+        config = _config(tmp_path)
+        item = item_from_record(_record(5), config.sampling)
+        assert item.observed_ast_size == 3
+        assert item.observed_size_source.endswith("achieved_source_ast_size")
+        assert item.difficulty_profile == "stress"
+
+    def test_duplicate_expression_ids_are_rejected(self, tmp_path: Path):
+        config = _config(tmp_path)
+        item = item_from_record(_record(1), config.sampling)
+        with pytest.raises(Goal4RuntimeError, match="duplicate expression_id"):
+            select_subset([item, item], config.sampling)
 
 
 class TestPipelineExecution:
@@ -225,14 +293,46 @@ class TestPipelineExecution:
         unit_ids = {(row["expression_id"], row["rewrite_mode"]) for row in rows}
         assert len(unit_ids) == 50
 
+    def test_rows_are_bound_to_one_run_identity(self, default_stage):
+        result, rows = default_stage
+        assert {row["run_id"] for row in rows} == {result.run_id}
+        assert all(row["config_sha256"] for row in rows)
+
+    def test_compact_provenance_retains_every_application(self, default_stage):
+        _result, rows = default_stage
+        for row in rows:
+            provenance = row["provenance"]
+            if provenance is None:
+                continue
+            assert provenance["application_log_complete"] is True
+            assert provenance["attempt_aggregates_complete"] is True
+            assert provenance["attempt_count"] == row["rewrites_attempted"]
+            assert len(provenance["applications"]) == row["rewrites_applied"]
+            catalog_size = len(provenance["rule_catalog"])
+            assert all(
+                0 <= application[2] < catalog_size for application in provenance["applications"]
+            )
+
+    def test_cost_provenance_uses_goal3_direct_source_ast(self, default_stage):
+        _result, rows = default_stage
+        costed = [row for row in rows if row["input_cost_provenance"]]
+        assert costed
+        assert all(
+            row["input_cost_provenance"]["input_kind"] == "source_ast"
+            and row["input_cost_provenance"]["construction_path"] == "direct_hashcons"
+            for row in costed
+        )
+
 
 class TestCheckpointAndResume:
     def test_checkpoint_is_created(self, default_stage):
         result, _rows = default_stage
         assert result.checkpoint_path.is_file()
         checkpoint = load_checkpoint(result.checkpoint_path)
+        assert checkpoint.run_id == result.run_id
         assert checkpoint.total_units == 50
         assert len(checkpoint.completed_ids) == 50
+        assert result.run_manifest_path.is_file()
 
     def test_resume_recomputes_nothing(self, tmp_path: Path):
         config = _config(tmp_path, count=6)
@@ -246,13 +346,10 @@ class TestCheckpointAndResume:
     def test_resume_completes_a_partial_run(self, tmp_path: Path):
         config = _config(tmp_path, count=6)
         run_directory = tmp_path / "run"
-        run_directory.mkdir(parents=True)
-        partial = process_expression(
-            item_from_record(_records(6)[0], config.sampling),
-            config.resolved_modes()[0],
-            config,
-        )
-        run_directory.joinpath("smoke.rows.jsonl").write_text(json.dumps(partial) + "\n")
+        first = run_stage(config, "smoke", _records(6), run_directory)
+        partial = read_jsonl(first.rows_path)[0]
+        first.rows_path.write_text(json.dumps(partial) + "\n", encoding="utf-8")
+        first.checkpoint_path.unlink()
         run_stage(config, "smoke", _records(6), run_directory)
         rows = read_jsonl(run_directory / "smoke.rows.jsonl")
         unit_ids = {(row["expression_id"], row["rewrite_mode"]) for row in rows}
@@ -262,26 +359,69 @@ class TestCheckpointAndResume:
     def test_truncated_final_line_is_tolerated(self, tmp_path: Path):
         config = _config(tmp_path, count=6)
         run_directory = tmp_path / "run"
-        run_directory.mkdir(parents=True)
-        run_directory.joinpath("smoke.rows.jsonl").write_text(
-            json.dumps({"expression_id": "x", "rewrite_mode": "safe_real"}) + "\n{partial"
+        first = run_stage(config, "smoke", _records(6), run_directory)
+        valid = read_jsonl(first.rows_path)[0]
+        first.rows_path.write_text(
+            json.dumps(valid) + "\n{partial",
+            encoding="utf-8",
         )
+        first.checkpoint_path.unlink()
         result = run_stage(config, "smoke", _records(6), run_directory)
-        assert result.completed_units >= 12
+        rows = read_jsonl(result.rows_path)
+        assert result.completed_units == 12
+        assert len(rows) == 12
+
+    def test_stale_config_resume_is_rejected(self, tmp_path: Path):
+        config = _config(tmp_path, count=6)
+        run_directory = tmp_path / "run"
+        run_stage(config, "smoke", _records(6), run_directory)
+        changed_sampling = config.sampling.model_copy(update={"seed": config.sampling.seed + 1})
+        changed = config.model_copy(update={"sampling": changed_sampling})
+        with pytest.raises(Goal4RuntimeError, match="different content"):
+            run_stage(changed, "smoke", _records(6), run_directory)
+
+    def test_duplicate_completed_unit_is_rejected(self, tmp_path: Path):
+        config = _config(tmp_path, count=3)
+        result = run_stage(config, "smoke", _records(3), tmp_path / "run")
+        row = read_jsonl(result.rows_path)[0]
+        append_jsonl(result.rows_path, (row,))
+        with pytest.raises(Goal4RuntimeError, match="duplicate work unit"):
+            run_stage(config, "smoke", _records(3), tmp_path / "run")
+
+    def test_corrupt_completed_line_is_not_silently_ignored(self, tmp_path: Path):
+        config = _config(tmp_path, count=3)
+        result = run_stage(config, "smoke", _records(3), tmp_path / "run")
+        payload = result.rows_path.read_text(encoding="utf-8")
+        result.rows_path.write_text("{broken}\n" + payload, encoding="utf-8")
+        with pytest.raises(Goal4RuntimeError, match="invalid JSONL record"):
+            run_stage(config, "smoke", _records(3), tmp_path / "run")
 
 
 class TestTimeoutHandling:
-    def test_zero_timeout_marks_every_supported_row(self, tmp_path: Path):
-        config = _config(tmp_path, count=6, saturation_timeout=0.0)
-        result = run_stage(config, "smoke", _records(6), tmp_path / "run")
-        rows = read_jsonl(result.rows_path)
-        supported = [row for row in rows if row["stage_status"] != "unsupported_operator"]
-        assert supported
-        assert all(row["saturation_status"] == "timeout" for row in supported)
-        assert all(row["timeout"] for row in supported)
+    def test_nonpositive_timeout_is_rejected(self, tmp_path: Path):
+        with pytest.raises(ValueError, match="greater than 0"):
+            _config(tmp_path, count=6, saturation_timeout=0.0)
+
+    def test_timeout_marks_supported_row(self, tmp_path: Path, monkeypatch):
+        import geml.egraph.rewrite_engine as engine
+
+        monkeypatch.setattr(
+            engine,
+            "_expired",
+            lambda _started, _timeout_seconds: True,
+        )
+        config = _config(tmp_path, count=1)
+        record = _record(1)
+        row = process_expression(
+            item_from_record(record, config.sampling),
+            config.resolved_modes()[0],
+            config,
+        )
+        assert row["saturation_status"] == "timeout"
+        assert row["timeout"] is True
 
     def test_timeout_rows_are_still_complete(self, tmp_path: Path):
-        config = _config(tmp_path, count=6, saturation_timeout=0.0)
+        config = _config(tmp_path, count=6, saturation_timeout=1e-9)
         result = run_stage(config, "smoke", _records(6), tmp_path / "run")
         for row in read_jsonl(result.rows_path):
             assert "resources" in row
@@ -314,3 +454,61 @@ class TestResultGeneration:
         for row in rows:
             if row["stage_status"] == StageStatus.OPTIMIZED.value:
                 assert row["absolute_improvement"] > 0
+
+    def test_no_successful_row_degrades_cost(self, default_stage):
+        _result, rows = default_stage
+        for row in rows:
+            if row["eml_dag_cost_after"] is not None:
+                assert row["eml_dag_cost_after"] <= row["eml_dag_cost_before"]
+
+    def test_domain_assumptions_come_from_corpus_domain_not_rewrite_mode(self, tmp_path: Path):
+        config = _config(tmp_path, count=1)
+        record = _record(1).model_copy(update={"domain_mode": "positive_real"})
+        row = process_expression(
+            item_from_record(record, config.sampling),
+            config.resolved_modes()[1],
+            config,
+        )
+        assert "positive" in row["declared_assumptions"]["x"]
+
+
+class TestProductionCorpusLoader:
+    def test_tiny_manifest_uses_split_shards_and_manifest_root(self, tmp_path: Path):
+        from geml.data.storage.manifests import (
+            build_corpus_manifest,
+            build_split_manifest,
+            write_corpus_manifest,
+        )
+        from geml.data.storage.shards import write_shards
+
+        config_path = tmp_path / "fixture.yaml"
+        config_path.write_text("fixture: true\n", encoding="utf-8")
+        split_manifests = []
+        expected = []
+        for index, split in enumerate(CorpusSplit):
+            record = _record(index).model_copy(update={"split": split})
+            expected.append(record)
+            shards = write_shards(
+                (record,),
+                tmp_path / "data" / split.value,
+                corpus_id="goal4-loader-fixture",
+                split=split,
+                schema_version="fixture-v1",
+                minimum_rows=1,
+                maximum_rows=1,
+                allow_small_fixture=True,
+                manifest_root=tmp_path,
+            )
+            split_manifests.append(build_split_manifest(shards))
+        manifest = build_corpus_manifest(
+            split_manifests,
+            corpus_id="goal4-loader-fixture",
+            schema_version="fixture-v1",
+            config_path=config_path,
+            generator_seed=7,
+            git_commit="fixture",
+            created_at=datetime(2026, 7, 24, tzinfo=UTC),
+        )
+        manifest_path = tmp_path / "manifests" / "corpus.manifest.json"
+        write_corpus_manifest(manifest, manifest_path)
+        assert _load_corpus_records(manifest_path) == expected

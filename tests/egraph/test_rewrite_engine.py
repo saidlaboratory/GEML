@@ -285,6 +285,14 @@ class TestRuleConstruction:
                 PatternVar("a"),
             )
 
+    def test_guarded_rules_require_an_executable_guard(self):
+        with pytest.raises(RuleConfigurationError, match="require a guard"):
+            pattern_rule(
+                _policy("TEST-MISSING-GUARD", tier=RuleTier.GUARDED),
+                _p(Operator.NEG, PatternVar("a")),
+                PatternVar("a"),
+            )
+
     def test_bidirectional_rules_carry_opposite_directions(self):
         forward, backward = bidirectional_rules(
             _policy("TEST-BIDI"),
@@ -369,6 +377,19 @@ class TestSaturation:
         assert outcome.report.status is ExtractionStatus.ITERATION_LIMIT
         assert outcome.report.saturated is False
         assert "max_iterations" in outcome.report.reason
+
+    def test_rewrite_attempt_limit_cannot_be_reported_as_saturated(self):
+        graph = EGraph()
+        graph.add(add(var("x"), var("y")))
+        outcome = saturate(
+            graph,
+            RuleSet(rules=(COMMUTE_ADD,)),
+            limits=_limits(max_rewrite_attempts=1),
+        )
+        assert outcome.report.rewrites_attempted == 1
+        assert outcome.report.status is ExtractionStatus.ITERATION_LIMIT
+        assert outcome.report.saturated is False
+        assert "max_rewrite_attempts" in outcome.report.reason
 
     def test_node_limit_is_reported(self):
         graph = EGraph()
@@ -495,6 +516,7 @@ class TestProvenanceRecords:
             ),
             _p(Operator.LOG, PatternVar("a")),
             _p(Operator.NEG, _p(Operator.NEG, PatternVar("a"))),
+            guard=_AlwaysAccept(),
         )
         outcome = saturate(
             graph,
@@ -508,6 +530,8 @@ class TestProvenanceRecords:
         assert record.mode is RewriteMode.POSITIVE_REAL_FORMAL
         assert record.direction is RewriteDirection.FORWARD
         assert record.branch_sensitive is True
+        assert record.verifier_required is True
+        assert record.justification == "test fixture"
         assert record.assumptions == frozenset({"x > 0"})
 
     def test_sequence_indices_are_dense_and_ordered(self):
@@ -547,6 +571,14 @@ class TestAssumptionEnvironment:
     def test_nonzero_does_not_imply_positive(self):
         environment = AssumptionEnvironment.of(x=("nonzero",))
         assert environment.holds("x", Assumption.POSITIVE) is False
+
+    def test_invalid_source_variable_name_is_rejected(self):
+        with pytest.raises(ValueError, match="invalid source variable"):
+            AssumptionEnvironment.of(**{"x+y": ("real",)})
+
+    def test_direct_declarations_must_be_implication_closed(self):
+        with pytest.raises(ValueError, match="implication-closed"):
+            AssumptionEnvironment(declarations=(("x", frozenset({Assumption.POSITIVE})),))
 
     def test_undeclared_variable_has_no_assumptions(self):
         assert AssumptionEnvironment().assumptions_for("x") == frozenset()

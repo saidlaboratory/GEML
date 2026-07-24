@@ -1,28 +1,33 @@
-"""Final Goal 4 optimization experiment pipeline.
+"""Audited, resumable Goal 4 equality-saturation experiment.
 
-This runner executes the completed Goal 4 stack over a deterministic, balanced subset of
-source expressions in both rewrite modes, keeping the two modes strictly separate.  For
-every expression it compiles the input, validates it, runs bounded equality saturation,
-extracts candidates, evaluates the official Goal 3 EML DAG cost, and records one fully
-audited row.  Every failure is a first-class retained row; nothing is skipped or averaged
-across modes.
-
-The pipeline is resumable: rows are appended durably to a per-stage JSONL file and a
-create-only checkpoint tracks completed ``(expression_id, mode)`` units, so an interrupted
-run continues without recomputing finished work.
+The runner keeps both rewrite modes separate, retains every work unit, uses the exact
+Goal 3 direct EML-DAG cost boundary, and binds resumable artifacts to a content-addressed
+run identity.  A rows file from another configuration, corpus, subset, schema, or
+implementation commit is rejected rather than silently reused.
 """
 
 from __future__ import annotations
 
 import argparse
+import subprocess
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from geml.ast.builder import build_ast
 from geml.contracts.expression import ExpressionRecord
@@ -32,7 +37,7 @@ from geml.egraph.cycle_safe_extract import ExtractionLimits
 from geml.egraph.eml_cost import CostReport, evaluate_candidates
 from geml.egraph.ir import Expr
 from geml.egraph.policy import ExtractionStatus, ResourceLimits, RewriteMode
-from geml.egraph.provenance import ProvenanceLog
+from geml.egraph.provenance import ApplicationOutcome, ProvenanceLog
 from geml.egraph.rewrite_engine import (
     RewriteContext,
     RuleSet,
@@ -42,7 +47,8 @@ from geml.egraph.rewrite_engine import (
 )
 from geml.egraph.rules_domain import domain_rules
 from geml.egraph.rules_safe import SAFE_RULES
-from geml.egraph.validation import VerificationContext, compile_expr_to_eml
+from geml.egraph.validation import VerificationContext, expr_to_ast_tree
+from geml.eml.compiler_core import CompilerMode
 from geml.experiments.goal4.runtime import (
     CheckpointState,
     Goal4RuntimeError,
@@ -51,35 +57,58 @@ from geml.experiments.goal4.runtime import (
     append_jsonl,
     assumption_environment_for,
     ast_tree_to_expr,
+    atomic_replace_json,
     atomic_write_json,
+    canonical_json,
     iter_chunks,
     load_json,
     read_jsonl,
     sample_process_memory,
+    sha256_hex,
     unit_key,
 )
-from geml.interfaces.eml_dag_cost import EMLDagCostStatus, compute_eml_dag_cost
+from geml.interfaces.eml_dag_cost import (
+    EMLDagCostResult,
+    EMLDagCostStatus,
+    compute_eml_dag_cost,
+)
 
-CONFIG_SCHEMA_VERSION = "geml-goal4-config-v1"
-CHECKPOINT_SCHEMA_VERSION = "geml-goal4-checkpoint-v1"
-ROW_SCHEMA_VERSION = "geml-goal4-row-v1"
+CONFIG_SCHEMA_VERSION = "geml-goal4-config-v2"
+CHECKPOINT_SCHEMA_VERSION = "geml-goal4-checkpoint-v2"
+ROW_SCHEMA_VERSION = "geml-goal4-row-v2"
+RUN_SCHEMA_VERSION = "geml-goal4-run-v1"
 
-_MODES: tuple[RewriteMode, ...] = (RewriteMode.SAFE_REAL, RewriteMode.POSITIVE_REAL_FORMAL)
+_MODES: tuple[RewriteMode, ...] = (
+    RewriteMode.SAFE_REAL,
+    RewriteMode.POSITIVE_REAL_FORMAL,
+)
+_BALANCE_AXES = frozenset(
+    {
+        "operator_family",
+        "domain_mode",
+        "split",
+        "size_bucket",
+        "difficulty_profile",
+    }
+)
 
 
 class StageStatus(StrEnum):
-    """Terminal status for one processed work unit."""
+    """Terminal status for one retained ``(expression, mode)`` work unit."""
 
     OPTIMIZED = "optimized"
     UNCHANGED = "unchanged"
+    DEGRADED_REJECTED = "degraded_rejected"
     UNSUPPORTED_OPERATOR = "unsupported_operator"
     COMPILE_FAILED = "compile_failed"
     COST_FAILED = "cost_failed"
     NO_CANDIDATE = "no_candidate"
+    VALIDATION_FAILED = "validation_failed"
+    INTERNAL_ERROR = "internal_error"
 
 
 class SamplingConfig(BaseModel):
-    """Deterministic balanced-subset construction parameters."""
+    """Deterministic balanced-subset parameters."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -90,33 +119,65 @@ class SamplingConfig(BaseModel):
         "domain_mode",
         "split",
         "size_bucket",
+        "difficulty_profile",
     )
-    size_bucket_edges: tuple[int, ...] = (4, 8, 16, 32)
+    size_bucket_edges: tuple[StrictInt, ...] = (4, 8, 16, 32)
+
+    @field_validator("balance_axes")
+    @classmethod
+    def _validate_axes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("balance_axes cannot be empty")
+        if len(set(value)) != len(value):
+            raise ValueError("balance_axes cannot contain duplicates")
+        unknown = set(value) - _BALANCE_AXES
+        if unknown:
+            raise ValueError(f"unknown balance axes: {sorted(unknown)}")
+        return value
+
+    @field_validator("size_bucket_edges")
+    @classmethod
+    def _validate_edges(cls, value: tuple[int, ...]) -> tuple[int, ...]:
+        if not value or any(type(edge) is not int or edge < 1 for edge in value):
+            raise ValueError("size_bucket_edges must contain positive integers")
+        if tuple(sorted(set(value))) != value:
+            raise ValueError("size_bucket_edges must be strictly increasing")
+        return value
 
 
 class ResourceConfig(BaseModel):
-    """Per-expression resource bounds for saturation and extraction."""
+    """Per-expression saturation and extraction limits."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     max_iterations: StrictInt = Field(default=200, ge=1)
     max_egraph_nodes: StrictInt = Field(default=20_000, ge=1)
-    saturation_timeout_seconds: float = Field(default=5.0, ge=0)
-    max_eclasses: StrictInt | None = Field(default=None)
-    extraction_max_depth: StrictInt = Field(default=24, ge=1)
+    max_rewrite_attempts: StrictInt = Field(default=100_000, ge=1)
+    saturation_timeout_seconds: float = Field(default=5.0, gt=0)
+    max_eclasses: StrictInt | None = Field(default=None, ge=1)
+    extraction_max_depth: StrictInt = Field(default=24, ge=1, le=256)
     extraction_beam_width: StrictInt = Field(default=8, ge=1)
     extraction_max_candidates: StrictInt = Field(default=64, ge=1)
     extraction_max_nodes: StrictInt = Field(default=100_000, ge=1)
+    extraction_max_iterations: StrictInt = Field(default=2_000_000, ge=1)
     extraction_timeout_seconds: float = Field(default=5.0, gt=0)
+
+    @field_validator("saturation_timeout_seconds", "extraction_timeout_seconds")
+    @classmethod
+    def _finite_timeout(cls, value: float) -> float:
+        if isinstance(value, bool) or value != value or value == float("inf"):
+            raise ValueError("timeouts must be positive finite numbers")
+        return value
 
 
 class ProcessingConfig(BaseModel):
-    """Chunking, checkpoint, and resume policy."""
+    """Chunking, checkpoint, resume, and parallel-worker policy."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     chunk_size: StrictInt = Field(default=256, ge=1)
     checkpoint_every_chunks: StrictInt = Field(default=1, ge=1)
+    worker_processes: StrictInt = Field(default=1, ge=1, le=64)
     resume: StrictBool = True
 
 
@@ -126,11 +187,11 @@ class StageConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     expected_count: StrictInt = Field(ge=1)
-    row_limit: StrictInt | None = None
+    row_limit: StrictInt | None = Field(default=None, ge=1)
 
 
 class Goal4Config(BaseModel):
-    """The complete externalized Goal 4 experiment configuration."""
+    """Complete externalized Goal 4 experiment configuration."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -143,8 +204,41 @@ class Goal4Config(BaseModel):
     processing: ProcessingConfig
     stages: dict[str, StageConfig]
 
+    @field_validator("output_root")
+    @classmethod
+    def _nonblank_output(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("output_root must be a non-blank path")
+        return value
+
+    @field_validator("modes")
+    @classmethod
+    def _both_modes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        expected = {mode.value for mode in _MODES}
+        if len(value) != len(expected) or set(value) != expected:
+            raise ValueError(
+                "Goal 4 production requires exactly safe_real and positive_real_formal"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _validate_stages(self) -> Goal4Config:
+        if not self.stages:
+            raise ValueError("at least one stage must be configured")
+        for name, stage in self.stages.items():
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("stage names must be non-blank strings")
+            if stage.row_limit is None and stage.expected_count != self.sampling.target_size:
+                raise ValueError(
+                    f"stage {name!r} without row_limit must expect sampling.target_size rows"
+                )
+            if stage.row_limit is not None and stage.expected_count != stage.row_limit:
+                raise ValueError(f"stage {name!r} expected_count must equal its row_limit")
+            if stage.expected_count > self.sampling.target_size:
+                raise ValueError(f"stage {name!r} cannot expect more than sampling.target_size")
+        return self
+
     def resolved_modes(self) -> tuple[RewriteMode, ...]:
-        """Return the configured rewrite modes as enum members, in canonical order."""
         selected = {RewriteMode(value) for value in self.modes}
         return tuple(mode for mode in _MODES if mode in selected)
 
@@ -168,7 +262,7 @@ def load_goal4_config(path: str | Path) -> Goal4Config:
 
 @dataclass(frozen=True, slots=True)
 class ExpressionItem:
-    """A source expression selected for the experiment, with balancing metadata."""
+    """One selected source expression with complete balancing metadata."""
 
     expression_id: str
     sympy_srepr: str
@@ -177,11 +271,13 @@ class ExpressionItem:
     split: str
     variables: tuple[str, ...]
     target_ast_size: int
+    observed_ast_size: int
+    observed_size_source: str
+    difficulty_profile: str
     size_bucket: str
 
 
 def _size_bucket(size: int, edges: Sequence[int]) -> str:
-    """Return a stable size-bucket label for an expression size."""
     for edge in edges:
         if size <= edge:
             return f"<= {edge}"
@@ -189,7 +285,18 @@ def _size_bucket(size: int, edges: Sequence[int]) -> str:
 
 
 def item_from_record(record: ExpressionRecord, sampling: SamplingConfig) -> ExpressionItem:
-    """Build a balancing item from a frozen expression record."""
+    """Project a frozen corpus record into auditable selection metadata."""
+    metadata = record.generator_metadata
+    achieved = metadata.get("achieved_source_ast_size")
+    if isinstance(achieved, int) and not isinstance(achieved, bool) and achieved > 0:
+        observed = achieved
+        size_source = "generator_metadata.achieved_source_ast_size"
+    else:
+        observed = record.target_ast_size
+        size_source = "target_ast_size_fallback"
+    difficulty = metadata.get("difficulty_profile")
+    if not isinstance(difficulty, str) or not difficulty.strip():
+        difficulty = "unlabeled"
     return ExpressionItem(
         expression_id=record.expression_id,
         sympy_srepr=record.sympy_srepr,
@@ -198,46 +305,40 @@ def item_from_record(record: ExpressionRecord, sampling: SamplingConfig) -> Expr
         split=record.split.value,
         variables=tuple(record.variables),
         target_ast_size=record.target_ast_size,
-        size_bucket=_size_bucket(record.target_ast_size, sampling.size_bucket_edges),
+        observed_ast_size=observed,
+        observed_size_source=size_source,
+        difficulty_profile=difficulty,
+        size_bucket=_size_bucket(observed, sampling.size_bucket_edges),
     )
 
 
 def _stratum_key(item: ExpressionItem, axes: Sequence[str]) -> tuple[str, ...]:
-    """Return the balancing stratum key for one item under the configured axes."""
     lookup = {
         "operator_family": item.operator_family,
         "domain_mode": item.domain_mode,
         "split": item.split,
         "size_bucket": item.size_bucket,
+        "difficulty_profile": item.difficulty_profile,
     }
-    return tuple(lookup.get(axis, "") for axis in axes)
+    return tuple(lookup[axis] for axis in axes)
 
 
 def _deterministic_rank(expression_id: str, seed: int) -> str:
-    """Return a stable, seeded ordering token for an expression id.
-
-    The token is a hash of the seed and id, so the selection order is reproducible and
-    independent of input order, yet varies deterministically with the configured seed.
-    """
-    from hashlib import sha256
-
-    return sha256(f"{seed}\0{expression_id}".encode()).hexdigest()
+    return sha256_hex(f"{seed}\0{expression_id}".encode())
 
 
 def select_subset(
     items: Iterable[ExpressionItem],
     sampling: SamplingConfig,
 ) -> tuple[ExpressionItem, ...]:
-    """Return a deterministic, balanced subset of at most ``target_size`` expressions.
-
-    Items are grouped into strata by the configured axes; each stratum is ordered by a
-    seeded hash of its expression ids, and the subset is filled by round-robin across
-    strata.  The result is identical across runs for the same items and configuration.
-    """
+    """Select a deterministic round-robin sample across configured strata."""
+    materialized = list(items)
+    identifiers = [item.expression_id for item in materialized]
+    if len(set(identifiers)) != len(identifiers):
+        raise Goal4RuntimeError("input records contain duplicate expression_id values")
     strata: dict[tuple[str, ...], list[ExpressionItem]] = {}
-    for item in items:
+    for item in materialized:
         strata.setdefault(_stratum_key(item, sampling.balance_axes), []).append(item)
-
     for members in strata.values():
         members.sort(key=lambda item: _deterministic_rank(item.expression_id, sampling.seed))
 
@@ -260,51 +361,152 @@ def select_subset(
 
 
 def _rules_for(mode: RewriteMode, include_optional: bool) -> RuleSet:
-    """Return the rule set applied under one rewrite mode."""
     if mode is RewriteMode.SAFE_REAL:
         return SAFE_RULES
     return SAFE_RULES.merged_with(domain_rules(include_optional=include_optional))
 
 
 def _saturation_limits(resources: ResourceConfig) -> SaturationLimits:
-    """Return frozen saturation limits from the resource configuration."""
     return SaturationLimits(
         resources=ResourceLimits(
             max_iterations=resources.max_iterations,
             max_egraph_nodes=resources.max_egraph_nodes,
-            timeout_seconds=max(0, int(resources.saturation_timeout_seconds)),
+            max_rewrite_attempts=resources.max_rewrite_attempts,
+            timeout_seconds=resources.saturation_timeout_seconds,
         ),
         max_eclasses=resources.max_eclasses,
     )
 
 
 def _extraction_limits(resources: ResourceConfig) -> ExtractionLimits:
-    """Return frozen extraction limits from the resource configuration."""
     return ExtractionLimits(
         max_depth=resources.extraction_max_depth,
         beam_width=resources.extraction_beam_width,
         max_candidates=resources.extraction_max_candidates,
         max_nodes_visited=resources.extraction_max_nodes,
+        max_iterations=resources.extraction_max_iterations,
         timeout_seconds=resources.extraction_timeout_seconds,
     )
 
 
-def _eml_dag_cost(expr: Expr) -> int | None:
-    """Return the official Goal 3 EML DAG cost of an expression, or ``None`` on failure."""
-    result = compute_eml_dag_cost(compile_expr_to_eml(expr))
-    if result.status is EMLDagCostStatus.SUCCESS:
-        return result.eml_dag_node_count
-    return None
+def _official_cost(expr: Expr, expression_id: str) -> EMLDagCostResult:
+    tree = expr_to_ast_tree(expr, expression_id=expression_id)
+    return compute_eml_dag_cost(tree, compiler_mode=CompilerMode.OFFICIAL_V4)
+
+
+def _provenance_record(record: Any) -> dict[str, object]:
+    return {
+        "sequence_index": record.sequence_index,
+        "iteration": record.iteration,
+        "rule_id": record.rule_id,
+        "rule_name": record.rule_name,
+        "tier": record.tier.value,
+        "mode": record.mode.value,
+        "direction": record.direction.value,
+        "guard": record.guard.value,
+        "outcome": record.outcome.value,
+        "branch_sensitive": record.branch_sensitive,
+        "verifier_required": record.verifier_required,
+        "justification": record.justification,
+        "assumptions": sorted(record.assumptions),
+        "source_eclass": int(record.source_eclass),
+        "result_eclass": (None if record.result_eclass is None else int(record.result_eclass)),
+        "substitution": {name: int(eclass) for name, eclass in record.substitution.bindings},
+        "detail": record.detail,
+    }
 
 
 def _provenance_summary(provenance: ProvenanceLog) -> dict[str, object]:
-    """Summarize a provenance log into JSON-friendly audit fields."""
+    """Return complete application provenance plus lossless attempt aggregates."""
+    records = [_provenance_record(record) for record in provenance.records]
+    per_rule: dict[tuple[str, str], dict[str, object]] = {}
+    for record in provenance.records:
+        key = (record.rule_id, record.direction.value)
+        aggregate = per_rule.setdefault(
+            key,
+            {
+                "rule_id": record.rule_id,
+                "rule_name": record.rule_name,
+                "tier": record.tier.value,
+                "direction": record.direction.value,
+                "branch_sensitive": record.branch_sensitive,
+                "verifier_required": record.verifier_required,
+                "justification": record.justification,
+                "assumptions": sorted(record.assumptions),
+                "attempt_count": 0,
+                "outcomes": {},
+                "guard_outcomes": {},
+            },
+        )
+        aggregate["attempt_count"] = int(aggregate["attempt_count"]) + 1
+        outcomes = aggregate["outcomes"]
+        guards = aggregate["guard_outcomes"]
+        assert isinstance(outcomes, dict)
+        assert isinstance(guards, dict)
+        outcomes[record.outcome.value] = outcomes.get(record.outcome.value, 0) + 1
+        guards[record.guard.value] = guards.get(record.guard.value, 0) + 1
+
+    applied_counts = {
+        rule_id: count for rule_id, count in provenance.application_counts().items() if count > 0
+    }
+    catalog_keys = sorted(
+        {(record.rule_id, record.direction.value) for record in provenance.records}
+    )
+    catalog_index = {key: index for index, key in enumerate(catalog_keys)}
+    rule_catalog = [
+        per_rule[key]
+        | {
+            "catalog_index": catalog_index[key],
+            "substitution_names": sorted(
+                {
+                    name
+                    for record in provenance.records
+                    if (record.rule_id, record.direction.value) == key
+                    for name in record.substitution.names
+                }
+            ),
+        }
+        for key in catalog_keys
+    ]
+    applications = []
+    for record in provenance.records:
+        if record.outcome is not ApplicationOutcome.APPLIED:
+            continue
+        key = (record.rule_id, record.direction.value)
+        names = rule_catalog[catalog_index[key]]["substitution_names"]
+        assert isinstance(names, list)
+        applications.append(
+            [
+                record.sequence_index,
+                record.iteration,
+                catalog_index[key],
+                record.guard.value,
+                int(record.source_eclass),
+                (None if record.result_eclass is None else int(record.result_eclass)),
+                [int(record.substitution[name]) for name in names],
+                record.detail,
+            ]
+        )
     return {
-        "applied_rules": provenance.application_counts(),
-        "guard_outcomes": {
-            outcome.value: sum(1 for record in provenance.records if record.guard is outcome)
-            for outcome in {record.guard for record in provenance.records}
-        },
+        "application_log_complete": True,
+        "attempt_aggregates_complete": True,
+        "individual_nonapplication_attempts_retained": False,
+        "attempt_count": len(records),
+        "attempt_digest_sha256": sha256_hex(canonical_json(records).encode()),
+        "rule_catalog": rule_catalog,
+        "per_rule": [per_rule[key] for key in sorted(per_rule)],
+        "application_record_fields": [
+            "sequence_index",
+            "iteration",
+            "rule_catalog_index",
+            "guard",
+            "source_eclass",
+            "result_eclass",
+            "substitution_values",
+            "detail",
+        ],
+        "applications": applications,
+        "applied_rules": applied_counts,
         "branch_sensitive_applications": sum(
             1 for record in provenance.branch_sensitive_records() if record.applied
         ),
@@ -316,90 +518,139 @@ def process_expression(
     item: ExpressionItem,
     mode: RewriteMode,
     config: Goal4Config,
+    run_identity: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    """Run the full Goal 4 pipeline for one expression under one mode and return its row.
-
-    Every stage records an explicit status.  Compilation, unsupported operators, cost
-    failures, and empty candidate sets all yield a completed row with a failure reason; the
-    row is never dropped.
-    """
+    """Process one expression and retain a terminal row for every ordinary failure."""
     started_wall = time.monotonic()
     started_cpu = time.process_time()
-    assumptions = assumption_environment_for(mode.value, item.variables)
+    rss_before = sample_process_memory()
+    active_stage = "initialization"
+    identity = dict(run_identity) if run_identity is not None else _inline_run_identity(config)
+    assumptions = assumption_environment_for(item.domain_mode, item.variables)
     row: dict[str, object] = {
         "schema_version": ROW_SCHEMA_VERSION,
+        "run_id": identity["run_id"],
+        "config_sha256": identity["config_sha256"],
+        "source_manifest_sha256": identity.get("source_manifest_sha256"),
+        "implementation_commit": identity.get("implementation_commit"),
+        "compiler_mode": CompilerMode.OFFICIAL_V4.value,
         "expression_id": item.expression_id,
         "rewrite_mode": mode.value,
         "domain_mode": item.domain_mode,
         "operator_family": item.operator_family,
         "split": item.split,
         "size_bucket": item.size_bucket,
+        "difficulty_profile": item.difficulty_profile,
         "target_ast_size": item.target_ast_size,
-        "rule_library": "safe_real" if mode is RewriteMode.SAFE_REAL else "safe_plus_domain",
+        "observed_ast_size": item.observed_ast_size,
+        "observed_size_source": item.observed_size_source,
+        "rule_library": ("safe_real" if mode is RewriteMode.SAFE_REAL else "safe_plus_domain"),
         "declared_assumptions": {
-            name: sorted(a.value for a in assumptions.assumptions_for(name))
+            name: sorted(assumption.value for assumption in assumptions.assumptions_for(name))
             for name in item.variables
         },
+        "resource_limits": config.resources.model_dump(mode="json"),
     }
 
     try:
+        active_stage = "source_ast"
         expr = ast_tree_to_expr(build_ast(_record_stub(item)))
+
+        active_stage = "input_cost"
+        before_result = _official_cost(expr, f"{item.expression_id}-before")
+        if before_result.status is not EMLDagCostStatus.SUCCESS:
+            return _finalize(
+                row,
+                StageStatus.COST_FAILED,
+                started_wall,
+                started_cpu,
+                rss_before,
+                failure_stage=active_stage,
+                failure_reason=(
+                    "official direct EML DAG cost of input failed: "
+                    f"{before_result.error_type}: {before_result.error_message}"
+                ),
+            )
+        cost_before = before_result.eml_dag_node_count
+        assert cost_before is not None
+        row["eml_dag_cost_before"] = cost_before
+        row["input_cost_provenance"] = _cost_provenance(before_result)
+
+        active_stage = "egraph_build"
+        graph = EGraph(limits=_saturation_limits(config.resources).resources)
+        root = graph.add(expr)
+
+        active_stage = "saturation"
+        outcome = saturate(
+            graph,
+            _rules_for(mode, config.include_optional_domain_rules),
+            RewriteContext(mode=mode, assumptions=assumptions),
+            limits=_saturation_limits(config.resources),
+        )
+        _record_saturation(row, outcome, graph)
+
+        active_stage = "extraction"
+        extraction = extract_candidates(
+            graph,
+            root,
+            _extraction_limits(config.resources),
+            required_expressions=(expr,),
+        )
+        _record_extraction(row, extraction)
+
+        active_stage = "candidate_validation_and_cost"
+        report = evaluate_candidates(
+            extraction,
+            VerificationContext(
+                mode=mode,
+                assumptions=assumptions,
+                reference=expr,
+                compiler_mode=CompilerMode.OFFICIAL_V4,
+            ),
+            graph,
+        )
+        return _finalize_cost(
+            row,
+            report,
+            cost_before,
+            started_wall,
+            started_cpu,
+            rss_before,
+        )
     except UnsupportedSourceOperatorError as error:
         return _finalize(
             row,
             StageStatus.UNSUPPORTED_OPERATOR,
             started_wall,
             started_cpu,
+            rss_before,
+            failure_stage=active_stage,
             failure_reason=str(error),
         )
     except Exception as error:
         return _finalize(
             row,
-            StageStatus.COMPILE_FAILED,
+            StageStatus.INTERNAL_ERROR,
             started_wall,
             started_cpu,
-            failure_reason=f"AST build failed: {type(error).__name__}: {error}",
+            rss_before,
+            failure_stage=active_stage,
+            failure_reason=f"{type(error).__name__}: {error}",
         )
 
-    cost_before = _eml_dag_cost(expr)
-    if cost_before is None:
-        return _finalize(
-            row,
-            StageStatus.COMPILE_FAILED,
-            started_wall,
-            started_cpu,
-            failure_reason="official EML DAG cost of the input expression failed",
-        )
-    row["eml_dag_cost_before"] = cost_before
 
-    graph = EGraph(
-        limits=ResourceLimits(
-            max_iterations=config.resources.max_iterations,
-            max_egraph_nodes=config.resources.max_egraph_nodes,
-            timeout_seconds=max(0, int(config.resources.saturation_timeout_seconds)),
-        )
-    )
-    root = graph.add(expr)
-    outcome = saturate(
-        graph,
-        _rules_for(mode, config.include_optional_domain_rules),
-        RewriteContext(mode=mode, assumptions=assumptions),
-        limits=_saturation_limits(config.resources),
-    )
-    _record_saturation(row, outcome, graph)
-
-    extraction = extract_candidates(graph, root, _extraction_limits(config.resources))
-    _record_extraction(row, extraction)
-
-    report = evaluate_candidates(
-        extraction,
-        VerificationContext(mode=mode, assumptions=assumptions, reference=expr),
-    )
-    return _finalize_cost(row, report, cost_before, started_wall, started_cpu)
+def _cost_provenance(result: EMLDagCostResult) -> dict[str, object]:
+    return {
+        "status": result.status.value,
+        "input_kind": None if result.input_kind is None else result.input_kind.value,
+        "compiler_mode": (None if result.compiler_mode is None else result.compiler_mode.value),
+        "representation_mode": result.representation_mode,
+        "construction_path": result.construction_path,
+        "root_signature": result.root_signature,
+    }
 
 
 def _record_stub(item: ExpressionItem) -> ExpressionRecord:
-    """Rebuild the minimal expression record needed to parse an item's srepr."""
     from geml.contracts.corpus import CorpusSplit
 
     return ExpressionRecord(
@@ -414,30 +665,49 @@ def _record_stub(item: ExpressionItem) -> ExpressionRecord:
         target_ast_size=item.target_ast_size,
         target_depth=0,
         generator_seed=0,
-        generator_metadata={},
+        generator_metadata={
+            "achieved_source_ast_size": item.observed_ast_size,
+            "difficulty_profile": item.difficulty_profile,
+        },
     )
 
 
-def _record_saturation(row: dict[str, object], outcome: SaturationOutcome, graph: EGraph) -> None:
-    """Attach saturation telemetry to a row."""
+def _record_saturation(
+    row: dict[str, object],
+    outcome: SaturationOutcome,
+    graph: EGraph,
+) -> None:
     report = outcome.report
     stats = graph.stats()
-    row["saturation_status"] = report.status.value
-    row["saturated"] = report.saturated
-    row["rewrites_attempted"] = report.rewrites_attempted
-    row["rewrites_applied"] = report.rewrites_applied
-    row["saturation_reason"] = report.reason
-    row["egraph_enode_count"] = stats.node_count
-    row["egraph_eclass_count"] = stats.root_count
-    row["provenance"] = _provenance_summary(outcome.provenance)
+    row.update(
+        {
+            "saturation_status": report.status.value,
+            "saturated": report.saturated,
+            "saturation_iterations": report.iterations,
+            "rewrites_attempted": report.rewrites_attempted,
+            "rewrites_applied": report.rewrites_applied,
+            "saturation_reason": report.reason,
+            "egraph_enode_count": stats.node_count,
+            "egraph_eclass_count": stats.root_count,
+            "provenance": _provenance_summary(outcome.provenance),
+        }
+    )
 
 
-def _record_extraction(row: dict[str, object], extraction: ExtractionResult) -> None:
-    """Attach extraction telemetry to a row."""
-    row["extraction_status"] = extraction.status.value
-    row["extraction_reason"] = extraction.reason
-    row["candidate_count"] = extraction.count
-    row["extraction_nodes_visited"] = extraction.nodes_visited
+def _record_extraction(
+    row: dict[str, object],
+    extraction: ExtractionResult,
+) -> None:
+    row.update(
+        {
+            "extraction_status": extraction.status.value,
+            "extraction_reason": extraction.reason,
+            "candidate_count": extraction.count,
+            "extraction_nodes_visited": extraction.nodes_visited,
+            "extraction_iterations": extraction.iterations,
+            "extraction_elapsed_seconds": extraction.elapsed_seconds,
+        }
+    )
 
 
 def _finalize_cost(
@@ -446,27 +716,50 @@ def _finalize_cost(
     cost_before: int,
     started_wall: float,
     started_cpu: float,
+    rss_before: int | None,
 ) -> dict[str, object]:
-    """Attach cost, improvement, and selection to a row and finalize it."""
     row["validated_count"] = report.valid_count
     row["costed_count"] = report.costed_count
     row["retained_failure_count"] = len(report.retained_failures)
+    row["reference_in_candidates"] = report.reference_in_candidates
+    row["reference_reason"] = report.reference_reason
     row["validation_failures"] = {
         status: sum(
             1
             for scored in report.scored
             if scored.validated.status.value == status and not scored.validated.valid
         )
-        for status in {scored.validated.status.value for scored in report.scored}
+        for status in sorted(
+            {
+                scored.validated.status.value
+                for scored in report.scored
+                if not scored.validated.valid
+            }
+        )
     }
+    row["validation_failure_examples"] = [
+        {
+            "signature": scored.cost.lexical,
+            "status": scored.validated.status.value,
+            "reason": scored.validated.reason,
+        }
+        for scored in report.retained_failures[:5]
+    ]
 
     if report.selected is None:
+        status = (
+            StageStatus.VALIDATION_FAILED
+            if report.valid_count == 0 or not report.reference_in_candidates
+            else StageStatus.NO_CANDIDATE
+        )
         return _finalize(
             row,
-            StageStatus.NO_CANDIDATE,
+            status,
             started_wall,
             started_cpu,
-            failure_reason="no valid, officially costed candidate was found",
+            rss_before,
+            failure_stage="candidate_validation_and_cost",
+            failure_reason=report.reference_reason,
         )
 
     cost_after = report.selected.cost.eml_dag_cost
@@ -476,18 +769,53 @@ def _finalize_cost(
             StageStatus.COST_FAILED,
             started_wall,
             started_cpu,
+            rss_before,
+            failure_stage="candidate_validation_and_cost",
             failure_reason="selected candidate has no official EML DAG cost",
         )
 
     improvement = cost_before - cost_after
-    row["eml_dag_cost_after"] = cost_after
-    row["absolute_improvement"] = improvement
-    row["relative_improvement"] = improvement / cost_before if cost_before else 0.0
-    row["selected_signature"] = report.selected.cost.lexical
-    row["validation_status"] = report.selected.validated.status.value
-    row["semantic_status"] = report.selected.validated.status.value
-    status = StageStatus.OPTIMIZED if improvement > 0 else StageStatus.UNCHANGED
-    return _finalize(row, status, started_wall, started_cpu, failure_reason=None)
+    selected = report.selected.validated
+    row.update(
+        {
+            "eml_dag_cost_after": cost_after,
+            "absolute_improvement": improvement,
+            "relative_improvement": improvement / cost_before,
+            "relative_improvement_exact": f"{improvement}/{cost_before}",
+            "selected_signature": report.selected.cost.lexical,
+            "validation_status": selected.status.value,
+            "semantic_status": selected.status.value,
+            "validation_reason": selected.reason,
+            "validation_sample_points": selected.sample_points_checked,
+            "selected_cost_provenance": (
+                None
+                if selected.dag_cost_result is None
+                else _cost_provenance(selected.dag_cost_result)
+            ),
+        }
+    )
+    if improvement < 0:
+        return _finalize(
+            row,
+            StageStatus.DEGRADED_REJECTED,
+            started_wall,
+            started_cpu,
+            rss_before,
+            failure_stage="selection",
+            failure_reason=(
+                "integrity invariant violated: selected candidate costs more than "
+                "the retained source candidate"
+            ),
+        )
+    return _finalize(
+        row,
+        StageStatus.OPTIMIZED if improvement > 0 else StageStatus.UNCHANGED,
+        started_wall,
+        started_cpu,
+        rss_before,
+        failure_stage=None,
+        failure_reason=None,
+    )
 
 
 def _finalize(
@@ -495,19 +823,23 @@ def _finalize(
     status: StageStatus,
     started_wall: float,
     started_cpu: float,
+    rss_before: int | None,
     *,
+    failure_stage: str | None,
     failure_reason: str | None,
 ) -> dict[str, object]:
-    """Attach the terminal status, resource sample, and failure reason to a row."""
     sample = ResourceSample(
         wall_seconds=time.monotonic() - started_wall,
         cpu_seconds=time.process_time() - started_cpu,
-        peak_memory_bytes=sample_process_memory(),
+        rss_bytes_before=rss_before,
+        rss_bytes_after=sample_process_memory(),
     )
     row["stage_status"] = status.value
+    row["failure_stage"] = failure_stage
     row["failure_reason"] = failure_reason
-    row["timeout"] = row.get("saturation_status") == ExtractionStatus.TIMEOUT.value or (
-        row.get("extraction_status") == ExtractionStatus.TIMEOUT.value
+    row["timeout"] = (
+        row.get("saturation_status") == ExtractionStatus.TIMEOUT.value
+        or row.get("extraction_status") == ExtractionStatus.TIMEOUT.value
     )
     row["resources"] = sample.as_dict()
     _ensure_audit_schema(row)
@@ -515,18 +847,16 @@ def _finalize(
 
 
 def _ensure_audit_schema(row: dict[str, object]) -> None:
-    """Guarantee every row carries the full audit column set, even on an early exit.
-
-    Rows that fail before saturation still expose the saturation, extraction, cost, and
-    provenance fields as explicit nulls so no column is ever silently omitted.
-    """
     defaults: dict[str, object] = {
+        "input_cost_provenance": None,
         "eml_dag_cost_before": None,
         "eml_dag_cost_after": None,
         "absolute_improvement": None,
         "relative_improvement": None,
+        "relative_improvement_exact": None,
         "saturation_status": None,
         "saturated": None,
+        "saturation_iterations": None,
         "rewrites_attempted": None,
         "rewrites_applied": None,
         "saturation_reason": None,
@@ -537,13 +867,21 @@ def _ensure_audit_schema(row: dict[str, object]) -> None:
         "extraction_reason": None,
         "candidate_count": None,
         "extraction_nodes_visited": None,
+        "extraction_iterations": None,
+        "extraction_elapsed_seconds": None,
         "validated_count": None,
         "costed_count": None,
         "retained_failure_count": None,
         "validation_failures": None,
+        "validation_failure_examples": None,
+        "reference_in_candidates": None,
+        "reference_reason": None,
         "validation_status": None,
         "semantic_status": None,
+        "validation_reason": None,
+        "validation_sample_points": None,
         "selected_signature": None,
+        "selected_cost_provenance": None,
     }
     for key, value in defaults.items():
         row.setdefault(key, value)
@@ -551,13 +889,67 @@ def _ensure_audit_schema(row: dict[str, object]) -> None:
 
 @dataclass(frozen=True, slots=True)
 class StageResult:
-    """Summary of one completed stage run."""
-
     stage: str
     rows_path: Path
     checkpoint_path: Path
+    run_manifest_path: Path
+    run_id: str
     total_units: int
     completed_units: int
+
+
+def _inline_run_identity(config: Goal4Config) -> dict[str, object]:
+    config_payload = config.model_dump(mode="json")
+    config_sha = sha256_hex(canonical_json(config_payload).encode())
+    base = {
+        "schema_version": RUN_SCHEMA_VERSION,
+        "config_sha256": config_sha,
+        "source_manifest_sha256": None,
+        "implementation_commit": None,
+    }
+    return {**base, "run_id": sha256_hex(canonical_json(base).encode())}
+
+
+def _build_run_identity(
+    config: Goal4Config,
+    stage_name: str,
+    items: tuple[ExpressionItem, ...],
+    source_identity: Mapping[str, object],
+    implementation_commit: str | None,
+) -> dict[str, object]:
+    config_payload = config.model_dump(mode="json")
+    config_sha = sha256_hex(canonical_json(config_payload).encode())
+    selection_payload = [
+        {
+            "expression_id": item.expression_id,
+            "operator_family": item.operator_family,
+            "domain_mode": item.domain_mode,
+            "split": item.split,
+            "size_bucket": item.size_bucket,
+            "difficulty_profile": item.difficulty_profile,
+        }
+        for item in items
+    ]
+    selection_sha = sha256_hex(canonical_json(selection_payload).encode())
+    source_payload = dict(source_identity)
+    canonical_json(source_payload)
+    base: dict[str, object] = {
+        "schema_version": RUN_SCHEMA_VERSION,
+        "row_schema_version": ROW_SCHEMA_VERSION,
+        "checkpoint_schema_version": CHECKPOINT_SCHEMA_VERSION,
+        "stage": stage_name,
+        "config": config_payload,
+        "config_sha256": config_sha,
+        "source": source_payload,
+        "source_manifest_sha256": source_payload.get("manifest_sha256"),
+        "implementation_commit": implementation_commit,
+        "selection_sha256": selection_sha,
+        "selected_expression_count": len(items),
+        "modes": [mode.value for mode in config.resolved_modes()],
+        "compiler_mode": CompilerMode.OFFICIAL_V4.value,
+    }
+    run_id = sha256_hex(canonical_json(base).encode())
+    return {**base, "run_id": run_id}
 
 
 def run_stage(
@@ -565,19 +957,18 @@ def run_stage(
     stage_name: str,
     records: Sequence[ExpressionRecord],
     output_dir: str | Path,
+    *,
+    source_identity: Mapping[str, object] | None = None,
+    implementation_commit: str | None = None,
 ) -> StageResult:
-    """Execute one stage over a record set, writing durable rows and a resumable checkpoint.
-
-    Work is chunked; after each configured number of chunks a create-only checkpoint is
-    published listing completed ``(expression_id, mode)`` units.  On resume, units already
-    present in the JSONL rows are skipped, so no completed work is recomputed or lost.
-    """
+    """Execute a complete stage with content-bound crash-safe resume."""
     if stage_name not in config.stages:
         raise Goal4RuntimeError(f"unknown stage {stage_name!r}")
     stage = config.stages[stage_name]
     directory = Path(output_dir)
     rows_path = directory / f"{stage_name}.rows.jsonl"
     checkpoint_path = directory / f"{stage_name}.checkpoint.json"
+    run_manifest_path = directory / f"{stage_name}.run.json"
 
     items = select_subset(
         (item_from_record(record, config.sampling) for record in records),
@@ -585,105 +976,308 @@ def run_stage(
     )
     if stage.row_limit is not None:
         items = items[: stage.row_limit]
+    if len(items) != stage.expected_count:
+        raise Goal4RuntimeError(
+            f"stage {stage_name!r} expected {stage.expected_count} expressions, "
+            f"but deterministic selection produced {len(items)}"
+        )
+
+    identity_source = (
+        dict(source_identity) if source_identity is not None else _fixture_source_identity(records)
+    )
+    run_identity = _build_run_identity(
+        config,
+        stage_name,
+        items,
+        identity_source,
+        implementation_commit,
+    )
+    run_id = str(run_identity["run_id"])
+    atomic_write_json(run_manifest_path, run_identity, resume_identical=True)
 
     modes = config.resolved_modes()
     units = [(item, mode) for item in items for mode in modes]
+    expected_keys = {unit_key(item.expression_id, mode.value) for item, mode in units}
     total_units = len(units)
-
-    completed = _completed_units(rows_path, config.processing.resume)
+    completed = _completed_units(
+        rows_path,
+        config.processing.resume,
+        run_id,
+        expected_keys,
+    )
+    chunk_index = _resume_checkpoint(
+        checkpoint_path,
+        stage_name,
+        run_id,
+        total_units,
+        completed,
+    )
     pending = [
         unit for unit in units if unit_key(unit[0].expression_id, unit[1].value) not in completed
     ]
 
-    chunk_index = 0
-    for chunk in iter_chunks(pending, config.processing.chunk_size):
-        rows = [process_expression(item, mode, config) for item, mode in chunk]
-        append_jsonl(rows_path, rows)
-        for item, mode in chunk:
-            completed.add(unit_key(item.expression_id, mode.value))
-        chunk_index += 1
-        if chunk_index % config.processing.checkpoint_every_chunks == 0:
-            _write_checkpoint(checkpoint_path, stage_name, total_units, completed, chunk_index)
+    executor: ProcessPoolExecutor | None = None
+    if config.processing.worker_processes > 1 and pending:
+        executor = ProcessPoolExecutor(max_workers=config.processing.worker_processes)
+    try:
+        for chunk in iter_chunks(pending, config.processing.chunk_size):
+            arguments = [(item, mode, config, run_identity) for item, mode in chunk]
+            if executor is None:
+                rows = [_process_unit(argument) for argument in arguments]
+            else:
+                rows = list(executor.map(_process_unit, arguments, chunksize=1))
+            append_jsonl(rows_path, rows)
+            for row in rows:
+                key = unit_key(
+                    _required_row_string(row, "expression_id"),
+                    _required_row_string(row, "rewrite_mode"),
+                )
+                if key in completed or key not in expected_keys:
+                    raise Goal4RuntimeError(
+                        f"worker returned duplicate or unexpected work unit {key!r}"
+                    )
+                if row.get("run_id") != run_id:
+                    raise Goal4RuntimeError("worker returned a row for a different run")
+                completed.add(key)
+            chunk_index += 1
+            if chunk_index % config.processing.checkpoint_every_chunks == 0:
+                _write_checkpoint(
+                    checkpoint_path,
+                    stage_name,
+                    run_id,
+                    total_units,
+                    completed,
+                    chunk_index,
+                )
+    finally:
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
 
-    _write_checkpoint(checkpoint_path, stage_name, total_units, completed, chunk_index)
+    _write_checkpoint(
+        checkpoint_path,
+        stage_name,
+        run_id,
+        total_units,
+        completed,
+        chunk_index,
+    )
+    if completed != expected_keys:
+        missing = sorted(expected_keys - completed)
+        raise Goal4RuntimeError(f"stage ended with {len(missing)} missing work units")
     return StageResult(
         stage=stage_name,
         rows_path=rows_path,
         checkpoint_path=checkpoint_path,
+        run_manifest_path=run_manifest_path,
+        run_id=run_id,
         total_units=total_units,
         completed_units=len(completed),
     )
 
 
-def _completed_units(rows_path: Path, resume: bool) -> set[str]:
-    """Return the set of completed work-unit keys already present in the rows file."""
-    if not resume:
-        return set()
+def _process_unit(
+    arguments: tuple[
+        ExpressionItem,
+        RewriteMode,
+        Goal4Config,
+        Mapping[str, object],
+    ],
+) -> dict[str, object]:
+    return process_expression(*arguments)
+
+
+def _required_row_string(row: Mapping[str, object], key: str) -> str:
+    value = row.get(key)
+    if not isinstance(value, str) or not value:
+        raise Goal4RuntimeError(f"worker row has invalid {key}")
+    return value
+
+
+def _fixture_source_identity(
+    records: Sequence[ExpressionRecord],
+) -> dict[str, object]:
+    payload = [
+        {
+            "expression_id": record.expression_id,
+            "srepr_sha256": sha256_hex(record.sympy_srepr.encode()),
+        }
+        for record in records
+    ]
+    return {
+        "kind": "in_memory_records",
+        "record_count": len(records),
+        "records_sha256": sha256_hex(canonical_json(payload).encode()),
+        "manifest_sha256": None,
+    }
+
+
+def _completed_units(
+    rows_path: Path,
+    resume: bool,
+    run_id: str,
+    expected_keys: set[str],
+) -> set[str]:
+    if rows_path.exists() and not resume:
+        raise Goal4RuntimeError(
+            f"rows artifact already exists while resume is disabled: {rows_path}"
+        )
     completed: set[str] = set()
     for row in read_jsonl(rows_path):
-        expression_id = row.get("expression_id")
-        mode = row.get("rewrite_mode")
-        if isinstance(expression_id, str) and isinstance(mode, str):
-            completed.add(unit_key(expression_id, mode))
+        if row.get("schema_version") != ROW_SCHEMA_VERSION:
+            raise Goal4RuntimeError("rows artifact uses an incompatible row schema")
+        if row.get("run_id") != run_id:
+            raise Goal4RuntimeError(
+                "rows artifact belongs to a different config/corpus/subset/commit"
+            )
+        key = unit_key(
+            _required_row_string(row, "expression_id"),
+            _required_row_string(row, "rewrite_mode"),
+        )
+        if key not in expected_keys:
+            raise Goal4RuntimeError(f"rows artifact contains unexpected work unit {key!r}")
+        if key in completed:
+            raise Goal4RuntimeError(f"rows artifact contains duplicate work unit {key!r}")
+        if not isinstance(row.get("stage_status"), str):
+            raise Goal4RuntimeError(f"rows artifact has incomplete work unit {key!r}")
+        completed.add(key)
     return completed
+
+
+def _resume_checkpoint(
+    checkpoint_path: Path,
+    stage_name: str,
+    run_id: str,
+    total_units: int,
+    completed: set[str],
+) -> int:
+    if not checkpoint_path.exists():
+        return 0
+    checkpoint = load_checkpoint(checkpoint_path)
+    if checkpoint.schema_version != CHECKPOINT_SCHEMA_VERSION:
+        raise Goal4RuntimeError("checkpoint schema is incompatible")
+    if (
+        checkpoint.run_id != run_id
+        or checkpoint.stage != stage_name
+        or checkpoint.total_units != total_units
+    ):
+        raise Goal4RuntimeError("checkpoint belongs to a different run identity or unit count")
+    checkpoint_completed = set(checkpoint.completed_ids)
+    if not checkpoint_completed <= completed:
+        raise Goal4RuntimeError(
+            "checkpoint claims work units that are absent from the durable rows file"
+        )
+    return checkpoint.chunk_index
 
 
 def _write_checkpoint(
     checkpoint_path: Path,
     stage_name: str,
+    run_id: str,
     total_units: int,
     completed: set[str],
     chunk_index: int,
 ) -> None:
-    """Publish a fresh checkpoint, replacing any prior checkpoint for this stage."""
     state = CheckpointState(
         schema_version=CHECKPOINT_SCHEMA_VERSION,
+        run_id=run_id,
         stage=stage_name,
         total_units=total_units,
         completed_ids=tuple(sorted(completed)),
         chunk_index=chunk_index,
     )
-    checkpoint_path.unlink(missing_ok=True)
-    atomic_write_json(checkpoint_path, state.as_dict(), resume_identical=False)
+    atomic_replace_json(checkpoint_path, state.as_dict())
 
 
 def load_checkpoint(checkpoint_path: str | Path) -> CheckpointState:
-    """Load a stage checkpoint from disk."""
     return CheckpointState.from_dict(load_json(checkpoint_path, label="Goal 4 checkpoint"))
 
 
-def _load_corpus_records(manifest_path: str | Path) -> list[ExpressionRecord]:  # pragma: no cover
-    """Load expression records from a corpus manifest for the production path.
-
-    This path depends on the corpus shard reader and is exercised only by the production
-    command, not by the fresh-clone smoke test.
-    """
+def _load_corpus_records(
+    manifest_path: str | Path,
+) -> list[ExpressionRecord]:  # pragma: no cover - production I/O
+    """Load and checksum-validate every shard named by a corpus manifest."""
     from geml.data.storage.manifests import load_corpus_manifest
     from geml.data.storage.shards import read_shard
 
-    manifest = load_corpus_manifest(manifest_path)
+    source = Path(manifest_path).resolve()
+    manifest = load_corpus_manifest(source)
+    root = source.parents[1]
     records: list[ExpressionRecord] = []
-    base = Path(manifest_path).parent
-    for shard in manifest.shards:
-        records.extend(read_shard(base / shard.relative_path))
+    for split in manifest.splits:
+        for shard in split.shards:
+            records.extend(read_shard(shard, root, validate_checksum=True))
+    if len(records) != manifest.total_row_count:
+        raise Goal4RuntimeError(
+            f"manifest declares {manifest.total_row_count} rows, loaded {len(records)}"
+        )
     return records
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI wrapper
-    """Command-line entry point for the production Goal 4 experiment."""
+def _corpus_identity(
+    manifest_path: str | Path,
+    record_count: int,
+) -> dict[str, object]:  # pragma: no cover - production I/O
+    from geml.data.storage.manifests import load_corpus_manifest
+
+    source = Path(manifest_path).resolve()
+    manifest = load_corpus_manifest(source)
+    return {
+        "kind": "corpus_manifest",
+        "manifest_path": str(source),
+        "manifest_sha256": sha256_hex(source.read_bytes()),
+        "manifest_schema_version": manifest.schema_version,
+        "corpus_id": manifest.corpus_id,
+        "record_count": record_count,
+    }
+
+
+def _clean_implementation_commit() -> str:  # pragma: no cover - CLI policy
+    root = Path(__file__).resolve().parents[4]
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise Goal4RuntimeError("production runs require an identifiable git checkout") from error
+    if dirty:
+        raise Goal4RuntimeError("production runs require a clean implementation commit")
+    return commit
+
+
+def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - CLI
     parser = argparse.ArgumentParser(description="Run the Goal 4 optimization experiment.")
-    parser.add_argument("--config", required=True, help="Path to the Goal 4 YAML config.")
-    parser.add_argument("--stage", required=True, help="Stage name defined in the config.")
-    parser.add_argument("--manifest", required=True, help="Corpus manifest path.")
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--stage", required=True)
+    parser.add_argument("--manifest", required=True)
     arguments = parser.parse_args(argv)
 
     config = load_goal4_config(arguments.config)
+    commit = _clean_implementation_commit()
     records = _load_corpus_records(arguments.manifest)
+    source_identity = _corpus_identity(arguments.manifest, len(records))
     output_dir = Path(config.output_root) / arguments.stage
-    result = run_stage(config, arguments.stage, records, output_dir)
+    result = run_stage(
+        config,
+        arguments.stage,
+        records,
+        output_dir,
+        source_identity=source_identity,
+        implementation_commit=commit,
+    )
     print(
-        f"stage {result.stage}: {result.completed_units}/{result.total_units} units at "
-        f"{result.rows_path}"
+        f"stage {result.stage}: {result.completed_units}/{result.total_units} "
+        f"units; run_id={result.run_id}; rows={result.rows_path}"
     )
     return 0
 

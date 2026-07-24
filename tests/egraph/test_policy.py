@@ -82,6 +82,28 @@ def test_resource_limits_defaults():
     assert limits.max_egraph_nodes > 0
     assert limits.timeout_seconds > 0
     assert limits.max_memory_mb is None
+    assert limits.max_rewrite_attempts > 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_iterations", -1),
+        ("max_egraph_nodes", -1),
+        ("max_rewrite_attempts", -1),
+        ("timeout_seconds", -0.1),
+        ("timeout_seconds", float("inf")),
+        ("max_memory_mb", 0),
+    ],
+)
+def test_invalid_resource_limits_are_rejected(field, value):
+    with pytest.raises(ValueError, match="must be"):
+        ResourceLimits(**{field: value})
+
+
+def test_rule_policy_rejects_malformed_identity():
+    with pytest.raises(ValueError, match="rule_id"):
+        RulePolicy(rule_id=" ", name="bad", tier=RuleTier.ALWAYS_SAFE)
 
 
 def test_saturation_report():

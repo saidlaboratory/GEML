@@ -199,16 +199,27 @@ class CycleSafeExtractor:
             self._state.halted_status = ExtractionStatus.ITERATION_LIMIT
             return ()
 
-        results = self._expand_nodes(canonical, remaining_depth)
+        results = self._expand_nodes(canonical, remaining_depth, cap)
         ordered = self._order_and_cap(results, cap)
 
         if use_memo and self._state.halted_status is None:
             self._state.memo[key] = ordered
         return ordered
 
-    def _expand_nodes(self, eclass: EClassId, remaining_depth: int) -> list[Expr]:
-        """Build every candidate contributed by the e-nodes of ``eclass``."""
+    def _expand_nodes(
+        self,
+        eclass: EClassId,
+        remaining_depth: int,
+        cap: int,
+    ) -> list[Expr]:
+        """Build a deterministic bounded prefix of candidates for one e-class.
+
+        Stopping once ``cap`` distinct signatures are available is the operational beam
+        bound.  Continuing to enumerate an exponentially large cyclic search space only to
+        discard its suffix would turn the configured timeout into the de-facto algorithm.
+        """
         collected: list[Expr] = []
+        signatures: set[str] = set()
         for node in self._egraph.nodes_of(eclass):
             if self._halted():
                 break
@@ -219,7 +230,12 @@ class CycleSafeExtractor:
             if self._timed_out():
                 self._state.halted_status = ExtractionStatus.TIMEOUT
                 break
-            collected.extend(self._expand_node(node, remaining_depth))
+            for expression in self._expand_node(node, remaining_depth):
+                collected.append(expression)
+                signatures.add(expr_signature(expression))
+                if len(signatures) >= cap:
+                    self._state.exhaustive = False
+                    return collected
         return collected
 
     def _expand_node(self, node: ENode, remaining_depth: int) -> list[Expr]:
