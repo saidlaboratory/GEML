@@ -140,8 +140,99 @@ python -m geml.analysis.goal4.summary \
 ## Production result
 
 <!-- production-results:start -->
-The corrected production run has not yet been inserted into this document. Do not infer a
-scientific after-rate from the smoke fixtures.
+### Frozen artifact identity
+
+Only the following audited run is a Goal 4 production result:
+
+| Field | Value |
+|---|---|
+| Implementation commit | `3f590fcde0dd85ca0db140ce77af8553ac04aeb7` |
+| Run ID | `9c26ec3036c45bd3bf24256d9a57fa4e1e48d016cd2cee446a47918667cf2536` |
+| Goal 1 manifest SHA-256 | `77fce5779b3d2c2f3cdf2b9f49da54cd14474d37ab128337bdf4fcc52afd4f0d` |
+| Goal 4 config SHA-256 | `adb7e72830d96540c65989becc35fc05ce1a6d2d24cadecac105d8dd55bd9b0a` |
+| Selection SHA-256 | `8cfba717f7cad75f3d9b0b7e4a532439f4578f21038dcc941aee2e7d6ded2942` |
+| Final rows SHA-256 | `f8fd2e6db597da465d4367ce402fc69598eac45031fa9afe52fedc17011a2c31` |
+| Expressions / paired rows | 30,000 / 60,000 |
+
+The checkpoint contains exactly the same 60,000 unique `(expression_id, mode)` keys as the
+rows file. Every expression has one row in each mode.
+
+### Paired outcomes
+
+| Mode | Processed | Costed | Improved / costed | Improved / processed | Unchanged | Retained failures | Signed EML-DAG nodes saved |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `safe_real` | 30,000 | 18,210 (60.700%) | 4,349 / 18,210 (23.882%) | 4,349 / 30,000 (14.497%) | 13,861 | 11,790 | 95,596 |
+| `positive_real_formal` | 30,000 | 18,210 (60.700%) | 5,026 / 18,210 (27.600%) | 5,026 / 30,000 (16.753%) | 13,184 | 11,790 | 104,996 |
+
+Mean signed savings over costed rows were 5.250 nodes in `safe_real` and 5.766 in
+`positive_real_formal`. Mean relative savings over all costed rows, including unchanged
+rows, were 2.361% and 2.849%, respectively. The largest retained reduction was 302 exact
+EML-DAG nodes in both modes.
+
+The formal library produced 677 more improved rows and 9,400 more saved nodes than the safe
+library. The extra findings were concentrated in `exp_log` (1,560 versus 2,131 improved
+rows) and `ood_stress` (289 versus 395). `algebraic_core` and
+`powers_division_rationals` had identical improved counts in the two modes, as expected
+when no additional guarded rule changes the selected form.
+
+### Coverage, failures, and resource stops
+
+Each mode retained:
+
+- 11,566 unsupported-operator rows (38.553% of processed);
+- 224 work-unit validation failures (0.747%);
+- zero timeouts;
+- zero internal errors;
+- zero cost failures or missing-source-candidate failures; and
+- zero degraded selections.
+
+All 5,903 `trig_hyperbolic` and 5,663 `mixed_elementary` rows in each mode were outside the
+closed Goal 4 vocabulary, which explains the 60.700% cost coverage. Among supported
+families, validation failure rates were 2.3% for `exp_log` and 8.1% for `ood_stress`; they
+were zero for the other supported families. There was no timeout bias because no work unit
+timed out.
+
+Saturation reached a fixed point for 9,558 safe and 9,489 formal rows. Node limits stopped
+6,427 and 6,458 rows; rewrite-attempt limits stopped 2,449 and 2,487. These are retained
+partial searches, not mislabeled fixed points. Extraction was explicitly partial for
+17,015 safe and 17,280 formal rows. The observed maxima were the configured 500 e-nodes
+and 2,500 rewrite attempts; extraction visited at most 3,127 of its allowed 10,000 nodes.
+
+### Validation and provenance audit
+
+The independent streaming audit checked every row, not a sample. Every selected form:
+
+- remained in the claimed root with the original source anchor;
+- had exact non-increasing before/after cost arithmetic;
+- passed direct Goal 3 compilation and independent source-semantics probing; and
+- carried complete compact application provenance plus exact attempt aggregates.
+
+The 224 failed rows per mode were conservative zero-finite-evidence outcomes. Across their
+retained candidates there were 660 `safe_real` and 773 `positive_real_formal`
+`inconclusive` verdicts.
+
+One additional, non-selected formal candidate on expression
+`ba621a8167a97f1debc522f024888a32b2dbfe6d1ec5b3fb2c69cf4e064e2d77`
+was retained as `domain_mismatch`. Reproduction traced it to floating evaluation of the
+exact identity `exp(log(9)) - 7 = 2` when used as an exponent of `-1`: the near-integer
+float makes the probe evaluator report undefinedness. The source anchor was selected
+unchanged, so no reported improvement depends on this candidate. The audit deliberately
+keeps this conservative false positive instead of weakening the definedness check with an
+unjustified near-integer heuristic.
+
+All six generated plots were rendered and visually checked:
+`success_rate.png`, `improvement_distribution.png`, `runtime_distribution.png`,
+`failure_breakdown.png`, `family_improvements.png`, and `memory_availability.png`. RSS
+snapshots were available on all 60,000 rows.
+
+### Superseded audit runs
+
+No earlier local run contributes to these findings. Review first exposed a misleading
+top-level validation-failure reason and then a rare incremental congruence-rekey defect
+that could lose or over-merge a retained node near the e-node limit. The latter reduced to
+a 19-node regression and was replaced by atomic whole-graph canonical repair. Runs from
+the pre-fix commits were preserved only as audit evidence and superseded; the table above
+uses the clean post-fix implementation and its distinct content-addressed run ID.
 <!-- production-results:end -->
 
 ## Claim boundaries

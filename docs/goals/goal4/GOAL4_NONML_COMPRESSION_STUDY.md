@@ -103,6 +103,29 @@ All no-op, guard-rejected, unsupported, and limit-stopped attempts remain in exa
 outcome aggregates. An ordered-log digest provides an integrity binding without inflating
 every row with repeated policy text.
 
+## Audited production findings
+
+The frozen 30,000-expression study is identified in `GOAL4_SUMMARY.md`. On the 18,210
+costed rows per mode, `safe_real` improved 4,349 (23.882%) and
+`positive_real_formal` improved 5,026 (27.600%). Their all-processed rates were 14.497% and
+16.753%. Exact signed savings were 95,596 and 104,996 EML-DAG nodes, with no degraded
+selection.
+
+The guarded formal rules added 677 improved rows. Their observed benefit was concentrated
+in `exp_log` and `ood_stress`; algebraic and powers/division/rational improved counts did
+not change. This is an empirical result for the frozen balanced selection and configured
+bounds, not a claim about every expression in those families.
+
+Cost coverage was 60.700%. The remaining rows were retained rather than filtered:
+11,566 unsupported trigonometric/mixed rows and 224 conservative validation failures per
+mode. There were no timeouts or internal errors in the audited final run.
+
+One non-selected formal candidate received a conservative floating-probe
+`domain_mismatch` because an exact integer exponent reached the evaluator through
+`exp(log(9)) - 7`. The source anchor was retained and selected unchanged. This example is
+reported because validation failures are evidence about the audit boundary, even when they
+do not affect a selected result.
+
 ## Honest limitations
 
 - The candidate set is depth-, beam-, count-, node-, iteration-, and time-bounded.
@@ -112,4 +135,6 @@ every row with repeated policy text.
   equivalence.
 - Unsupported trigonometric/hyperbolic rows are failures in the all-processed denominator,
   not silently removed.
+- Floating numeric probes can conservatively reject an exact identity near a real-domain
+  boundary; rejected candidates are retained and never promoted.
 - “Best” always means best among retained, validated candidates under the stated limits.
