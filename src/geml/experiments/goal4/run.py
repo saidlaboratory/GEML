@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import time
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -759,7 +760,7 @@ def _finalize_cost(
             started_cpu,
             rss_before,
             failure_stage="candidate_validation_and_cost",
-            failure_reason=report.reference_reason,
+            failure_reason=_selection_failure_reason(report),
         )
 
     cost_after = report.selected.cost.eml_dag_cost
@@ -816,6 +817,24 @@ def _finalize_cost(
         failure_stage=None,
         failure_reason=None,
     )
+
+
+def _selection_failure_reason(report: CostReport) -> str:
+    """Explain why a retained source anchor still produced no selectable candidate."""
+    if not report.reference_in_candidates:
+        return report.reference_reason
+    if report.valid_count == 0:
+        validation_counts = Counter(
+            scored.validated.status.value for scored in report.retained_failures
+        )
+        detail = ", ".join(
+            f"{status}={validation_counts[status]}" for status in sorted(validation_counts)
+        )
+        suffix = f" ({detail})" if detail else ""
+        return f"no candidate passed independent validation{suffix}"
+    if report.costed_count == 0:
+        return "no validated candidate received an official EML DAG cost"
+    return "candidate selection returned no rankable result despite a retained source reference"
 
 
 def _finalize(

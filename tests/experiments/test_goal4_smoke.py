@@ -323,6 +323,38 @@ class TestPipelineExecution:
             for row in costed
         )
 
+    def test_inconclusive_validation_has_an_honest_top_level_reason(self, tmp_path: Path):
+        srepr = "Add(Symbol('x', real=True), exp(exp(exp(Integer(9)))))"
+        record = ExpressionRecord(
+            expression_id=_expression_id(srepr, 1000),
+            sympy_srepr=srepr,
+            display_text=srepr,
+            latex_text=None,
+            split=_SPLITS[0],
+            operator_family="exp_log",
+            domain_mode="safe_real",
+            variables=("x",),
+            target_ast_size=6,
+            target_depth=4,
+            generator_seed=1000,
+            generator_metadata={
+                "achieved_source_ast_size": 6,
+                "difficulty_profile": "stress",
+            },
+        )
+        config = _config(tmp_path, count=1)
+        row = process_expression(
+            item_from_record(record, config.sampling),
+            config.resolved_modes()[0],
+            config,
+        )
+        assert row["stage_status"] == StageStatus.VALIDATION_FAILED.value
+        assert row["failure_reason"].startswith(
+            "no candidate passed independent validation (inconclusive="
+        )
+        assert row["failure_reason"] != row["reference_reason"]
+        assert row["validation_failures"]["inconclusive"] > 0
+
 
 class TestCheckpointAndResume:
     def test_checkpoint_is_created(self, default_stage):
