@@ -1,0 +1,57 @@
+# Issue 5-7 production command (input paths may be overridden on the CLI):
+# python -m geml.experiments.goal5.neural_ranker \
+#   --config configs/goal5_neural_ranker.yaml \
+#   --rows-path <goal4-run>/final.rows.jsonl \
+#   --run-manifest-path <goal4-run>/final.run.json \
+#   --corpus-manifest-path <goal1-run>/manifests/corpus.manifest.json
+schema_version: geml-goal5-neural-ranker-config-v1
+
+goal4:
+  rows_path: outputs/final/goal4/final/final.rows.jsonl
+  rows_sha256: f8fd2e6db597da465d4367ce402fc69598eac45031fa9afe52fedc17011a2c31
+  run_manifest_path: outputs/final/goal4/final/final.run.json
+  run_manifest_sha256: e616a4fb4354fbb64d786d9da22be2923d5e18868f64dad8f8f5e6d10e608fc4
+  run_id: 9c26ec3036c45bd3bf24256d9a57fa4e1e48d016cd2cee446a47918667cf2536
+  corpus_manifest_path: outputs/final/goal1/final/run/manifests/corpus.manifest.json
+  corpus_manifest_sha256: 77fce5779b3d2c2f3cdf2b9f49da54cd14474d37ab128337bdf4fcc52afd4f0d
+
+dataset:
+  method: fixed_cycle_safe_goal4_replay_v1
+  exact_group_key: expression_id_and_rewrite_mode
+  label: official_v4_pure_eml_dag_node_count
+  retain_failed_candidates: true
+  require_summary_match: true
+  # Four of 32 logical processors keeps replay bounded while the independent 5-8
+  # export runs.  Candidate order remains canonical because executor output is ordered.
+  worker_processes: 4
+  worker_chunksize: 4
+  checkpoint_every_groups: 100
+  log_every_groups: 100
+
+model:
+  method: geml-egraph-random-feature-ranker-v1
+  seed: 20260724
+  hidden_units: 32
+  ridge_values: [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+  target_transform: log1p
+  group_equal_weighting: true
+  validation_selects_ridge: true
+
+evaluation:
+  methods:
+    - exact_official_eml_dag
+    - neural_ranker
+    - estimated_eml_tree_cost
+    - ast_dag_cost
+    - deterministic_random
+  random_seed: 20260724
+  primary_test_split: test_iid
+  report_test_ood_separately: true
+  speedup_scope: official_eml_dag_cost_scoring_only
+  retain_failed_selections: true
+  heuristic_comparison_order: validation_rate_then_mean_regret_then_exact_best_match
+
+runtime:
+  output_root: outputs/final/goal5/neural_ranker
+  resume: true
+  atomic_finalization: true

@@ -1,0 +1,62 @@
+# Goal 5 frequent-motif production protocol.
+# Run from the repository root with:
+# python -m geml.experiments.goal5.motif_sweeps --config configs/goal5_motif_sweeps.yaml --stage final
+schema_version: geml-goal5-motif-sweeps-config-v1
+input_manifest: outputs/final/goal1/final/run/manifests/corpus.manifest.json
+output_root: outputs/final/goal5/motif_sweeps
+compiler_mode: official_v4
+
+# Macro graphs preserve the approved source constructions and remain explicitly
+# non-pure. Pure-EML and mixed-pool support is exercised by the miner tests, but
+# is not the production selection substrate.
+graph_family: macro
+representation_mode: macro:official_v4:is_pure_eml=false
+
+stages:
+  smoke:
+    train_limit: 512
+    validation_limit: 128
+    test_iid_limit: 128
+    test_ood_limit: 128
+    minimum_support_count: 2
+    vocabulary_sizes: [8, 16]
+    size_ranges:
+      - [2, 4]
+      - [2, 6]
+  final:
+    train_limit: null
+    validation_limit: null
+    test_iid_limit: null
+    test_ood_limit: null
+    minimum_support_count: 32
+    vocabulary_sizes: [64, 256, 512, 1024]
+    size_ranges:
+      - [2, 4]
+      - [2, 6]
+      - [2, 8]
+
+mining:
+  support_unit: graph_transaction
+  boundary_order: canonical_first_encounter
+  maximum_motif_size: 8
+  retain_one_node_ablation: true
+  allow_silent_truncation: false
+
+compression:
+  occurrence_policy: deterministic_safe_greedy_v1
+  codec: geml-motif-mdl-v1
+  require_exact_reconstruction: true
+  failure_fallback: encode_original_graph
+
+selection:
+  metric: validation_total_mdl_bits
+  tie_break:
+    - actual_vocabulary_size
+    - maximum_motif_size
+    - configuration_digest
+  evaluate_tests_once_after_lock: true
+
+runtime:
+  shard_rows: 10000
+  resume: true
+  atomic_finalization: true

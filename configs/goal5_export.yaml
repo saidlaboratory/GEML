@@ -1,0 +1,49 @@
+# Goal 5 production graph export.
+# The two selected run directories are content-addressed, so set them here after
+# issues 5-5/5-6 finish or pass --frequent-run-dir/--learned-run-dir.
+schema_version: geml-goal5-export-config-v1
+dataset_id: geml-250k-goal5
+input_manifest: outputs/final/goal1/final/run/manifests/corpus.manifest.json
+frequent_sweep_run_dir: null
+learned_motif_run_dir: null
+output_root: outputs/final/goal5/export
+compiler_mode: official_v4
+
+# These are separate physical graph modes. The two motif mode labels also bind
+# the selected vocabulary IDs at runtime.
+representations:
+  - ast_dag
+  - pure_eml_dag
+  - macro_dag
+  - frequent_motif_dag
+  - learned_motif_dag
+
+# Subset labels are never inferred from generator metadata. Supply an
+# authenticated geml-goal5-subset-labels-v1 file here only when explicit labels
+# exist; otherwise every expression has the empty subset-label tuple.
+subset_labels_artifact: null
+
+# Null limits mean the complete authoritative split. Non-null limits exist only
+# for explicit fixture/smoke configs and are included in the run digest.
+split_limits:
+  train: null
+  validation: null
+  test_iid: null
+  test_ood: null
+
+# Twelve batches may be processed concurrently. Keeping each conversion batch
+# at 100 rows bounds aggregate worker memory while avoiding a 250k x 5 request
+# collection.
+sharding:
+  source_rows_per_batch: 100
+  rows_per_shard: 100
+
+hierarchy:
+  enabled: true
+  validate_reconstruction: true
+  content_address_shared_expansions: true
+
+runtime:
+  resume: true
+  atomic_finalization: true
+  worker_count: 12
