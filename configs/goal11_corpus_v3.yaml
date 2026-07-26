@@ -1,0 +1,235 @@
+schema_version: geml-goal11-workshop-manifest-config-v1
+artifact_root: .
+output_root: outputs/final/goal11/manifest
+expected_seeds:
+  - 20260726
+  - 20260727
+  - 20260728
+artifacts:
+  - artifact_id: goals1_5_artifact_index
+    producer_issue: goals-1-5
+    category: immutable_input
+    roles: [final_report, manifest]
+    required: true
+    relative_path: null
+    artifact_format: opaque
+  - artifact_id: goal1_corpus_250k_v1
+    producer_issue: 1-8
+    category: dataset
+    roles: [equivalence, manifest, symbolic_regression]
+    required: true
+    relative_path: null
+    artifact_format: opaque
+    expected_count: 250000
+  - artifact_id: goal6_pairs_train
+    producer_issue: "55"
+    category: dataset
+    roles: [equivalence, rewrite_policy]
+    required: true
+    relative_path: null
+    artifact_format: json
+    expected_count: 50000
+  - artifact_id: goal6_pairs_validation
+    producer_issue: "55"
+    category: dataset
+    roles: [equivalence, rewrite_policy]
+    required: true
+    relative_path: null
+    artifact_format: json
+    expected_count: 5000
+  - artifact_id: goal6_pairs_test
+    producer_issue: "55"
+    category: dataset
+    roles: [equivalence, rewrite_policy]
+    required: true
+    relative_path: null
+    artifact_format: json
+    expected_count: 5000
+  - artifact_id: goal6_channel_ast_dag
+    producer_issue: "56"
+    category: graph_channel
+    roles: [equivalence]
+    required: true
+    relative_path: null
+    artifact_format: json
+  - artifact_id: goal6_channel_pure_eml_dag
+    producer_issue: "56"
+    category: graph_channel
+    roles: [equivalence]
+    required: true
+    relative_path: null
+    artifact_format: json
+  - artifact_id: goal6_channel_frequent_motif_macro_dag
+    producer_issue: "56"
+    category: graph_channel
+    roles: [equivalence]
+    required: true
+    relative_path: null
+    artifact_format: json
+  - artifact_id: goal6_channel_motif_ast
+    producer_issue: "56"
+    category: graph_channel
+    roles: [equivalence]
+    required: true
+    relative_path: null
+    artifact_format: json
+    configured_state: unsupported
+    configured_reason: The fourth-channel contract requires the coordinator decision recorded by issue 56.
+  - artifact_id: goal6_frozen_config
+    producer_issue: "59"
+    category: configuration
+    roles: [equivalence, fixed_scale, gate_g11]
+    required: true
+    relative_path: null
+    artifact_format: yaml
+  - artifact_id: goal6_model_checkpoints
+    producer_issue: "59"
+    category: checkpoint_manifest
+    roles: [equivalence, gate_g11]
+    required: true
+    relative_path: null
+    artifact_format: json
+  - artifact_id: goal6_controlled_results
+    producer_issue: "60"
+    category: result_table
+    roles: [equivalence, final_report, fixed_scale, gate_g11]
+    required: true
+    relative_path: null
+    artifact_format: json
+    run_metadata_required: true
+    requires_expected_seeds: true
+  - artifact_id: goal7_frozen_config
+    producer_issue: "63"
+    category: configuration
+    roles: [fixed_scale, gate_g11, rewrite_policy]
+    required: true
+    relative_path: null
+    artifact_format: yaml
+  - artifact_id: goal7_policy_checkpoint
+    producer_issue: "63"
+    category: checkpoint_manifest
+    roles: [gate_g11, rewrite_policy]
+    required: true
+    relative_path: null
+    artifact_format: json
+  - artifact_id: goal7_controlled_results
+    producer_issue: "64"
+    category: result_table
+    roles: [final_report, fixed_scale, gate_g11, rewrite_policy]
+    required: true
+    relative_path: null
+    artifact_format: json
+    run_metadata_required: true
+    requires_expected_seeds: true
+  - artifact_id: goal8_proof_tasks
+    producer_issue: "65"
+    category: task_manifest
+    roles: [proof]
+    required: true
+    relative_path: null
+    artifact_format: json
+    expected_count: 256
+  - artifact_id: goal8_simplification_ids
+    producer_issue: "68"
+    category: task_manifest
+    roles: [simplification]
+    required: true
+    relative_path: null
+    artifact_format: json
+    expected_count: 1000
+  - artifact_id: goal8_frozen_config
+    producer_issue: "70"
+    category: configuration
+    roles: [fixed_scale, gate_g11, proof, simplification]
+    required: true
+    relative_path: null
+    artifact_format: yaml
+  - artifact_id: goal8_value_checkpoint
+    producer_issue: "66"
+    category: checkpoint_manifest
+    roles: [gate_g11, proof, simplification]
+    required: true
+    relative_path: null
+    artifact_format: json
+  - artifact_id: goal8_controlled_results
+    producer_issue: "70"
+    category: result_table
+    roles: [final_report, fixed_scale, gate_g11, proof, simplification]
+    required: true
+    relative_path: null
+    artifact_format: json
+    run_metadata_required: true
+    requires_expected_seeds: true
+  - artifact_id: goal9_synthetic_tasks
+    producer_issue: "71"
+    category: task_manifest
+    roles: [symbolic_regression]
+    required: true
+    relative_path: null
+    artifact_format: json
+    expected_count: 256
+  - artifact_id: goal9_feynman_tasks
+    producer_issue: "71"
+    category: task_manifest
+    roles: [symbolic_regression]
+    required: true
+    relative_path: null
+    artifact_format: json
+  - artifact_id: goal9_frozen_config
+    producer_issue: "74"
+    category: configuration
+    roles: [fixed_scale, gate_g11, symbolic_regression]
+    required: true
+    relative_path: null
+    artifact_format: yaml
+  - artifact_id: goal9_guidance_checkpoints
+    producer_issue: "74"
+    category: checkpoint_manifest
+    roles: [gate_g11, symbolic_regression]
+    required: true
+    relative_path: null
+    artifact_format: json
+  - artifact_id: goal9_controlled_results
+    producer_issue: "74"
+    category: result_table
+    roles: [final_report, fixed_scale, gate_g11, symbolic_regression]
+    required: true
+    relative_path: null
+    artifact_format: json
+    run_metadata_required: true
+    requires_expected_seeds: true
+  - artifact_id: goal10_frozen_config
+    producer_issue: "77"
+    category: configuration
+    roles: [compiler_v2, final_report]
+    required: true
+    relative_path: null
+    artifact_format: yaml
+  - artifact_id: goal10_conformance_results
+    producer_issue: "77"
+    category: conformance
+    roles: [compiler_v2, final_report]
+    required: true
+    relative_path: null
+    artifact_format: json
+    run_metadata_required: true
+  - artifact_id: goal11_llm_external_results
+    producer_issue: "82"
+    category: external_reference
+    roles: [external_noncontrolled, final_report]
+    required: false
+    relative_path: null
+    artifact_format: json
+deferred_experiments:
+  - experiment_id: production_corpus_v2
+    reason: Grammar v2 is an opt-in compiler conformance extension; Goals 1-5 remain immutable.
+  - experiment_id: production_corpus_v3
+    reason: The resource-bounded workshop plan does not generate a new production corpus.
+  - experiment_id: scaling_10x_to_100x
+    reason: Ten-to-one-hundred-times corpus scaling is outside the workshop compute budget.
+  - experiment_id: scaling_law_fit_or_extrapolation
+    reason: Fixed-scale evidence cannot identify a scaling exponent or justify extrapolation.
+  - experiment_id: goal10_compression_rerun
+    reason: Goal 10 reports compiler conformance without recomputing Goals 1-5 compression.
+  - experiment_id: goal6_goal7_v2_learning_rerun
+    reason: No learned model is retrained on grammar v2 for the workshop submission.

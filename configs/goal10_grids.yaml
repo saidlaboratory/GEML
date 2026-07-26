@@ -1,0 +1,32 @@
+schema_version: geml-goal10-compatibility-v1
+default_selection:
+  grammar_version: v1
+  compiler_mode: official_v4
+matrix:
+  - grammar_version: v1
+    compiler_mode: official_v4
+  - grammar_version: v1
+    compiler_mode: clean_negation
+  - grammar_version: v2
+    compiler_mode: official_v4
+  - grammar_version: v2
+    compiler_mode: clean_negation
+immutable_v1_references:
+  - path: configs/goal1_final.yaml
+    sha256: 2a8381a53fd4a69473d2ddf0fda3860885c80976f5fdd9fca465bfede8223538
+  - path: configs/goal2_final.yaml
+    sha256: 22bc993f3af493bba9a2242c8fea303c1b022c5923e600eb75a1e6e11ac4c1a9
+  - path: configs/goal3_final.yaml
+    sha256: 14f3349b559a51f307286aba49843619a072775de8dfd9068a648cc9873ccfdd
+  - path: configs/goal4_final.yaml
+    sha256: 3b0eb276d6817e8d3f24a4620799bee37570e5eee1b3e3ff69dc7633ca9cd206
+  - path: configs/goal5_export.yaml
+    sha256: d1e2d07dbf3ab3b747e468110bab6f72952fd3cfac4efa5171ad4c885aeec43b
+  - path: docs/goals/FINAL_GOALS_1_TO_5_STATUS.md
+    sha256: e2f5b5532855dcbfc70336390bed158360228ca3846a5f9063e0d0f4ae9d3884
+deferred_questions:
+  - Grammar-v2 effects on corpus statistics and pure-EML alpha.
+  - Grammar-v2 effects on AST, EML, macro, and motif representations.
+  - Grammar-v2 effects on Goal 6 equivalence learning.
+  - Grammar-v2 effects on Goal 7 rewrite-policy learning.
+  - Any production corpus-v2 or learning-artifact claim.
