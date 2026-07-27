@@ -1,0 +1,43 @@
+# Goal 9 matched-budget EML-guided versus AST-guided SR search (issue 9-1 / #72).
+#
+# Production command, run from the repository root, once the Goal 9 verification-scope
+# decision is made and the benchmark manifest is frozen:
+#   python -m geml.experiments.goal9.run_sr \
+#     --config configs/goal9_sr.yaml \
+#     --benchmark-dir outputs/final/goal9/benchmark/synthetic \
+#     --output-dir outputs/final/goal9/guided_search
+schema_version: geml-goal9-sr-config-v1
+output_root: outputs/final/goal9/guided_search
+
+# Package-wide preregistered seeds. A technical rerun reuses the same seed and records the
+# failure cause; a seed is never swapped because its result was unfavourable.
+seeds: [20260726, 20260727, 20260728]
+
+# One budget object is shared by both arms. `assert_matched_budgets` refuses to start the
+# sweep unless every controlled method received a byte-identical budget, and the resulting
+# digest is stamped on every emitted row so the match is auditable after the fact. The
+# baselines in issue 9-2 are matched to this same object.
+budget:
+  wall_seconds: 60.0
+  max_expansions: 4000
+  max_candidates: 20000
+  max_depth: 8
+  max_complexity: 48
+  beam_width: 16
+  checkpoint_every_candidates: 64
+
+# Atomic per-(task, method, seed) checkpoints. Resuming reloads completed cells without
+# changing the traversal order of the cells that still have to run.
+resume: true
+
+verifier_timeout_seconds: 5.0
+
+# Only tasks whose split role is `benchmark_test` are scored. Development tasks exist to
+# select a configuration and must never enter a reported denominator.
+require_benchmark_test_split: true
+
+# Hard interlock. The runner refuses to score a benchmark whose manifest is not
+# `complete`, which today means it refuses to run against the Goal 9 benchmark at all
+# until the verification-scope decision is made. Fixture smokes set this to true
+# explicitly; production must not.
+allow_unfrozen_benchmark: false
