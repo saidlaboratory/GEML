@@ -43,7 +43,7 @@ class GrammarSelection(_FrozenModel):
 
 
 class ImmutableReference(_FrozenModel):
-    """One read-only Goals 1-5 file and its coordinated SHA-256."""
+    """One read-only Goals 1-5 text file and its canonical-LF SHA-256."""
 
     path: str = Field(min_length=1)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -124,6 +124,12 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _canonical_repository_text_bytes(path: Path) -> bytes:
+    """Return Git-compatible text bytes independent of checkout line endings."""
+
+    return path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def make_tiny_compatibility_row(selection: GrammarSelection) -> CompatibilityRow:
     """Compile one deterministic fixture through the selected compiler path."""
 
@@ -201,7 +207,7 @@ def audit_immutable_references(
         if not candidate.is_file():
             failures.append(f"{reference.path}: missing")
             continue
-        observed = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        observed = hashlib.sha256(_canonical_repository_text_bytes(candidate)).hexdigest()
         if observed != reference.sha256:
             failures.append(
                 f"{reference.path}: checksum mismatch "

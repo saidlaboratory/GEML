@@ -3,7 +3,9 @@
 Despite the historical `rerun_grids.py` filename, **no Goal 6 or Goal 7
 learning grid is run here**. The module exercises four tiny
 grammar-version/compiler-mode cells and verifies that selected immutable Goals
-1–5 files still match their coordinated SHA-256 values.
+1–5 text files still match their coordinated SHA-256 values. These hashes use
+Git-compatible LF-normalized bytes, so the same repository content authenticates
+identically on Windows and Linux checkouts.
 
 The omitted experiment option resolves to `v1` with `official_v4`. Grammar v2
 must be requested explicitly and every resulting row is labeled

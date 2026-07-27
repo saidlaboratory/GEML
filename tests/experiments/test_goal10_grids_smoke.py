@@ -12,6 +12,8 @@ from geml.experiments.goal10.rerun_grids import (
     CompatibilityConfig,
     CompatibilityError,
     GrammarSelection,
+    ImmutableReference,
+    audit_immutable_references,
     group_rows_explicitly,
     make_tiny_compatibility_row,
     require_homogeneous_rows,
@@ -62,6 +64,21 @@ def test_compatibility_matrix_preserves_immutable_goals_1_to_5_references():
         GrammarVersion.V2,
     }
     assert {row.compiler_mode for row in rows} == set(CompilerMode)
+
+
+def test_immutable_reference_hash_is_independent_of_checkout_newlines(tmp_path: Path):
+    fixture = tmp_path / "fixture.yaml"
+    canonical = b"first: value\nsecond: value\n"
+    expected = ImmutableReference(
+        path="fixture.yaml",
+        sha256="32358ff12ff3aa9d15547c2ba69fb065ef83b44701f1bc4c7e5b83cf88a78c0a",
+    )
+
+    fixture.write_bytes(canonical)
+    assert audit_immutable_references(tmp_path, (expected,)) == ()
+
+    fixture.write_bytes(canonical.replace(b"\n", b"\r\n"))
+    assert audit_immutable_references(tmp_path, (expected,)) == ()
 
 
 def test_historical_grid_module_has_no_training_or_production_surface():
