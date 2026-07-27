@@ -1,0 +1,37 @@
+schema_version: geml-goal6-grid-v1
+phase: phase_a_planning_only
+dataset_id: geml-goal6-pairs-v1
+input_manifest: outputs/final/goal6/pairs/manifest.json
+input_manifest_sha256: sha256:pending-authenticated-pair-manifest
+output_directory: outputs/final/goal6/grid
+epochs: 30
+pair_counts:
+  train: 50000
+  validation: 5000
+  test_iid: 5000
+gnn:
+  hidden_width: 96
+  layers: 3
+  use_virtual_node: false
+  policy: shared_across_all_graph_channels
+transformer:
+  hidden_width: 96
+  layers: 3
+  policy: compute_match_must_be_measured_before_production
+arms:
+  - ast_gine
+  - pure_eml_gine
+  - frequent_macro_motif_gine
+  - motif_ast_control_gine
+  - prefix_transformer
+  - trivial_operator_count
+seeds: [20260726, 20260727, 20260728]
+blocked_arm_policy:
+  motif_ast_control_gine: >-
+    blocked until an authoritative motif-AST artifact and fair-control contract exist;
+    frequent macro motifs must not be relabeled as motif-AST.
+production_preconditions:
+  - authenticate the pair manifest checksum
+  - install the pinned ML environment
+  - measure the H100 throughput/VRAM pilot and record the final compute match
+  - materialize the approved channels without label leakage
