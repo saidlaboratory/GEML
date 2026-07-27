@@ -26,7 +26,8 @@ dev = [
     "ruff>=0.8",
 ]
 ml = [
-    "torch>=2.5",
+    "torch==2.5.1",
+    "torch-geometric==2.6.1",
 ]
 
 [project.urls]

@@ -1,0 +1,27 @@
+schema_version: geml-goal6-channels-config-v1
+graph_tensor_schema_version: geml-graph-tensor-v1
+input_pair_schema_version: geml-pair-record-v1
+output_root: outputs/final/goal6/channels
+channels:
+  - name: ast_dag
+    state: available
+    source: immutable Goal 5 AST-DAG export
+  - name: pure_eml_dag
+    state: available
+    source: immutable Goal 5 strict pure-EML-DAG export
+  - name: frequent_macro_motif_dag
+    state: available
+    source: immutable Goal 5 frequent motif graph over official-v4 macro representation; not strict EML
+  - name: motif_ast_fair_control
+    state: blocked
+    source: requires an explicit issue-scope decision to mine a train-only motif-AST control
+alignment:
+  require_identical_pair_ids_labels_and_splits: true
+  retain_failure_ledger: true
+  silently_drop_channel_failures: false
+materialization:
+  preserve_logical_child_edges: true
+  materialize_forward_and_reverse_message_edges: true
+  preserve_repeated_references: true
+  resumable_shards: true
+  atomic_finalization: true

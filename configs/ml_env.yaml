@@ -1,0 +1,46 @@
+# Frozen optional ML environment and bounded-compute policy for Goals 6--12.
+# Core GEML remains torch-free; install with `python -m pip install -e '.[ml]'`
+# only for learning/search experiment cells.
+schema_version: geml-ml-environment-v1
+python_version: "3.12"
+packages:
+  torch: "2.5.1"
+  torch_geometric: "2.6.1"
+production_seeds:
+  - 20260726
+  - 20260727
+  - 20260728
+development_selection:
+  selection_split: validation
+  selected_once_before_test: true
+  broad_hyperparameter_sweeps: prohibited
+reproducibility:
+  deterministic_algorithms: requested
+  deterministic_dataloader_order: required
+  checkpoint_resume: required
+  atomic_result_writes: required
+  report_nondeterminism: required
+  run_envelope_schema: geml-run-envelope-v1
+precision:
+  cpu_ci: float32
+  h100_production: bf16
+  record_effective_precision: true
+batching:
+  dynamic_node_budget: required
+  dynamic_edge_budget: required
+compute_profiles:
+  default:
+    gpus: 2
+    accelerator: NVIDIA H100 80GB
+    cpu_threads_minimum: 64
+    ram_gb_minimum: 256
+    nvme_gb_minimum: 1000
+    execution: independent_seed_or_experiment_cells
+  conditional_four_gpu:
+    gpus: 4
+    permitted_only_after: measured_30_to_60_minute_throughput_pilot
+    execution: independent_seed_or_experiment_cells
+    linear_scaling_claims: prohibited
+validation:
+  command_wall_time_minutes_maximum: 30
+  production_cells: sharded_resumable_checkpointed

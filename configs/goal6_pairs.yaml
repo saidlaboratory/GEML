@@ -1,0 +1,22 @@
+schema_version: geml-goal6-pairs-config-v1
+pair_schema_version: geml-pair-record-v1
+output_root: outputs/final/goal6/pairs
+production_seed: 20260726
+base_counts:
+  train: 50000
+  validation: 5000
+  test_iid: 5000
+  test_ood: 5000
+positive_generation:
+  source: concrete_replayable_rule_engine_trajectories
+  goal4_eclass_provenance_is_trace: false
+negative_generation:
+  absolute_size_tolerance: 2
+  numeric_disagreement_is_formal_certificate: false
+split_policy:
+  group_and_relative_cross_partition: prohibited
+  evaluation_views_change_base_counts: false
+runtime:
+  resumable: true
+  atomic_finalization: true
+  retain_rejections_and_failures: true
