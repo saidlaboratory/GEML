@@ -1,0 +1,3 @@
+schema_version: geml-workshop-run-manifest-v1
+phase: manifest_assembly_only_no_corpus_v3_generation
+deferred_experiments: [data_scaling, corpus_v3_generation, production_cells_pending_artifact_staging]

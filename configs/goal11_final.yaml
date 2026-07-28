@@ -1,0 +1,3 @@
+schema_version: geml-goal11-final-synthesis-v1
+controlled_gates: [G6, G7, G8, G9, G10]
+external_llm_reference_excluded: true
