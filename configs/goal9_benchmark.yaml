@@ -1,0 +1,7 @@
+schema_version: geml-goal9-sr-benchmark-v1
+phase: phase_a_contract_only
+synthetic_task_count: 256
+restricted_feynman_target_count: 32
+primary_observations: noiseless_real_domain_deterministic
+exact_recovery: requires_new_owned_verifier_or_restricted_grammar_decision
+numeric_fit: retained_separately_never_promoted_to_exact_recovery
