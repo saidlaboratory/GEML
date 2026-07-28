@@ -1,37 +1,100 @@
+# Issue 6-5: the frozen six-arm Goal 6 equivalence grid.
+#
+# Six arms x three seeds = 18 independent, resumable, content-addressed cells.
+# One frozen configuration per backbone family. No per-channel architecture changes, no sweep.
+
 schema_version: geml-goal6-grid-v1
-phase: phase_a_planning_only
-dataset_id: geml-goal6-pairs-v1
-input_manifest: outputs/final/goal6/pairs/manifest.json
-input_manifest_sha256: sha256:pending-authenticated-pair-manifest
-output_directory: outputs/final/goal6/grid
-epochs: 30
-pair_counts:
-  train: 50000
-  validation: 5000
-  test_iid: 5000
-gnn:
-  hidden_width: 96
-  layers: 3
-  use_virtual_node: false
-  policy: shared_across_all_graph_channels
-transformer:
-  hidden_width: 96
-  layers: 3
-  policy: compute_match_must_be_measured_before_production
+
+output_root: outputs/final/goal6/grid
+
+# Exactly the three preregistered production seeds. A technical rerun reuses the same seed and
+# records the failure cause; a seed is never replaced because its result is unfavorable.
+seeds:
+  - 20260726
+  - 20260727
+  - 20260728
+
+# Channel identities are NOT listed here.
+#
+# Issue 6-2/#56 is unresolved: it names a "frequent-motif EML-DAG" and a motif-AST fair control,
+# but the immutable Goal 5 export contains a macro-derived frequent_motif_dag and no motif-AST
+# channel. Hard-coding four names here would bake that contradiction into the results table.
+# The runner consumes approved channel identities from the merged #56 registry and refuses to run
+# production until exactly four aligned approved channels exist.
+channels:
+  source: registry
+  required_count: 4
+  refuse_if_unavailable: true
+
 arms:
-  - ast_gine
-  - pure_eml_gine
-  - frequent_macro_motif_gine
-  - motif_ast_control_gine
-  - prefix_transformer
-  - trivial_operator_count
-seeds: [20260726, 20260727, 20260728]
-blocked_arm_policy:
-  motif_ast_control_gine: >-
-    blocked until an authoritative motif-AST artifact and fair-control contract exist;
-    frequent macro motifs must not be relabeled as motif-AST.
-production_preconditions:
-  - authenticate the pair manifest checksum
-  - install the pinned ML environment
-  - measure the H100 throughput/VRAM pilot and record the final compute match
-  - materialize the approved channels without label leakage
+  # The four graph arms differ ONLY by input channel. They share one encoder implementation, one
+  # weight-initialization policy, one optimizer, one epoch budget, and one task head.
+  graph:
+    backbone: compact_graph_encoder
+    # Width and virtual-node choice are deliberately NOT frozen here. Issue 6-3 requires the freeze
+    # to follow a measured parameter/FLOP comparison, and the fair measurement needs production
+    # channel vocabularies that do not exist yet. This is a Phase-B preflight decision.
+    hidden_width: pending_preflight_freeze
+    use_virtual_node: pending_preflight_freeze
+    permitted_widths: [64, 96]
+  prefix_transformer:
+    backbone: prefix_sequence_encoder
+    tokenization_version: geml-goal6-prefix-tokens-v1
+    # A real control, compute-matched under the frozen policy - never a deliberately weak baseline.
+    max_length: 512
+  trivial_floor:
+    backbone: trivial_count_floor
+    feature_schema_version: geml-goal6-trivial-floor-v1
+
+evaluation_views:
+  # Model selection uses validation only. Test and OOD views are evaluated once after the freeze.
+  - name: test_iid
+    required: true
+  - name: test_ood_stress
+    required: true
+    note: >-
+      Goal 1's stored test_ood is one combined stress profile across size, depth, variable count,
+      and composition. It is reported under its own name and is NOT relabelled strict depth-OOD.
+  - name: test_depth_ood
+    required: false
+    note: >-
+      Reportable only with predeclared, disjoint depth support between training and evaluation.
+      Otherwise the runner records unsupported_not_disjoint rather than emitting the view.
+  - name: test_family_ood
+    required: false
+    note: >-
+      Reportable only when at least one family is genuinely excluded from training, not merely
+      filtered out of a test table. Otherwise the runner records unsupported_not_excluded.
+
+metrics:
+  quality:
+    - accuracy
+    - macro_f1
+  # Calibration is reported only if it is already supported and frozen upstream; it is not
+  # invented here.
+  calibration_if_supported: true
+  efficiency:
+    - parameters
+    - forward_flops
+    - wall_seconds
+    - peak_host_memory_bytes
+    - peak_device_memory_bytes
+  structural:
+    # There is deliberately no single cross-channel "alpha" column. Pure-EML alpha, ordinary
+    # node/edge size, macro size, and dictionary-inclusive motif MDL are different quantities.
+    # Each is emitted under its own name with an explicit comparable_across_channels flag.
+    per_channel_named_metrics: true
+    forbid_universal_alpha: true
+
+reporting:
+  # Every aggregate must be able to reconstruct its own denominator.
+  require_denominators: true
+  retain_failures: true
+  retain_timeouts: true
+  retain_incomplete_cells: true
+
+smoke:
+  # The Phase-A fixture smoke: 25 pairs, tiny model, no production artifact required.
+  pair_count: 25
+  tiny_model: true
+  requires_production_artifacts: false

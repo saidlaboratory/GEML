@@ -1,375 +1,438 @@
-"""Frozen, denominator-complete orchestration for the Goal 6 equivalence grid.
+"""Issue 6-5: the fixed six-arm Goal 6 equivalence grid.
 
-This module intentionally does not manufacture pair data, materialized graphs, model
-weights, or numerical results.  It creates the fixed 18-cell plan and records either
-completed executor results or explicit terminal rows, including the blocked motif-AST
-fair control described in the Goal 6 channel contract.
+The grid is four graph channels through **one** shared encoder, one compute-matched prefix
+transformer, and one transparent trivial floor, each on exactly three preregistered seeds.
+
+Two contracts are enforced here rather than assumed:
+
+**Channel names are never hard-coded.**
+    Issue 6-2/#56 carries an unresolved contradiction: the issue names a "frequent-motif EML-DAG"
+    and a motif-AST fair control, but the immutable Goal 5 export contains a macro-derived
+    ``frequent_motif_dag`` and no motif-AST channel at all.  This module therefore consumes channel
+    identities from the merged registry and refuses to run production without four aligned,
+    approved channels.  It will not invent a fourth channel, and it will not relabel a macro-derived
+    channel as pure EML.
+
+**There is no single cross-channel alpha.**
+    Pure-EML alpha, ordinary node/edge size, macro size, and dictionary-inclusive motif MDL are
+    different quantities.  Reporting them under one column would manufacture a comparison that does
+    not exist.  Structural metrics are therefore named per channel and carry an explicit
+    :attr:`StructuralMetric.comparable_across_channels` flag.
 """
 
 from __future__ import annotations
 
-import argparse
-import hashlib
 import json
-import os
-from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
-import yaml
-
+from geml.learning.harness.config import HarnessConfig, canonical_json_bytes
 from geml.learning.harness.seeds import PRODUCTION_SEEDS
+from geml.learning.harness.train import CellStatus, atomic_write_json
 
 GRID_SCHEMA_VERSION = "geml-goal6-grid-v1"
-GRID_MANIFEST_FILENAME = "goal6.grid.json"
-FIXTURE_PAIR_COUNT = 25
+GRID_ROW_SCHEMA_VERSION = "geml-goal6-grid-row-v1"
+
+#: The frozen production output root for issue 6-5.
+PRODUCTION_GRID_ROOT = "outputs/final/goal6/grid"
+
+#: The grid is exactly four graph channels plus two non-graph controls.
+REQUIRED_GRAPH_CHANNEL_COUNT = 4
 
 
-class Goal6GridError(ValueError):
-    """The frozen grid plan or a retained cell result is invalid."""
+class GridContractError(RuntimeError):
+    """The grid cannot run without violating a frozen scientific contract."""
 
 
 class ArmFamily(StrEnum):
-    GINE = "gine"
+    """The three backbone families; graph arms differ only by input channel."""
+
+    GRAPH = "graph"
     PREFIX_TRANSFORMER = "prefix_transformer"
-    TRIVIAL = "trivial"
-
-
-class CellStatus(StrEnum):
-    PENDING = "pending"
-    COMPLETE = "complete"
-    FAILED = "failed"
-    TIMEOUT = "timeout"
-    UNSUPPORTED = "unsupported"
+    TRIVIAL_FLOOR = "trivial_floor"
 
 
 class EvaluationView(StrEnum):
+    """Evaluation views.  The two strict OOD views are conditional, not automatic."""
+
     TRAIN = "train"
     VALIDATION = "validation"
     TEST_IID = "test_iid"
+    TEST_OOD_STRESS = "test_ood_stress"
     TEST_DEPTH_OOD = "test_depth_ood"
     TEST_FAMILY_OOD = "test_family_ood"
 
 
-@dataclass(frozen=True, slots=True)
-class GridArm:
-    """One preregistered model/input arm; graph arms share the same GINE policy."""
+class ViewStatus(StrEnum):
+    """Whether a view may be reported as the thing its name claims."""
+
+    AVAILABLE = "available"
+    UNSUPPORTED_NOT_DISJOINT = "unsupported_not_disjoint"
+    UNSUPPORTED_NOT_EXCLUDED = "unsupported_not_excluded"
+    MISSING = "missing"
+
+
+@dataclass(frozen=True)
+class StructuralMetric:
+    """One structural quantity, named honestly and flagged for comparability."""
+
+    name: str
+    value: float
+    comparable_across_channels: bool
+    note: str = ""
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "value": self.value,
+            "comparable_across_channels": self.comparable_across_channels,
+            "note": self.note,
+        }
+
+
+@dataclass(frozen=True)
+class ChannelSpec:
+    """One approved graph channel as declared by the issue 6-2/#56 registry."""
+
+    channel_name: str
+    representation_family: str
+    representation_mode: str
+    is_pure_eml: bool
+    approved: bool = False
+    label_vocabulary_size: int = 0
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "channel_name": self.channel_name,
+            "representation_family": self.representation_family,
+            "representation_mode": self.representation_mode,
+            "is_pure_eml": self.is_pure_eml,
+            "approved": self.approved,
+            "label_vocabulary_size": self.label_vocabulary_size,
+        }
+
+
+@runtime_checkable
+class ChannelRegistry(Protocol):
+    """The merged issue 6-2/#56 registry this runner consumes.
+
+    During Phase A this is satisfied by a fixture; after that branch merges, the canonical registry
+    should satisfy it structurally and the fixture becomes test-only code.
+    """
+
+    def approved_channels(self) -> Sequence[ChannelSpec]:
+        """Return the approved, aligned graph channels."""
+
+    def aligned_pair_ids(self, channel_name: str) -> Sequence[str]:
+        """Return the accepted pair identities materialized for ``channel_name``."""
+
+    def view_status(self, view: str) -> ViewStatus:
+        """Return whether ``view`` may be reported under its own name."""
+
+
+def validate_channels(registry: ChannelRegistry) -> tuple[ChannelSpec, ...]:
+    """Return the four approved channels, or refuse to proceed.
+
+    Refusal is the correct outcome while issue 6-2/#56 is unresolved.  Substituting a macro-DAG for
+    the missing motif-AST fair control, or running with three channels and calling it four, would
+    both produce a result table that misrepresents what was compared.
+    """
+
+    channels = tuple(registry.approved_channels())
+    approved = tuple(channel for channel in channels if channel.approved)
+    if len(approved) != REQUIRED_GRAPH_CHANNEL_COUNT:
+        raise GridContractError(
+            f"the Goal 6 grid requires exactly {REQUIRED_GRAPH_CHANNEL_COUNT} approved aligned "
+            f"graph channels, found {len(approved)}; issue 6-2/#56 must be resolved before "
+            "production. Do not substitute a macro-derived channel for the motif-AST fair control"
+        )
+    names = [channel.channel_name for channel in approved]
+    if len(set(names)) != len(names):
+        raise GridContractError(f"approved channel names must be unique, got {names}")
+    for channel in approved:
+        if channel.is_pure_eml and "macro" in channel.representation_mode:
+            raise GridContractError(
+                f"channel {channel.channel_name!r} claims strict pure EML but carries the macro "
+                f"representation mode {channel.representation_mode!r}; the Goal 5 motif channels "
+                "end with ':macro:macro:official_v4:is_pure_eml=false' and may not be relabelled"
+            )
+    return approved
+
+
+def validate_alignment(
+    registry: ChannelRegistry, channels: Sequence[ChannelSpec]
+) -> tuple[str, ...]:
+    """Return the shared pair identities, refusing to compare different subsets."""
+
+    if not channels:
+        raise GridContractError("cannot validate alignment with zero channels")
+    reference = tuple(registry.aligned_pair_ids(channels[0].channel_name))
+    for channel in channels[1:]:
+        observed = tuple(registry.aligned_pair_ids(channel.channel_name))
+        if observed != reference:
+            missing = sorted(set(reference) - set(observed))
+            extra = sorted(set(observed) - set(reference))
+            raise GridContractError(
+                f"channel {channel.channel_name!r} is not aligned with "
+                f"{channels[0].channel_name!r}: {len(missing)} missing and {len(extra)} extra pair "
+                "identities. Misaligned pairs belong in the failure ledger; the arms must never be "
+                "scored on different subsets"
+            )
+    return reference
+
+
+@dataclass(frozen=True)
+class ArmSpec:
+    """One of the six arms."""
 
     arm_id: str
     family: ArmFamily
-    channel: str | None
-    availability: CellStatus
-    unavailable_reason: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.family is ArmFamily.GINE and self.channel is None:
-            raise Goal6GridError("a GINE arm must declare exactly one input channel")
-        if self.family is not ArmFamily.GINE and self.channel is not None:
-            raise Goal6GridError("non-graph controls cannot declare a graph channel")
-        if self.availability is CellStatus.UNSUPPORTED and not self.unavailable_reason:
-            raise Goal6GridError("an unsupported arm must retain its reason")
-        if self.availability is not CellStatus.UNSUPPORTED and self.unavailable_reason is not None:
-            raise Goal6GridError("available arms cannot carry an unavailable reason")
-
-
-FIXED_ARMS: tuple[GridArm, ...] = (
-    GridArm("ast_gine", ArmFamily.GINE, "ast_dag", CellStatus.PENDING),
-    GridArm("pure_eml_gine", ArmFamily.GINE, "pure_eml_dag", CellStatus.PENDING),
-    GridArm(
-        "frequent_macro_motif_gine",
-        ArmFamily.GINE,
-        "frequent_macro_motif_dag",
-        CellStatus.PENDING,
-    ),
-    GridArm(
-        "motif_ast_control_gine",
-        ArmFamily.GINE,
-        "motif_ast_control_dag",
-        CellStatus.UNSUPPORTED,
-        "blocked: no authoritative motif-AST artifacts exist; frequent macro motifs are not a fair "
-        "motif-AST substitute",
-    ),
-    GridArm("prefix_transformer", ArmFamily.PREFIX_TRANSFORMER, None, CellStatus.PENDING),
-    GridArm("trivial_operator_count", ArmFamily.TRIVIAL, None, CellStatus.PENDING),
-)
-
-
-@dataclass(frozen=True, slots=True)
-class GridConfigV1:
-    """The fixed-scale plan, frozen before any Goal 6 production execution."""
-
-    dataset_id: str
-    input_manifest: str
-    input_manifest_sha256: str
-    output_directory: str
-    gnn_hidden_width: int
-    gnn_use_virtual_node: bool
-    transformer_hidden_width: int
-    epochs: int
-    train_pair_count: int
-    validation_pair_count: int
-    test_pair_count: int
-
-    def __post_init__(self) -> None:
-        if not self.dataset_id.strip() or not self.input_manifest.strip():
-            raise Goal6GridError("dataset_id and input_manifest must be nonblank")
-        if not self.input_manifest_sha256.startswith("sha256:"):
-            raise Goal6GridError("input_manifest_sha256 must be a qualified SHA-256 digest")
-        if self.gnn_hidden_width not in {64, 96} or self.transformer_hidden_width not in {64, 96}:
-            raise Goal6GridError("GNN and transformer widths must be exactly 64 or 96")
-        if self.epochs < 1 or self.epochs > 30:
-            raise Goal6GridError("Goal 6 epochs must remain within the 1--30 cap")
-        if min(self.train_pair_count, self.validation_pair_count, self.test_pair_count) < 1:
-            raise Goal6GridError("every declared pair split must be nonempty")
-
-    @property
-    def config_hash(self) -> str:
-        payload = asdict(self)
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
-
-
-@dataclass(frozen=True, slots=True)
-class EvaluationMetrics:
-    """One denominator-explicit evaluation view from one completed cell."""
-
-    view: EvaluationView
-    attempted: int
-    valid: int
-    correct: int
-    macro_f1: float | None
-    calibration_error: float | None
-
-    def __post_init__(self) -> None:
-        if self.attempted < 0 or self.valid < 0 or self.correct < 0:
-            raise Goal6GridError("evaluation counts must be nonnegative")
-        if self.valid > self.attempted or self.correct > self.valid:
-            raise Goal6GridError(
-                "valid and correct counts must remain within attempted denominator"
-            )
-        for value in (self.macro_f1, self.calibration_error):
-            if value is not None and not 0.0 <= value <= 1.0:
-                raise Goal6GridError("macro-F1 and calibration error must be in [0, 1]")
+    channel: ChannelSpec | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "accuracy": None if self.valid == 0 else self.correct / self.valid,
-            "attempted": self.attempted,
-            "calibration_error": self.calibration_error,
-            "correct": self.correct,
-            "macro_f1": self.macro_f1,
-            "valid": self.valid,
-            "view": self.view.value,
+            "arm_id": self.arm_id,
+            "family": str(self.family),
+            "channel": self.channel.as_dict() if self.channel else None,
         }
 
 
-@dataclass(frozen=True, slots=True)
-class GridCell:
-    """One independent seed/arm cell; this identity never includes a channel-specific GNN."""
+def build_arms(channels: Sequence[ChannelSpec]) -> tuple[ArmSpec, ...]:
+    """Build exactly six arms: four graph channels and the two non-graph controls."""
 
-    arm: GridArm
+    if len(channels) != REQUIRED_GRAPH_CHANNEL_COUNT:
+        raise GridContractError(
+            f"expected {REQUIRED_GRAPH_CHANNEL_COUNT} graph channels, got {len(channels)}"
+        )
+    arms = [
+        ArmSpec(arm_id=f"graph::{channel.channel_name}", family=ArmFamily.GRAPH, channel=channel)
+        for channel in channels
+    ]
+    arms.append(ArmSpec(arm_id="prefix_transformer", family=ArmFamily.PREFIX_TRANSFORMER))
+    arms.append(ArmSpec(arm_id="trivial_floor", family=ArmFamily.TRIVIAL_FLOOR))
+    return tuple(arms)
+
+
+@dataclass
+class GridRow:
+    """One (arm, seed) result row with complete denominators and provenance."""
+
+    arm_id: str
+    family: ArmFamily
+    channel_name: str | None
+    representation_mode: str | None
     seed: int
-
-    @property
-    def cell_id(self) -> str:
-        return f"{self.arm.arm_id}:seed-{self.seed}"
-
-
-@dataclass(frozen=True, slots=True)
-class GridCellResult:
-    """One retained terminal row for a fixed Goal 6 cell."""
-
-    cell: GridCell
     status: CellStatus
-    evaluations: tuple[EvaluationMetrics, ...]
-    parameter_count: int | None
-    flop_estimate: int | None
-    wall_seconds: float | None
-    peak_host_memory_bytes: int | None
-    peak_gpu_memory_bytes: int | None
-    error: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.status is CellStatus.COMPLETE:
-            expected_views = frozenset(EvaluationView)
-            if {item.view for item in self.evaluations} != expected_views:
-                raise Goal6GridError(
-                    "complete rows must retain every train/validation/IID/OOD view"
-                )
-            required_evidence = (self.parameter_count, self.flop_estimate, self.wall_seconds)
-            if any(value is None for value in required_evidence):
-                raise Goal6GridError(
-                    "complete rows require parameter, FLOP, and wall-time evidence"
-                )
-        elif self.evaluations:
-            raise Goal6GridError("non-complete rows cannot invent partial evaluation summaries")
-        if self.status is CellStatus.UNSUPPORTED and not self.error:
-            raise Goal6GridError("unsupported rows require the blocking reason")
-        if self.status is CellStatus.FAILED and not self.error:
-            raise Goal6GridError("failed rows require the retained failure message")
-        for value in (
-            self.parameter_count,
-            self.flop_estimate,
-            self.peak_host_memory_bytes,
-            self.peak_gpu_memory_bytes,
-        ):
-            if value is not None and value < 0:
-                raise Goal6GridError("resource counts must be nonnegative")
-        if self.wall_seconds is not None and self.wall_seconds < 0:
-            raise Goal6GridError("wall_seconds must be nonnegative")
+    config_hash: str
+    commit: str
+    metrics_by_view: dict[str, dict[str, float]] = field(default_factory=dict)
+    view_status: dict[str, str] = field(default_factory=dict)
+    denominators_by_view: dict[str, dict[str, int]] = field(default_factory=dict)
+    structural_metrics: tuple[StructuralMetric, ...] = ()
+    parameters: int | None = None
+    forward_flops: int | None = None
+    wall_seconds: float | None = None
+    peak_host_memory_bytes: int | None = None
+    peak_device_memory_bytes: int | None = None
+    input_graph_statistics: dict[str, float] = field(default_factory=dict)
+    failure_reason: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "arm": self.cell.arm.arm_id,
-            "cell_id": self.cell.cell_id,
-            "channel": self.cell.arm.channel,
-            "error": self.error,
-            "evaluations": [item.as_dict() for item in self.evaluations],
-            "family": self.cell.arm.family.value,
-            "flop_estimate": self.flop_estimate,
-            "parameter_count": self.parameter_count,
-            "peak_gpu_memory_bytes": self.peak_gpu_memory_bytes,
-            "peak_host_memory_bytes": self.peak_host_memory_bytes,
-            "seed": self.cell.seed,
-            "status": self.status.value,
+            "schema_version": GRID_ROW_SCHEMA_VERSION,
+            "arm_id": self.arm_id,
+            "family": str(self.family),
+            "channel_name": self.channel_name,
+            "representation_mode": self.representation_mode,
+            "seed": self.seed,
+            "status": str(self.status),
+            "config_hash": self.config_hash,
+            "commit": self.commit,
+            "metrics_by_view": {k: dict(v) for k, v in sorted(self.metrics_by_view.items())},
+            "view_status": dict(sorted(self.view_status.items())),
+            "denominators_by_view": {
+                k: dict(v) for k, v in sorted(self.denominators_by_view.items())
+            },
+            "structural_metrics": [metric.as_dict() for metric in self.structural_metrics],
+            "parameters": self.parameters,
+            "forward_flops": self.forward_flops,
             "wall_seconds": self.wall_seconds,
+            "peak_host_memory_bytes": self.peak_host_memory_bytes,
+            "peak_device_memory_bytes": self.peak_device_memory_bytes,
+            "input_graph_statistics": dict(sorted(self.input_graph_statistics.items())),
+            "failure_reason": self.failure_reason,
         }
 
 
-CellExecutor = Callable[[GridCell, GridConfigV1], GridCellResult]
+def grid_cell_id(arm: ArmSpec, seed: int) -> str:
+    """Return a filesystem-safe, collision-free identity for one grid cell."""
+
+    return f"{arm.arm_id.replace('::', '__')}__seed-{seed}"
 
 
-def fixed_grid_cells() -> tuple[GridCell, ...]:
-    """Return the preregistered six-arm by three-seed, 18-cell execution plan."""
+@dataclass
+class GridManifest:
+    """The frozen description of what the grid intends to run."""
 
-    return tuple(GridCell(arm=arm, seed=seed) for arm in FIXED_ARMS for seed in PRODUCTION_SEEDS)
+    arms: tuple[ArmSpec, ...]
+    seeds: tuple[int, ...]
+    commit: str
+    aligned_pair_count: int
+    view_status: dict[str, str]
+    is_fixture: bool = False
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": GRID_SCHEMA_VERSION,
+            "arms": [arm.as_dict() for arm in self.arms],
+            "seeds": list(self.seeds),
+            "commit": self.commit,
+            "aligned_pair_count": self.aligned_pair_count,
+            "view_status": dict(sorted(self.view_status.items())),
+            "is_fixture": self.is_fixture,
+            "cell_count": len(self.arms) * len(self.seeds),
+        }
+
+    @property
+    def manifest_digest(self) -> str:
+        import hashlib
+
+        return hashlib.sha256(canonical_json_bytes(self.as_dict())).hexdigest()
 
 
-def _unsupported_result(cell: GridCell) -> GridCellResult:
-    return GridCellResult(
-        cell=cell,
-        status=CellStatus.UNSUPPORTED,
-        evaluations=(),
-        parameter_count=None,
-        flop_estimate=None,
-        wall_seconds=None,
-        peak_host_memory_bytes=None,
-        peak_gpu_memory_bytes=None,
-        error=cell.arm.unavailable_reason,
-    )
-
-
-def _atomic_json(path: Path, value: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(value, allow_nan=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary, path)
-
-
-def build_grid_manifest(
-    config: GridConfigV1,
+def build_manifest(
+    registry: ChannelRegistry,
+    commit: str,
+    seeds: Sequence[int] = PRODUCTION_SEEDS,
     *,
-    executor: CellExecutor | None = None,
-) -> dict[str, object]:
-    """Build a plan or execute available cells, retaining unsupported cells explicitly.
+    is_fixture: bool = False,
+) -> GridManifest:
+    """Validate every contract, then freeze the grid manifest."""
 
-    A real executor is deliberately injected by the production launcher after it
-    authenticates the pair and tensor manifests.  With no executor this function
-    produces only pending/unsupported phase-A planning rows.
+    if not is_fixture and tuple(seeds) != PRODUCTION_SEEDS:
+        raise GridContractError(
+            f"production runs use exactly the preregistered seeds {PRODUCTION_SEEDS}; a seed is "
+            "never swapped because its result is unfavorable"
+        )
+    channels = validate_channels(registry)
+    aligned = validate_alignment(registry, channels)
+    return GridManifest(
+        arms=build_arms(channels),
+        seeds=tuple(seeds),
+        commit=commit,
+        aligned_pair_count=len(aligned),
+        view_status={view.value: str(registry.view_status(view.value)) for view in EvaluationView},
+        is_fixture=is_fixture,
+    )
+
+
+@runtime_checkable
+class CellRunner(Protocol):
+    """Executes one (arm, seed) cell.  Injected so the grid never owns model or data code."""
+
+    def run_cell(self, arm: ArmSpec, seed: int, config: HarnessConfig) -> GridRow:
+        """Run one cell and return its row, including explicit failure rows."""
+
+
+class GridRunner:
+    """Drive the six-arm grid as independent, resumable, content-addressed cells."""
+
+    def __init__(self, manifest: GridManifest, root: Path, runner: CellRunner) -> None:
+        self.manifest = manifest
+        self.root = Path(root)
+        self.runner = runner
+
+    def row_path(self, arm: ArmSpec, seed: int) -> Path:
+        return self.root / "cells" / f"{grid_cell_id(arm, seed)}.json"
+
+    def existing_row(self, arm: ArmSpec, seed: int) -> dict[str, object] | None:
+        path = self.row_path(arm, seed)
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def run(self, config_for: dict[str, HarnessConfig]) -> list[GridRow]:
+        """Run every outstanding cell, preserving existing complete and failed evidence."""
+
+        rows: list[GridRow] = []
+        for arm in self.manifest.arms:
+            for seed in self.manifest.seeds:
+                existing = self.existing_row(arm, seed)
+                if existing is not None and existing["status"] == str(CellStatus.COMPLETE):
+                    rows.append(_row_from_dict(existing))
+                    continue
+                row = self.runner.run_cell(arm, seed, config_for[arm.arm_id])
+                atomic_write_json(self.row_path(arm, seed), row.as_dict())
+                rows.append(row)
+        self.write_manifest()
+        return rows
+
+    def write_manifest(self) -> None:
+        atomic_write_json(self.root / "grid.manifest.json", self.manifest.as_dict())
+
+    def completeness_report(self) -> dict[str, object]:
+        """Report which of the expected cells exist, without inventing the missing ones."""
+
+        expected = [(arm, seed) for arm in self.manifest.arms for seed in self.manifest.seeds]
+        present = {
+            grid_cell_id(arm, seed) for arm, seed in expected if self.row_path(arm, seed).exists()
+        }
+        missing = [
+            grid_cell_id(arm, seed)
+            for arm, seed in expected
+            if grid_cell_id(arm, seed) not in present
+        ]
+        return {
+            "expected_cells": len(expected),
+            "present_cells": len(present),
+            "missing_cells": sorted(missing),
+            "complete": not missing,
+        }
+
+
+def _row_from_dict(payload: dict[str, object]) -> GridRow:
+    """Rebuild a row from disk without losing any recorded evidence.
+
+    Every field written by :meth:`GridRow.as_dict` is restored.  Dropping structural metrics or
+    memory telemetry here would silently shrink the evidence of an already-complete cell the next
+    time the grid resumed, which is exactly the kind of quiet loss the reporting policy forbids.
     """
 
-    rows: list[GridCellResult] = []
-    for cell in fixed_grid_cells():
-        if cell.arm.availability is CellStatus.UNSUPPORTED:
-            rows.append(_unsupported_result(cell))
-        elif executor is None:
-            rows.append(
-                GridCellResult(
-                    cell=cell,
-                    status=CellStatus.PENDING,
-                    evaluations=(),
-                    parameter_count=None,
-                    flop_estimate=None,
-                    wall_seconds=None,
-                    peak_host_memory_bytes=None,
-                    peak_gpu_memory_bytes=None,
-                )
+    return GridRow(
+        arm_id=str(payload["arm_id"]),
+        family=ArmFamily(str(payload["family"])),
+        channel_name=payload.get("channel_name"),  # type: ignore[arg-type]
+        representation_mode=payload.get("representation_mode"),  # type: ignore[arg-type]
+        seed=int(payload["seed"]),  # type: ignore[arg-type]
+        status=CellStatus(str(payload["status"])),
+        config_hash=str(payload["config_hash"]),
+        commit=str(payload["commit"]),
+        metrics_by_view={
+            str(view): dict(metrics)
+            for view, metrics in dict(payload.get("metrics_by_view", {})).items()  # type: ignore[arg-type]
+        },
+        view_status=dict(payload.get("view_status", {})),  # type: ignore[arg-type]
+        denominators_by_view={
+            str(view): dict(counts)
+            for view, counts in dict(payload.get("denominators_by_view", {})).items()  # type: ignore[arg-type]
+        },
+        structural_metrics=tuple(
+            StructuralMetric(
+                name=str(entry["name"]),
+                value=float(entry["value"]),
+                comparable_across_channels=bool(entry["comparable_across_channels"]),
+                note=str(entry.get("note", "")),
             )
-        else:
-            result = executor(cell, config)
-            if result.cell != cell:
-                raise Goal6GridError("the executor returned a row for a different fixed grid cell")
-            rows.append(result)
-    return {
-        "cells": [row.as_dict() for row in rows],
-        "config": asdict(config),
-        "config_hash": config.config_hash,
-        "phase": (
-            "phase_a_planning" if executor is None else "executed_fixture_or_authenticated_run"
+            for entry in list(payload.get("structural_metrics", ()))  # type: ignore[arg-type]
         ),
-        "schema_version": GRID_SCHEMA_VERSION,
-    }
-
-
-def write_grid_manifest(config: GridConfigV1, *, output_path: Path) -> Path:
-    """Atomically publish a phase-A grid manifest without claiming a production run."""
-
-    _atomic_json(output_path, build_grid_manifest(config))
-    return output_path
-
-
-def load_grid_config(path: Path) -> GridConfigV1:
-    """Load the strict frozen subset of the checked-in Goal 6 YAML configuration."""
-
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(loaded, dict):
-        raise Goal6GridError("Goal 6 grid config must be a mapping")
-    required = {
-        "dataset_id",
-        "input_manifest",
-        "input_manifest_sha256",
-        "output_directory",
-        "gnn",
-        "transformer",
-        "epochs",
-        "pair_counts",
-    }
-    missing = required - set(loaded)
-    if missing:
-        raise Goal6GridError(f"Goal 6 grid config is missing keys: {sorted(missing)}")
-    gnn = loaded["gnn"]
-    transformer = loaded["transformer"]
-    pair_counts = loaded["pair_counts"]
-    if not all(isinstance(value, dict) for value in (gnn, transformer, pair_counts)):
-        raise Goal6GridError("gnn, transformer, and pair_counts must be mappings")
-    return GridConfigV1(
-        dataset_id=str(loaded["dataset_id"]),
-        input_manifest=str(loaded["input_manifest"]),
-        input_manifest_sha256=str(loaded["input_manifest_sha256"]),
-        output_directory=str(loaded["output_directory"]),
-        gnn_hidden_width=int(gnn["hidden_width"]),
-        gnn_use_virtual_node=bool(gnn["use_virtual_node"]),
-        transformer_hidden_width=int(transformer["hidden_width"]),
-        epochs=int(loaded["epochs"]),
-        train_pair_count=int(pair_counts["train"]),
-        validation_pair_count=int(pair_counts["validation"]),
-        test_pair_count=int(pair_counts["test_iid"]),
+        parameters=payload.get("parameters"),  # type: ignore[arg-type]
+        forward_flops=payload.get("forward_flops"),  # type: ignore[arg-type]
+        wall_seconds=payload.get("wall_seconds"),  # type: ignore[arg-type]
+        peak_host_memory_bytes=payload.get("peak_host_memory_bytes"),  # type: ignore[arg-type]
+        peak_device_memory_bytes=payload.get("peak_device_memory_bytes"),  # type: ignore[arg-type]
+        input_graph_statistics=dict(payload.get("input_graph_statistics", {})),  # type: ignore[arg-type]
+        failure_reason=payload.get("failure_reason"),  # type: ignore[arg-type]
     )
-
-
-def main() -> None:
-    """Write a plan only; production execution requires an authenticated external launcher."""
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
-    write_grid_manifest(load_grid_config(args.config), output_path=args.output)
-
-
-if __name__ == "__main__":  # pragma: no cover - CLI wiring.
-    main()

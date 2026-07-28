@@ -1,305 +1,291 @@
-"""Compute-matched prefix-transformer control for graph representation studies."""
+"""Issue 6-3: the compute-matched prefix-sequence transformer control.
+
+This is a *real control*, not a deliberately weakened baseline.  It receives the same node kinds,
+labels, exact values, root order, and ordered child structure that the graph encoder receives; the
+only difference is that the graph is linearized into a prefix token sequence instead of being
+consumed as a graph.  Any capacity difference between this control and the graph encoder must come
+from the frozen parameter/FLOP matching policy, never from a quiet handicap.
+
+Tokenization is a frozen, versioned contract (:data:`PREFIX_TOKENIZATION_VERSION`).  Exact integers
+and rationals are serialized as structured sign/digit/solidus tokens, never as lossy float strings,
+so the sequence control sees the same exact values the graph control sees.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import json
+import math
 from dataclasses import dataclass
-from typing import Any
+from enum import StrEnum
 
-from geml.learning.backbones.gin import MLExtraUnavailableError, require_torch
-from geml.learning.datasets.materialize import GraphTensorV1
+import torch
+from torch import Tensor, nn
 
-try:  # Keep import of this module safe in core-only installations.
-    import torch
-    from torch import Tensor, nn
-except ImportError:  # pragma: no cover - optional-ML path.
-    torch = None  # type: ignore[assignment]
-    Tensor = Any  # type: ignore[misc,assignment]
-    nn = None  # type: ignore[assignment]
+PREFIX_TOKENIZATION_VERSION = "geml-goal6-prefix-tokens-v1"
+PREFIX_MODEL_SCHEMA_VERSION = "geml-goal6-prefix-transformer-v1"
 
-
-PREFIX_SCHEMA_VERSION = "geml-prefix-serialization-v1"
-
-
-@dataclass(frozen=True, slots=True)
-class PrefixVocabulary:
-    """Frozen serialization vocabulary with no split, label, or outcome tokens."""
-
-    tokens: tuple[str, ...]
-
-    def __post_init__(self) -> None:
-        if tuple(sorted(set(self.tokens))) != self.tokens:
-            raise ValueError("prefix vocabulary tokens must be sorted and unique")
-
-    @classmethod
-    def from_graphs(cls, graphs: tuple[GraphTensorV1, ...]) -> PrefixVocabulary:
-        """Build a deterministic vocabulary from an approved training/development set."""
-
-        tokens = {"<graph>", "<node>", "<value>", "<edge>", "<end>"}
-        for graph in graphs:
-            tokens.add(f"family:{graph.representation_family}")
-            tokens.add(f"mode:{graph.representation_mode}")
-            for node in graph.nodes:
-                tokens.add(f"kind:{node.node_kind}")
-                tokens.add(f"label:{node.node_label or '<none>'}")
-                tokens.add(f"root:{int(node.root_indicator)}")
-                tokens.add(f"root_order:{node.root_orders[0] if node.root_orders else 0}")
-            for edge in graph.message_edges:
-                tokens.add(f"direction:{edge.direction.value}")
-                tokens.add(f"role:{edge.role.value}")
-                tokens.add(f"slot:{edge.child_slot}")
-        return cls(tokens=tuple(sorted(tokens)))
-
-    @property
-    def lookup(self) -> dict[str, int]:
-        """Reserve zero for an unseen token and make all frozen IDs stable."""
-
-        return {token: index + 1 for index, token in enumerate(self.tokens)}
+#: Reserved control tokens.  Ordinary vocabulary entries start at :data:`FIRST_CONTENT_TOKEN`.
+PAD_TOKEN = 0
+START_TOKEN = 1
+NODE_TOKEN = 2
+ROOT_TOKEN = 3
+SLOT_TOKEN = 4
+VALUE_START_TOKEN = 5
+NEGATIVE_TOKEN = 6
+SOLIDUS_TOKEN = 7
+DIGIT_TOKEN_BASE = 8  # digits 0-9 occupy 8..17
+FIRST_CONTENT_TOKEN = 18
 
 
-@dataclass(frozen=True, slots=True)
-class PrefixBatch:
-    """Padded serialized graph sequences with complete exact-value digest bytes."""
+class TokenizationStatus(StrEnum):
+    """Typed outcome of one serialization attempt; failures stay visible as rows."""
 
-    token_ids: Tensor
-    value_bytes: Tensor
-    attention_mask: Tensor
-
-    def __post_init__(self) -> None:
-        require_torch()
-        if self.token_ids.ndim != 2:
-            raise ValueError("token_ids must have shape [batch, sequence]")
-        if self.value_bytes.shape != (*self.token_ids.shape, 32):
-            raise ValueError("value_bytes must retain 32 digest bytes for every serialized token")
-        if self.attention_mask.shape != self.token_ids.shape:
-            raise ValueError("attention_mask must match token_ids")
-        if self.token_ids.shape[0] < 1 or self.token_ids.shape[1] < 1:
-            raise ValueError("prefix batches must contain at least one graph and one position")
-
-    @property
-    def graph_count(self) -> int:
-        """Number of graphs in this serialized batch."""
-
-        return int(self.token_ids.shape[0])
-
-    @property
-    def sequence_length(self) -> int:
-        """The padded sequence length used for compute accounting."""
-
-        return int(self.token_ids.shape[1])
+    OK = "ok"
+    OVERLENGTH = "overlength"
+    INVALID_TOKEN = "invalid_token"
 
 
-def _canonical_value_bytes(value: object) -> list[int]:
-    """Encode structured node values without downgrading them to a kind/label-only control."""
-
-    encoded = json.dumps(
-        value,
-        allow_nan=False,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return list(hashlib.sha256(encoded).digest())
+class PrefixTokenizationError(ValueError):
+    """A prefix sequence could not be produced under the frozen contract."""
 
 
-def serialize_graph(
-    graph: GraphTensorV1, vocabulary: PrefixVocabulary
-) -> tuple[list[int], list[list[int]]]:
-    """Serialize nodes, exact values, ordered roots, and directed message edges in canonical order.
+@dataclass(frozen=True)
+class SerializedPrefix:
+    """One serialized graph together with its explicit outcome."""
 
-    Graph identifiers, pair IDs, labels, split membership, and channel success
-    outcomes are deliberately excluded.  The representation family/mode is
-    included because it is a declared input control, not a target feature.
+    tokens: tuple[int, ...]
+    status: TokenizationStatus
+    truncated_from: int | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "tokens": list(self.tokens),
+            "status": str(self.status),
+            "truncated_from": self.truncated_from,
+            "tokenization_version": PREFIX_TOKENIZATION_VERSION,
+        }
+
+
+@dataclass(frozen=True)
+class PrefixNode:
+    """The exact per-node information the tokenizer is allowed to see.
+
+    Deliberately mirrors the model-plane allowlist: kind, label, exact value, root order, and
+    ordered child slots.  No split, label, pair identity, or evaluation outcome appears here.
     """
 
-    lookup = vocabulary.lookup
+    kind_id: int
+    label_id: int
+    value_numerator: int | None = None
+    value_denominator: int | None = None
+    root_order: int | None = None
+    child_slots: tuple[int, ...] = ()
 
-    def token(value: str) -> int:
-        return lookup.get(value, 0)
 
-    tokens: list[int] = [
-        token("<graph>"),
-        token(f"family:{graph.representation_family}"),
-        token(f"mode:{graph.representation_mode}"),
-    ]
-    values: list[list[int]] = [[0] * 32 for _ in tokens]
-    for node in graph.nodes:
-        node_tokens = (
-            "<node>",
-            f"kind:{node.node_kind}",
-            f"label:{node.node_label or '<none>'}",
-            "<value>",
-            f"root:{int(node.root_indicator)}",
-            f"root_order:{node.root_orders[0] if node.root_orders else 0}",
+def _integer_tokens(value: int) -> list[int]:
+    tokens: list[int] = []
+    if value < 0:
+        tokens.append(NEGATIVE_TOKEN)
+    for character in str(abs(value)):
+        tokens.append(DIGIT_TOKEN_BASE + int(character))
+    return tokens
+
+
+def serialize_prefix(
+    nodes: tuple[PrefixNode, ...],
+    max_length: int,
+    kind_offset: int = FIRST_CONTENT_TOKEN,
+    label_offset: int = FIRST_CONTENT_TOKEN + 32,
+) -> SerializedPrefix:
+    """Serialize a graph into the frozen prefix token contract.
+
+    Overlength sequences are an explicit, recorded outcome.  They are truncated only so a batch can
+    still be formed, and the original length is retained so the loss of information is auditable
+    rather than silent.
+    """
+
+    if max_length < 2:
+        raise PrefixTokenizationError("max_length must leave room for at least a start token")
+    if not nodes:
+        raise PrefixTokenizationError("cannot serialize a graph with zero nodes")
+
+    tokens: list[int] = [START_TOKEN]
+    for node in nodes:
+        if node.kind_id < 0 or node.label_id < 0:
+            return SerializedPrefix((), TokenizationStatus.INVALID_TOKEN)
+        tokens.append(NODE_TOKEN)
+        tokens.append(kind_offset + node.kind_id)
+        tokens.append(label_offset + node.label_id)
+        if node.root_order is not None:
+            tokens.append(ROOT_TOKEN)
+            tokens.extend(_integer_tokens(node.root_order))
+        if node.value_numerator is not None:
+            tokens.append(VALUE_START_TOKEN)
+            tokens.extend(_integer_tokens(node.value_numerator))
+            if node.value_denominator is not None and node.value_denominator != 1:
+                tokens.append(SOLIDUS_TOKEN)
+                tokens.extend(_integer_tokens(node.value_denominator))
+        for slot in node.child_slots:
+            tokens.append(SLOT_TOKEN)
+            tokens.extend(_integer_tokens(slot))
+
+    if len(tokens) > max_length:
+        return SerializedPrefix(
+            tuple(tokens[:max_length]),
+            TokenizationStatus.OVERLENGTH,
+            truncated_from=len(tokens),
         )
-        tokens.extend(token(value) for value in node_tokens)
-        values.extend(
-            _canonical_value_bytes(node.exact_value) if value == "<value>" else [0] * 32
-            for value in node_tokens
-        )
-    for edge in graph.message_edges:
-        edge_tokens = (
-            "<edge>",
-            f"direction:{edge.direction.value}",
-            f"role:{edge.role.value}",
-            f"slot:{edge.child_slot}",
-        )
-        tokens.extend(token(value) for value in edge_tokens)
-        values.extend([[0] * 32 for _ in edge_tokens])
-    tokens.append(token("<end>"))
-    values.append([0] * 32)
-    return tokens, values
+    return SerializedPrefix(tuple(tokens), TokenizationStatus.OK)
 
 
-def prefix_batch_from_graphs(
-    graphs: tuple[GraphTensorV1, ...],
-    vocabulary: PrefixVocabulary,
-    *,
-    max_sequence_length: int,
-    device: Any | None = None,
-) -> PrefixBatch:
-    """Pad a deterministic graph serialization without truncating silent input content."""
+@dataclass(frozen=True)
+class PrefixTransformerConfig:
+    """Frozen configuration for the sequence control."""
 
-    require_torch()
-    if not graphs:
-        raise ValueError("at least one graph is required")
-    if max_sequence_length < 1:
-        raise ValueError("max_sequence_length must be positive")
-    sequences = tuple(serialize_graph(graph, vocabulary) for graph in graphs)
-    longest = max(len(tokens) for tokens, _ in sequences)
-    if longest > max_sequence_length:
-        raise ValueError(
-            f"serialized graph requires {longest} tokens, exceeding frozen max_sequence_length "
-            f"{max_sequence_length}; truncation is forbidden"
+    vocabulary_size: int = 256
+    hidden_width: int = 64
+    num_layers: int = 3
+    num_heads: int = 4
+    feedforward_width: int = 128
+    dropout: float = 0.1
+    max_length: int = 512
+    schema_version: str = PREFIX_MODEL_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.hidden_width % self.num_heads != 0:
+            raise PrefixTokenizationError("hidden_width must be divisible by num_heads")
+        if self.max_length < 2:
+            raise PrefixTokenizationError("max_length must be at least 2")
+
+
+class PrefixSequenceEncoder(nn.Module):
+    """A compact transformer encoder over prefix token sequences."""
+
+    def __init__(self, config: PrefixTransformerConfig | None = None) -> None:
+        super().__init__()
+        self.config = config or PrefixTransformerConfig()
+        width = self.config.hidden_width
+        self.token_embedding = nn.Embedding(
+            self.config.vocabulary_size, width, padding_idx=PAD_TOKEN
         )
-    target_device = torch.device("cpu") if device is None else device
-    token_rows: list[list[int]] = []
-    value_rows: list[list[list[int]]] = []
-    masks: list[list[bool]] = []
-    for tokens, values in sequences:
-        padding = max_sequence_length - len(tokens)
-        token_rows.append([*tokens, *([0] * padding)])
-        value_rows.append([*values, *([[0] * 32] * padding)])
-        masks.append([True] * len(tokens) + [False] * padding)
-    return PrefixBatch(
-        token_ids=torch.tensor(token_rows, dtype=torch.long, device=target_device),
-        value_bytes=torch.tensor(value_rows, dtype=torch.long, device=target_device),
-        attention_mask=torch.tensor(masks, dtype=torch.bool, device=target_device),
+        self.register_buffer(
+            "positional_encoding",
+            _sinusoidal_positions(self.config.max_length, width),
+            persistent=False,
+        )
+        layer = nn.TransformerEncoderLayer(
+            d_model=width,
+            nhead=self.config.num_heads,
+            dim_feedforward=self.config.feedforward_width,
+            dropout=self.config.dropout,
+            batch_first=True,
+            norm_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=self.config.num_layers)
+
+    @property
+    def output_width(self) -> int:
+        return self.config.hidden_width
+
+    def forward(self, tokens: Tensor) -> Tensor:
+        """Return one pooled embedding per sequence.
+
+        ``tokens`` is a long tensor ``[batch, length]`` padded with :data:`PAD_TOKEN`.  Padding is
+        masked out of both attention and the pooled mean, so padding length cannot leak into the
+        representation.
+        """
+
+        if tokens.dim() != 2:
+            raise PrefixTokenizationError("tokens must have shape [batch, length]")
+        if tokens.shape[1] > self.config.max_length:
+            raise PrefixTokenizationError(
+                f"sequence length {tokens.shape[1]} exceeds the frozen max_length "
+                f"{self.config.max_length}; overlength inputs must be recorded, not silently run"
+            )
+        padding_mask = tokens == PAD_TOKEN
+        if bool(padding_mask.all(dim=1).any()):
+            raise PrefixTokenizationError("a fully padded sequence has no content to encode")
+
+        embedded = self.token_embedding(tokens)
+        embedded = embedded + self.positional_encoding[: tokens.shape[1]].unsqueeze(0)
+        encoded = self.encoder(embedded, src_key_padding_mask=padding_mask)
+
+        keep = (~padding_mask).unsqueeze(-1).to(encoded.dtype)
+        return (encoded * keep).sum(dim=1) / keep.sum(dim=1).clamp(min=1.0)
+
+
+def _sinusoidal_positions(length: int, width: int) -> Tensor:
+    """Bounded, non-learned positional encoding."""
+
+    position = torch.arange(length, dtype=torch.float32).unsqueeze(1)
+    divisor = torch.exp(
+        torch.arange(0, width, 2, dtype=torch.float32) * (-math.log(10000.0) / width)
     )
+    encoding = torch.zeros(length, width)
+    encoding[:, 0::2] = torch.sin(position * divisor)
+    encoding[:, 1::2] = torch.cos(position * divisor)
+    return encoding
 
 
-if torch is not None:
+class PrefixTransformerPairModel(nn.Module):
+    """Swap-invariant equivalence classifier over two prefix sequences.
 
-    class PrefixTransformerEncoder(nn.Module):
-        """Small pre-norm transformer control over the frozen prefix serialization."""
+    Both endpoints pass through one shared encoder and are combined with the *same* symmetric
+    composition used by the graph arm, so the two arms differ only in how the expression is
+    represented, not in how the pair is formed.
+    """
 
-        def __init__(
-            self,
-            vocabulary: PrefixVocabulary,
-            *,
-            hidden_width: int = 96,
-            layers: int = 3,
-            heads: int = 4,
-            dropout: float = 0.1,
-            max_sequence_length: int = 1024,
-        ) -> None:
-            super().__init__()
-            if hidden_width not in {64, 96}:
-                raise ValueError("hidden_width must be 64 or 96")
-            if layers != 3:
-                raise ValueError("the compact prefix transformer uses exactly three layers")
-            if hidden_width % heads:
-                raise ValueError("hidden_width must be divisible by attention heads")
-            if max_sequence_length < 1:
-                raise ValueError("max_sequence_length must be positive")
-            self.hidden_width = hidden_width
-            self.max_sequence_length = max_sequence_length
-            self.token_embedding = nn.Embedding(len(vocabulary.tokens) + 1, hidden_width)
-            self.value_byte_embedding = nn.Embedding(256, hidden_width)
-            self.position_embedding = nn.Embedding(max_sequence_length, hidden_width)
-            layer = nn.TransformerEncoderLayer(
-                d_model=hidden_width,
-                nhead=heads,
-                dim_feedforward=hidden_width * 2,
-                dropout=dropout,
-                activation="gelu",
-                batch_first=True,
-                norm_first=True,
-            )
-            self.encoder = nn.TransformerEncoder(layer, num_layers=layers)
-            self.norm = nn.LayerNorm(hidden_width)
+    def __init__(
+        self,
+        encoder: PrefixSequenceEncoder | None = None,
+        head_width: int = 64,
+    ) -> None:
+        super().__init__()
+        self.encoder = encoder or PrefixSequenceEncoder()
+        width = self.encoder.output_width
+        self.head = nn.Sequential(
+            nn.Linear(3 * width, head_width),
+            nn.ReLU(),
+            nn.Linear(head_width, 1),
+        )
 
-        def forward(self, batch: PrefixBatch) -> Tensor:
-            if batch.sequence_length > self.max_sequence_length:
-                raise ValueError("prefix batch exceeds the encoder's frozen max_sequence_length")
-            positions = torch.arange(
-                batch.sequence_length,
-                device=batch.token_ids.device,
-                dtype=torch.long,
-            ).unsqueeze(0)
-            embedded = (
-                self.token_embedding(batch.token_ids)
-                + self.value_byte_embedding(batch.value_bytes).mean(dim=2)
-                + self.position_embedding(positions)
-            )
-            encoded = self.encoder(embedded, src_key_padding_mask=~batch.attention_mask)
-            weights = batch.attention_mask.unsqueeze(-1).to(encoded.dtype)
-            pooled = (encoded * weights).sum(dim=1) / weights.sum(dim=1).clamp_min(1)
-            return self.norm(pooled)
-
-    class SiamesePrefixTransformerHead(nn.Module):
-        """Swap-invariant equivalence head over a shared prefix transformer."""
-
-        def __init__(self, encoder: PrefixTransformerEncoder) -> None:
-            super().__init__()
-            self.encoder = encoder
-            width = encoder.hidden_width
-            self.classifier = nn.Sequential(
-                nn.Linear(width * 3, width),
-                nn.GELU(),
-                nn.Linear(width, 2),
-            )
-
-        def forward(self, left: PrefixBatch, right: PrefixBatch) -> Tensor:
-            left_embedding = self.encoder(left)
-            right_embedding = self.encoder(right)
-            if left_embedding.shape != right_embedding.shape:
-                raise ValueError("Siamese prefix batches must have the same graph count")
-            features = torch.cat(
-                (
-                    left_embedding + right_embedding,
-                    torch.abs(left_embedding - right_embedding),
-                    left_embedding * right_embedding,
-                ),
-                dim=-1,
-            )
-            return self.classifier(features)
-
-    def estimate_prefix_flops(encoder: PrefixTransformerEncoder, batch: PrefixBatch) -> int:
-        """Estimate forward attention/FFN work for fixed compute-matching reports."""
-
-        width = encoder.hidden_width
-        sequence = batch.sequence_length
-        graphs = batch.graph_count
-        attention = graphs * sequence * sequence * width * 2
-        feed_forward = graphs * sequence * width * width * 4
-        return int((attention + feed_forward) * len(encoder.encoder.layers))
+    def forward(self, left_tokens: Tensor, right_tokens: Tensor) -> Tensor:
+        if left_tokens.shape[0] != right_tokens.shape[0]:
+            raise PrefixTokenizationError("pair endpoints must have the same batch size")
+        left = self.encoder(left_tokens)
+        right = self.encoder(right_tokens)
+        features = torch.cat([left + right, (left - right).abs(), left * right], dim=-1)
+        return self.head(features).squeeze(-1)
 
 
-else:
+def prefix_forward_flop_estimate(
+    model: PrefixTransformerPairModel,
+    batch_size: int,
+    sequence_length: int,
+) -> dict[str, object]:
+    """Estimate forward FLOPs for the sequence control under a declared workload.
 
-    class PrefixTransformerEncoder:  # pragma: no cover - optional-ML path.
-        """Actionable optional-dependency placeholder."""
+    Reported with the same limitations as the graph estimate so the two arms are matched on
+    comparable quantities rather than on parameter count alone.
+    """
 
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            raise MLExtraUnavailableError("install GEML with `.[ml]` to use prefix transformers")
-
-    class SiamesePrefixTransformerHead:  # pragma: no cover - optional-ML path.
-        """Actionable optional-dependency placeholder."""
-
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            raise MLExtraUnavailableError("install GEML with `.[ml]` to use prefix transformers")
-
-    def estimate_prefix_flops(_encoder: object, _batch: object) -> int:  # pragma: no cover
-        raise MLExtraUnavailableError("install GEML with `.[ml]` to estimate prefix FLOPs")
+    config = model.encoder.config
+    width = config.hidden_width
+    per_layer = 0
+    per_layer += 2 * sequence_length * width * width * 4  # q, k, v, output projections
+    per_layer += 2 * 2 * sequence_length * sequence_length * width  # attention scores and context
+    per_layer += 2 * sequence_length * width * config.feedforward_width * 2  # feed-forward block
+    total = per_layer * config.num_layers * batch_size
+    total *= 2  # both endpoints pass through the shared encoder
+    head_width = model.head[0].out_features
+    total += 2 * batch_size * (3 * width * head_width + head_width)
+    return {
+        "forward_flops": int(total),
+        "batch_size": int(batch_size),
+        "sequence_length": int(sequence_length),
+        "tokenization_version": PREFIX_TOKENIZATION_VERSION,
+        "limitations": [
+            "counts only dense matrix-multiply multiply-accumulate pairs as 2 FLOPs each",
+            "embedding lookups, normalization, dropout, softmax, and masking are excluded",
+            "an analytic estimate for a declared reference workload, not a hardware measurement",
+        ],
+    }

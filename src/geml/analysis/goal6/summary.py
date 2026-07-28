@@ -1,326 +1,545 @@
-"""Denominator-complete aggregation and conservative Gate G6 decisions."""
+"""Issue 6-6: denominator-complete Goal 6 analysis and the Gate G6 state machine.
+
+What this module refuses to do
+------------------------------
+* emit a scientific verdict from fixture or incomplete rows;
+* represent a missing seed row as zero;
+* aggregate metrics whose denominators cannot be reconstructed;
+* pool structural metrics from different representations into one "alpha" column;
+* treat correlated pair rows or three seed observations as independent samples;
+* write a plausible-looking numerical placeholder in place of a missing value.
+
+Every one of those is a way to make an unfinished experiment look finished, so each is an explicit
+error or an explicit machine-readable missing state rather than a silent default.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import json
-import statistics
+import math
+import random
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import StrEnum
 
-from geml.experiments.goal6.run_grid import (
-    GRID_SCHEMA_VERSION,
-    ArmFamily,
-    CellStatus,
-    EvaluationView,
+GOAL6_ANALYSIS_SCHEMA_VERSION = "geml-goal6-analysis-v1"
+GATE_G6_SCHEMA_VERSION = "geml-goal6-gate-v1"
+
+#: The fixed-scale caveat that must accompany every Goal 6 claim.
+FIXED_SCALE_CAVEATS: tuple[str, ...] = (
+    "all results are at the fixed 50,000 training-pair scale over the frozen 250k-v1 corpus",
+    "no claim extrapolates beyond this scale; no scaling law is fitted",
+    "three seeds support raw-seed reporting and effect sizes, not strong asymptotic significance",
+    "structural metrics from different representations are not mutually comparable",
 )
 
-ANALYSIS_SCHEMA_VERSION = "geml-goal6-analysis-v1"
+
+class AnalysisError(ValueError):
+    """The result rows cannot support the requested aggregate."""
 
 
-class Goal6AnalysisError(ValueError):
-    """A grid manifest cannot support a valid Goal 6 aggregate or verdict."""
+class GateState(StrEnum):
+    """The only three Gate G6 outcomes."""
 
-
-class GateVerdict(StrEnum):
     PASS = "pass"
     FAIL = "fail"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
 
-@dataclass(frozen=True, slots=True)
-class MetricAggregate:
-    """Raw per-seed values plus a mean/spread with no hidden failed-cell exclusion."""
+class MissingReason(StrEnum):
+    """Machine-readable reasons a value is absent.  Never replaced by a number."""
 
-    values: tuple[float, ...]
+    CELL_MISSING = "cell_missing"
+    CELL_FAILED = "cell_failed"
+    VIEW_UNSUPPORTED = "view_unsupported"
+    METRIC_NOT_REPORTED = "metric_not_reported"
+    DENOMINATOR_UNRECONSTRUCTABLE = "denominator_unreconstructable"
+
+
+REQUIRED_DENOMINATOR_KEYS: frozenset[str] = frozenset(
+    {"attempted", "valid", "failed", "unsupported", "timed_out"}
+)
+
+
+@dataclass(frozen=True)
+class MissingValue:
+    """An explicit absence carrying its reason."""
+
+    reason: MissingReason
+    detail: str = ""
 
     def as_dict(self) -> dict[str, object]:
-        return {
-            "mean": None if not self.values else statistics.fmean(self.values),
-            "sample_spread": (None if len(self.values) < 2 else statistics.stdev(self.values)),
-            "seed_values": list(self.values),
-        }
+        return {"missing": True, "reason": str(self.reason), "detail": self.detail}
 
 
-@dataclass(frozen=True, slots=True)
-class ArmViewSummary:
-    """One arm/evaluation-view result retaining planned and valid denominators."""
+@dataclass(frozen=True)
+class SeedAggregate:
+    """Three-seed aggregation that always keeps the raw rows."""
 
+    metric: str
+    view: str
     arm_id: str
-    family: ArmFamily
-    channel: str | None
-    view: EvaluationView
-    planned_seed_count: int
-    status_counts: tuple[tuple[str, int], ...]
-    attempted: int
-    valid: int
-    correct: int
-    accuracy: MetricAggregate
-    macro_f1: MetricAggregate
-    calibration_error: MetricAggregate
-    parameter_count: MetricAggregate
-    flop_estimate: MetricAggregate
-    wall_seconds: MetricAggregate
-    peak_host_memory_bytes: MetricAggregate
-    peak_gpu_memory_bytes: MetricAggregate
+    raw_by_seed: dict[int, float]
+    expected_seeds: tuple[int, ...]
 
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "accuracy": self.accuracy.as_dict(),
-            "arm_id": self.arm_id,
-            "attempted": self.attempted,
-            "calibration_error": self.calibration_error.as_dict(),
-            "channel": self.channel,
-            "correct": self.correct,
-            "family": self.family.value,
-            "flop_estimate": self.flop_estimate.as_dict(),
-            "macro_f1": self.macro_f1.as_dict(),
-            "parameter_count": self.parameter_count.as_dict(),
-            "peak_gpu_memory_bytes": self.peak_gpu_memory_bytes.as_dict(),
-            "peak_host_memory_bytes": self.peak_host_memory_bytes.as_dict(),
-            "planned_seed_count": self.planned_seed_count,
-            "status_counts": dict(self.status_counts),
-            "valid": self.valid,
-            "view": self.view.value,
-            "wall_seconds": self.wall_seconds.as_dict(),
-        }
+    @property
+    def complete(self) -> bool:
+        return set(self.raw_by_seed) == set(self.expected_seeds)
 
+    @property
+    def values(self) -> list[float]:
+        return [self.raw_by_seed[seed] for seed in sorted(self.raw_by_seed)]
 
-@dataclass(frozen=True, slots=True)
-class Goal6Analysis:
-    """Analysis payload from one authenticated grid manifest, including its caveats."""
-
-    config_hash: str
-    grid_phase: str
-    total_cell_status_counts: tuple[tuple[str, int], ...]
-    arm_view_summaries: tuple[ArmViewSummary, ...]
-    alpha_status: str
-    verdict: GateVerdict
-    verdict_reasons: tuple[str, ...]
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "alpha_status": self.alpha_status,
-            "arm_view_summaries": [item.as_dict() for item in self.arm_view_summaries],
-            "config_hash": self.config_hash,
-            "grid_phase": self.grid_phase,
-            "schema_version": ANALYSIS_SCHEMA_VERSION,
-            "total_cell_status_counts": dict(self.total_cell_status_counts),
-            "verdict": self.verdict.value,
-            "verdict_reasons": list(self.verdict_reasons),
-        }
-
-
-def _config_hash(config: object) -> str:
-    encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
-
-
-def _number(value: object, *, label: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise Goal6AnalysisError(f"{label} must be numeric")
-    return float(value)
-
-
-def _optional_number(value: object, *, label: str) -> float | None:
-    return None if value is None else _number(value, label=label)
-
-
-def _metric(values: list[float]) -> MetricAggregate:
-    return MetricAggregate(tuple(values))
-
-
-def summarize_manifest(manifest: dict[str, object]) -> Goal6Analysis:
-    """Validate and aggregate a manifest without silently filtering terminal rows."""
-
-    if manifest.get("schema_version") != GRID_SCHEMA_VERSION:
-        raise Goal6AnalysisError("unexpected Goal 6 grid schema version")
-    config = manifest.get("config")
-    if not isinstance(config, dict) or manifest.get("config_hash") != _config_hash(config):
-        raise Goal6AnalysisError("grid manifest configuration hash does not bind its content")
-    phase = manifest.get("phase")
-    if not isinstance(phase, str) or not phase:
-        raise Goal6AnalysisError("grid manifest must declare its execution phase")
-    cells = manifest.get("cells")
-    if not isinstance(cells, list) or len(cells) != 18:
-        raise Goal6AnalysisError("Goal 6 grid manifest must retain exactly 18 fixed cells")
-
-    seen_cell_ids: set[str] = set()
-    grouped: dict[tuple[str, EvaluationView], list[dict[str, object]]] = defaultdict(list)
-    status_counts: Counter[str] = Counter()
-    arm_metadata: dict[str, tuple[ArmFamily, str | None]] = {}
-    cell_rows_by_arm: dict[str, list[dict[str, object]]] = defaultdict(list)
-    for row in cells:
-        if not isinstance(row, dict):
-            raise Goal6AnalysisError("every grid cell must be an object")
-        cell_id = row.get("cell_id")
-        arm_id = row.get("arm")
-        if not isinstance(cell_id, str) or not isinstance(arm_id, str) or cell_id in seen_cell_ids:
-            raise Goal6AnalysisError("cell IDs and arm IDs must be unique/nonblank")
-        seen_cell_ids.add(cell_id)
-        try:
-            status = CellStatus(row.get("status"))
-            family = ArmFamily(row.get("family"))
-        except ValueError as error:
-            raise Goal6AnalysisError("grid cell has an unknown status or family") from error
-        channel = row.get("channel")
-        if channel is not None and not isinstance(channel, str):
-            raise Goal6AnalysisError("channel must be a string or null")
-        prior_metadata = arm_metadata.setdefault(arm_id, (family, channel))
-        if prior_metadata != (family, channel):
-            raise Goal6AnalysisError("one arm cannot change family or channel across seeds")
-        status_counts[status.value] += 1
-        cell_rows_by_arm[arm_id].append(row)
-        evaluations = row.get("evaluations")
-        if not isinstance(evaluations, list):
-            raise Goal6AnalysisError("cell evaluations must be a list")
-        if status is not CellStatus.COMPLETE:
-            if evaluations:
-                raise Goal6AnalysisError(
-                    "non-complete cells cannot carry partial quality summaries"
-                )
-            continue
-        required_views = set(EvaluationView)
-        observed_views: set[EvaluationView] = set()
-        for evaluation in evaluations:
-            if not isinstance(evaluation, dict):
-                raise Goal6AnalysisError("evaluation rows must be objects")
-            try:
-                view = EvaluationView(evaluation.get("view"))
-            except ValueError as error:
-                raise Goal6AnalysisError("evaluation has an unknown view") from error
-            if view in observed_views:
-                raise Goal6AnalysisError("complete cells cannot duplicate an evaluation view")
-            observed_views.add(view)
-            grouped[(arm_id, view)].append({"cell": row, "evaluation": evaluation})
-        if observed_views != required_views:
-            raise Goal6AnalysisError("complete cells must retain every declared evaluation view")
-
-    summaries: list[ArmViewSummary] = []
-    for arm_id, (family, channel) in sorted(arm_metadata.items()):
-        rows = cell_rows_by_arm[arm_id]
-        arm_status_counts = Counter(str(row["status"]) for row in rows)
-        for view in EvaluationView:
-            observations = grouped[(arm_id, view)]
-            accuracy: list[float] = []
-            macro_f1: list[float] = []
-            calibration_error: list[float] = []
-            parameters: list[float] = []
-            flops: list[float] = []
-            wall: list[float] = []
-            host_memory: list[float] = []
-            gpu_memory: list[float] = []
-            attempted = 0
-            valid = 0
-            correct = 0
-            for observation in observations:
-                cell = observation["cell"]
-                evaluation = observation["evaluation"]
-                asserted = int(_number(evaluation.get("attempted"), label="attempted"))
-                valid_count = int(_number(evaluation.get("valid"), label="valid"))
-                correct_count = int(_number(evaluation.get("correct"), label="correct"))
-                if not 0 <= correct_count <= valid_count <= asserted:
-                    raise Goal6AnalysisError("evaluation counts violate their denominator ordering")
-                attempted += asserted
-                valid += valid_count
-                correct += correct_count
-                if valid_count:
-                    accuracy.append(correct_count / valid_count)
-                for target, key in (
-                    (macro_f1, "macro_f1"),
-                    (calibration_error, "calibration_error"),
-                ):
-                    value = _optional_number(evaluation.get(key), label=key)
-                    if value is not None:
-                        target.append(value)
-                for target, key in (
-                    (parameters, "parameter_count"),
-                    (flops, "flop_estimate"),
-                    (wall, "wall_seconds"),
-                    (host_memory, "peak_host_memory_bytes"),
-                    (gpu_memory, "peak_gpu_memory_bytes"),
-                ):
-                    value = _optional_number(cell.get(key), label=key)
-                    if value is not None:
-                        target.append(value)
-            summaries.append(
-                ArmViewSummary(
-                    arm_id=arm_id,
-                    family=family,
-                    channel=channel,
-                    view=view,
-                    planned_seed_count=len(rows),
-                    status_counts=tuple(sorted(arm_status_counts.items())),
-                    attempted=attempted,
-                    valid=valid,
-                    correct=correct,
-                    accuracy=_metric(accuracy),
-                    macro_f1=_metric(macro_f1),
-                    calibration_error=_metric(calibration_error),
-                    parameter_count=_metric(parameters),
-                    flop_estimate=_metric(flops),
-                    wall_seconds=_metric(wall),
-                    peak_host_memory_bytes=_metric(host_memory),
-                    peak_gpu_memory_bytes=_metric(gpu_memory),
-                )
+    @property
+    def mean(self) -> float | MissingValue:
+        if not self.complete:
+            return MissingValue(
+                MissingReason.CELL_MISSING,
+                f"have seeds {sorted(self.raw_by_seed)}, expected {list(self.expected_seeds)}",
             )
+        return sum(self.values) / len(self.values)
 
-    reasons: list[str] = []
-    if status_counts[CellStatus.PENDING.value]:
-        reasons.append("one or more preregistered cells remain pending")
-    if status_counts[CellStatus.FAILED.value] or status_counts[CellStatus.TIMEOUT.value]:
-        reasons.append("one or more attempted cells failed or timed out")
-    if status_counts[CellStatus.UNSUPPORTED.value]:
-        reasons.append("the motif-AST fair-control cells are explicitly unsupported")
-    if not any(status_counts.values()):
-        reasons.append("no retained grid rows exist")
-    reasons.append("channel alpha is not recorded in the Goal 6 grid manifest")
-    return Goal6Analysis(
-        config_hash=str(manifest["config_hash"]),
-        grid_phase=phase,
-        total_cell_status_counts=tuple(sorted(status_counts.items())),
-        arm_view_summaries=tuple(summaries),
-        alpha_status="unavailable: no authenticated channel-alpha join is present",
-        verdict=GateVerdict.INSUFFICIENT_EVIDENCE,
-        verdict_reasons=tuple(reasons),
+    @property
+    def sample_standard_deviation(self) -> float | MissingValue:
+        if not self.complete:
+            return MissingValue(MissingReason.CELL_MISSING, "incomplete seed set")
+        values = self.values
+        if len(values) < 2:
+            return MissingValue(MissingReason.METRIC_NOT_REPORTED, "fewer than two seeds")
+        mean = sum(values) / len(values)
+        return math.sqrt(sum((value - mean) ** 2 for value in values) / (len(values) - 1))
+
+    @property
+    def spread(self) -> float | MissingValue:
+        """Min-to-max range: with three seeds this is more honest than a confidence interval."""
+
+        if not self.complete:
+            return MissingValue(MissingReason.CELL_MISSING, "incomplete seed set")
+        return max(self.values) - min(self.values)
+
+    def as_dict(self) -> dict[str, object]:
+        def render(value: float | MissingValue) -> object:
+            return value.as_dict() if isinstance(value, MissingValue) else value
+
+        return {
+            "arm_id": self.arm_id,
+            "view": self.view,
+            "metric": self.metric,
+            "raw_by_seed": {str(seed): value for seed, value in sorted(self.raw_by_seed.items())},
+            "complete": self.complete,
+            "mean": render(self.mean),
+            "sample_standard_deviation": render(self.sample_standard_deviation),
+            "spread_min_to_max": render(self.spread),
+            "seed_count": len(self.raw_by_seed),
+            "expected_seed_count": len(self.expected_seeds),
+        }
+
+
+def validate_rows(
+    rows: Sequence[Mapping[str, object]],
+    expected_seeds: Sequence[int],
+    *,
+    require_single_commit: bool = True,
+) -> None:
+    """Fail closed on every manifest inconsistency issue 6-6 enumerates."""
+
+    if not rows:
+        raise AnalysisError("no result rows were supplied")
+
+    identities = Counter((str(row["arm_id"]), int(row["seed"])) for row in rows)
+    duplicates = sorted(identity for identity, count in identities.items() if count > 1)
+    if duplicates:
+        raise AnalysisError(f"duplicate cell identities are not aggregatable: {duplicates}")
+
+    commits = {str(row.get("commit", "")) for row in rows}
+    if require_single_commit and len(commits) > 1:
+        raise AnalysisError(
+            f"rows span multiple commits {sorted(commits)}; pass require_single_commit=False only "
+            "with an explicit grouping decision"
+        )
+
+    schemas = {str(row.get("schema_version", "")) for row in rows}
+    if len(schemas) > 1:
+        raise AnalysisError(f"rows span multiple row schemas {sorted(schemas)}")
+
+    for row in rows:
+        if int(row["seed"]) not in set(expected_seeds):
+            raise AnalysisError(
+                f"row for arm {row['arm_id']!r} carries unexpected seed {row['seed']}"
+            )
+        for view, denominators in dict(row.get("denominators_by_view", {})).items():  # type: ignore[arg-type]
+            missing = REQUIRED_DENOMINATOR_KEYS - set(denominators)
+            if missing:
+                raise AnalysisError(
+                    f"arm {row['arm_id']!r} view {view!r} cannot reconstruct its denominator; "
+                    f"missing {sorted(missing)}"
+                )
+            accounted = sum(
+                int(denominators[key]) for key in ("valid", "failed", "unsupported", "timed_out")
+            )
+            if accounted != int(denominators["attempted"]):
+                raise AnalysisError(
+                    f"arm {row['arm_id']!r} view {view!r} denominators do not sum to attempted "
+                    f"({accounted} vs {denominators['attempted']})"
+                )
+
+
+def validate_ood_membership(rows: Sequence[Mapping[str, object]], view: str) -> None:
+    """Refuse to compare arms that disagree about what an OOD view contains."""
+
+    memberships = {
+        str(row["arm_id"]): tuple(sorted(dict(row.get("ood_membership", {})).get(view, ())))  # type: ignore[arg-type]
+        for row in rows
+    }
+    distinct = set(memberships.values())
+    if len(distinct) > 1:
+        raise AnalysisError(
+            f"arms disagree about the membership of view {view!r}; comparing them would score "
+            "different subsets under one name"
+        )
+
+
+def aggregate(
+    rows: Sequence[Mapping[str, object]],
+    arm_id: str,
+    view: str,
+    metric: str,
+    expected_seeds: Sequence[int],
+) -> SeedAggregate:
+    """Collect the raw per-seed values for one (arm, view, metric).
+
+    A failed or missing cell contributes no value at all.  It is never coerced to zero, which would
+    silently drag an arm's mean toward a number nobody measured.
+    """
+
+    raw: dict[int, float] = {}
+    for row in rows:
+        if str(row["arm_id"]) != arm_id:
+            continue
+        if str(row["status"]) != "complete":
+            continue
+        metrics = dict(row.get("metrics_by_view", {})).get(view)  # type: ignore[arg-type]
+        if not metrics or metric not in metrics:
+            continue
+        raw[int(row["seed"])] = float(metrics[metric])
+    return SeedAggregate(
+        metric=metric,
+        view=view,
+        arm_id=arm_id,
+        raw_by_seed=raw,
+        expected_seeds=tuple(expected_seeds),
     )
 
 
-def render_summary_markdown(analysis: Goal6Analysis) -> str:
-    """Render an auditable summary that does not convert missing cells into zeros."""
+@dataclass(frozen=True)
+class PairedContrast:
+    """A predeclared paired contrast between two arms over shared seeds."""
 
-    counts = dict(analysis.total_cell_status_counts)
-    lines = [
-        "# Goal 6 equivalence grid summary",
-        "",
-        f"- Grid configuration: `{analysis.config_hash}`",
-        f"- Execution phase: `{analysis.grid_phase}`",
-        f"- Terminal/planning rows: `{json.dumps(counts, sort_keys=True)}`",
-        f"- Channel alpha: {analysis.alpha_status}",
-        "",
-        "## Gate status",
-        "",
-        f"**{analysis.verdict.value.upper().replace('_', ' ')}** — "
-        + "; ".join(analysis.verdict_reasons)
-        + ".",
-        "",
-        "No representation-quality conclusion is made until all unblocked cells have authenticated "
-        "three-seed results, the fair control is resolved or scientifically replanned, and Goal 5 "
-        "channel alpha is joined by manifest checksum.",
-        "",
-        "## Retained arm/view rows",
-        "",
-        "| Arm | View | planned seeds | status counts | valid / attempted | mean accuracy |",
-        "|---|---|---:|---|---:|---:|",
-    ]
-    for item in analysis.arm_view_summaries:
-        accuracy = item.accuracy.as_dict()["mean"]
-        mean_text = "unavailable" if accuracy is None else f"{float(accuracy):.6f}"
-        lines.append(
-            "| "
-            f"{item.arm_id} | {item.view.value} | {item.planned_seed_count} | "
-            f"`{json.dumps(dict(item.status_counts), sort_keys=True)}` | "
-            f"{item.valid} / {item.attempted} | {mean_text} |"
+    left_arm: str
+    right_arm: str
+    view: str
+    metric: str
+    per_seed_difference: dict[int, float]
+    left_mean: float | None
+    right_mean: float | None
+
+    @property
+    def complete(self) -> bool:
+        return bool(self.per_seed_difference)
+
+    @property
+    def mean_difference(self) -> float | MissingValue:
+        if not self.complete:
+            return MissingValue(MissingReason.CELL_MISSING, "no shared complete seeds")
+        return sum(self.per_seed_difference.values()) / len(self.per_seed_difference)
+
+    @property
+    def effect_size(self) -> float | MissingValue:
+        """Standardized paired mean difference (Cohen's d for paired samples).
+
+        Reported as a practical effect size, deliberately alongside the raw per-seed differences.
+        With three seeds this is descriptive, not an asymptotic significance claim.
+        """
+
+        if len(self.per_seed_difference) < 2:
+            return MissingValue(MissingReason.METRIC_NOT_REPORTED, "fewer than two shared seeds")
+        differences = list(self.per_seed_difference.values())
+        mean = sum(differences) / len(differences)
+        variance = sum((value - mean) ** 2 for value in differences) / (len(differences) - 1)
+        if variance == 0.0:
+            return MissingValue(
+                MissingReason.METRIC_NOT_REPORTED, "zero paired variance; report raw differences"
+            )
+        return mean / math.sqrt(variance)
+
+    def as_dict(self) -> dict[str, object]:
+        def render(value: object) -> object:
+            return value.as_dict() if isinstance(value, MissingValue) else value
+
+        return {
+            "left_arm": self.left_arm,
+            "right_arm": self.right_arm,
+            "view": self.view,
+            "metric": self.metric,
+            "per_seed_difference": {
+                str(seed): value for seed, value in sorted(self.per_seed_difference.items())
+            },
+            "left_mean": self.left_mean,
+            "right_mean": self.right_mean,
+            "mean_difference": render(self.mean_difference),
+            "paired_effect_size": render(self.effect_size),
+            "interpretation_note": (
+                "paired over identical seeds and identical pair identities; with three seeds this "
+                "is a descriptive effect size, not an asymptotic significance test"
+            ),
+        }
+
+
+def paired_contrast(
+    rows: Sequence[Mapping[str, object]],
+    left_arm: str,
+    right_arm: str,
+    view: str,
+    metric: str,
+    expected_seeds: Sequence[int],
+) -> PairedContrast:
+    """Contrast two arms seed-by-seed, never by comparing independently pooled means."""
+
+    left = aggregate(rows, left_arm, view, metric, expected_seeds)
+    right = aggregate(rows, right_arm, view, metric, expected_seeds)
+    shared = sorted(set(left.raw_by_seed) & set(right.raw_by_seed))
+    differences = {seed: left.raw_by_seed[seed] - right.raw_by_seed[seed] for seed in shared}
+    return PairedContrast(
+        left_arm=left_arm,
+        right_arm=right_arm,
+        view=view,
+        metric=metric,
+        per_seed_difference=differences,
+        left_mean=(sum(left.values) / len(left.values)) if left.raw_by_seed else None,
+        right_mean=(sum(right.values) / len(right.values)) if right.raw_by_seed else None,
+    )
+
+
+def cluster_bootstrap_interval(
+    values_by_group: Mapping[str, Sequence[float]],
+    seed: int,
+    iterations: int = 2000,
+    confidence: float = 0.95,
+) -> tuple[float, float] | MissingValue:
+    """Resample whole groups, not individual rows.
+
+    Pair rows that share a source expression, e-class, or trace group are correlated.  Resampling
+    individual rows would understate uncertainty; the unit of resampling is therefore the group.
+    """
+
+    groups = [group for group, values in values_by_group.items() if values]
+    if len(groups) < 2:
+        return MissingValue(
+            MissingReason.METRIC_NOT_REPORTED, "cluster resampling needs at least two groups"
         )
-    return "\n".join(lines) + "\n"
+    if not 0.0 < confidence < 1.0:
+        raise AnalysisError("confidence must lie strictly between 0 and 1")
+
+    generator = random.Random(seed)
+    means: list[float] = []
+    for _ in range(iterations):
+        drawn = [generator.choice(groups) for _ in groups]
+        pooled = [value for group in drawn for value in values_by_group[group]]
+        if pooled:
+            means.append(sum(pooled) / len(pooled))
+    if not means:
+        return MissingValue(MissingReason.METRIC_NOT_REPORTED, "no resampled means")
+    means.sort()
+    tail = (1.0 - confidence) / 2.0
+    low = means[max(0, math.floor(tail * len(means)))]
+    high = means[min(len(means) - 1, math.ceil((1.0 - tail) * len(means)) - 1)]
+    return (low, high)
+
+
+def structural_metric_table(
+    rows: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Return per-channel structural metrics, each flagged for comparability.
+
+    There is deliberately no pooled column.  Pure-EML alpha, ordinary node/edge size, macro size,
+    and dictionary-inclusive motif MDL measure different things.
+    """
+
+    table: list[dict[str, object]] = []
+    for row in rows:
+        for metric in list(row.get("structural_metrics", ())):  # type: ignore[arg-type]
+            entry = dict(metric)
+            entry["arm_id"] = row["arm_id"]
+            entry["channel_name"] = row.get("channel_name")
+            entry["representation_mode"] = row.get("representation_mode")
+            table.append(entry)
+    return table
+
+
+def assert_not_pooled_across_representations(table: Sequence[Mapping[str, object]]) -> None:
+    """Refuse to pool a metric name that spans representations and is flagged incomparable."""
+
+    by_name: dict[str, set[str]] = defaultdict(set)
+    for entry in table:
+        if not bool(entry.get("comparable_across_channels", False)):
+            by_name[str(entry["name"])].add(str(entry.get("representation_mode")))
+    offenders = sorted(name for name, modes in by_name.items() if len(modes) > 1)
+    if offenders:
+        raise AnalysisError(
+            f"structural metrics {offenders} are flagged incomparable yet span multiple "
+            "representation modes; they may not be plotted or averaged as one quantity"
+        )
+
+
+@dataclass
+class GateVerdict:
+    """A Gate G6 verdict with its exact numerical support and caveats."""
+
+    state: GateState
+    rationale: str
+    supporting_contrasts: list[dict[str, object]] = field(default_factory=list)
+    unmet_requirements: list[str] = field(default_factory=list)
+    caveats: tuple[str, ...] = FIXED_SCALE_CAVEATS
+    is_fixture: bool = False
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": GATE_G6_SCHEMA_VERSION,
+            "state": str(self.state),
+            "rationale": self.rationale,
+            "supporting_contrasts": self.supporting_contrasts,
+            "unmet_requirements": list(self.unmet_requirements),
+            "caveats": list(self.caveats),
+            "is_fixture": self.is_fixture,
+        }
+
+
+def evaluate_gate_g6(
+    rows: Sequence[Mapping[str, object]],
+    expected_seeds: Sequence[int],
+    expected_arms: Sequence[str],
+    predeclared_contrasts: Sequence[tuple[str, str, str, str]],
+    *,
+    is_fixture: bool = False,
+    minimum_effect_size: float = 0.5,
+) -> GateVerdict:
+    """Apply the predeclared Gate G6 rules.
+
+    The rules are fixed before production results exist, and a fixture report can never produce a
+    scientific verdict: it returns ``insufficient_evidence`` and says why.
+    """
+
+    if is_fixture:
+        return GateVerdict(
+            state=GateState.INSUFFICIENT_EVIDENCE,
+            rationale=(
+                "this report was generated from fixture rows and cannot express a scientific "
+                "verdict about Goal 6"
+            ),
+            unmet_requirements=["production result rows"],
+            is_fixture=True,
+        )
+
+    unmet: list[str] = []
+    present_arms = {str(row["arm_id"]) for row in rows}
+    missing_arms = sorted(set(expected_arms) - present_arms)
+    if missing_arms:
+        unmet.append(f"missing arms: {missing_arms}")
+
+    for arm in expected_arms:
+        seeds = {int(row["seed"]) for row in rows if str(row["arm_id"]) == arm}
+        if not set(expected_seeds).issubset(seeds):
+            unmet.append(f"arm {arm} is missing seeds {sorted(set(expected_seeds) - seeds)}")
+
+    failed = [f"{row['arm_id']}@{row['seed']}" for row in rows if str(row["status"]) != "complete"]
+    if failed:
+        unmet.append(f"incomplete or failed cells: {sorted(failed)}")
+
+    contrasts = [
+        paired_contrast(rows, left, right, view, metric, expected_seeds).as_dict()
+        for left, right, view, metric in predeclared_contrasts
+    ]
+
+    if unmet:
+        return GateVerdict(
+            state=GateState.INSUFFICIENT_EVIDENCE,
+            rationale="the predeclared evidence requirements are not met",
+            supporting_contrasts=contrasts,
+            unmet_requirements=unmet,
+        )
+
+    decisive = [
+        contrast
+        for contrast in contrasts
+        if isinstance(contrast["paired_effect_size"], float)
+        and abs(float(contrast["paired_effect_size"])) >= minimum_effect_size
+        and isinstance(contrast["mean_difference"], float)
+        and float(contrast["mean_difference"]) > 0.0
+    ]
+    if decisive:
+        return GateVerdict(
+            state=GateState.PASS,
+            rationale=(
+                f"{len(decisive)} of {len(contrasts)} predeclared contrasts show a positive paired "
+                f"difference with |effect size| >= {minimum_effect_size}"
+            ),
+            supporting_contrasts=contrasts,
+        )
+    return GateVerdict(
+        state=GateState.FAIL,
+        rationale=(
+            "no predeclared contrast reaches the preregistered effect-size threshold; this is a "
+            "reportable null result and is not to be resolved by rerunning or by reselecting arms"
+        ),
+        supporting_contrasts=contrasts,
+    )
+
+
+def build_summary(
+    rows: Sequence[Mapping[str, object]],
+    expected_seeds: Sequence[int],
+    expected_arms: Sequence[str],
+    views: Sequence[str],
+    metrics: Sequence[str],
+    *,
+    is_fixture: bool = False,
+) -> dict[str, object]:
+    """Assemble the complete, denominator-explicit Goal 6 summary payload."""
+
+    validate_rows(rows, expected_seeds)
+    table = structural_metric_table(rows)
+    assert_not_pooled_across_representations(table)
+
+    aggregates = [
+        aggregate(rows, arm, view, metric, expected_seeds).as_dict()
+        for arm in expected_arms
+        for view in views
+        for metric in metrics
+    ]
+    missing_cells = [
+        {"arm_id": arm, "seed": seed, "reason": str(MissingReason.CELL_MISSING)}
+        for arm in expected_arms
+        for seed in expected_seeds
+        if not any(str(row["arm_id"]) == arm and int(row["seed"]) == seed for row in rows)
+    ]
+    failed_cells = [
+        {
+            "arm_id": str(row["arm_id"]),
+            "seed": int(row["seed"]),
+            "status": str(row["status"]),
+            "failure_reason": row.get("failure_reason"),
+        }
+        for row in rows
+        if str(row["status"]) != "complete"
+    ]
+    return {
+        "schema_version": GOAL6_ANALYSIS_SCHEMA_VERSION,
+        "is_fixture": is_fixture,
+        "aggregates": aggregates,
+        "structural_metrics": table,
+        "missing_cells": missing_cells,
+        "failed_cells": failed_cells,
+        "caveats": list(FIXED_SCALE_CAVEATS),
+        "row_count": len(rows),
+        "expected_cell_count": len(expected_arms) * len(expected_seeds),
+    }
