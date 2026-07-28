@@ -1,9 +1,77 @@
-schema_version: geml-goal7-grid-v1
-phase: phase_a_planning_only
-step_manifest: outputs/final/goal7/steps/manifest.json
-step_manifest_sha256: sha256:pending-authenticated-step-manifest
-output_directory: outputs/final/goal7/grid
-epochs: 30
-top_k: 5
-arms: [ast_gine, pure_eml_gine, frequent_macro_motif_gine, motif_ast_control_gine, prefix_transformer, uniform_legal_action]
-seeds: [20260726, 20260727, 20260728]
+schema_version: geml-goal7-grid-config-v1
+stage: production
+output_root: outputs/final/goal7/grid
+
+# The production denominator is resolved from the immutable 7-0 manifest.
+# Keeping this null prevents a fixture count from becoming production evidence.
+expected_step_count: null
+step_manifest: null
+step_manifest_sha256: null
+rule_registry_sha256: null
+verifier_sha256: null
+
+# Workstream 2 supplies these exact implementation identities at integration.
+shared_harness_sha256: null
+shared_gnn_architecture_sha256: null
+transformer_architecture_sha256: null
+compute_reference_sha256: null
+implementation_sha256: null
+# Hash of the complete materialized optimizer/scheduler/model/stopping config,
+# distinct from architecture and executable implementation identities.
+training_config_sha256: null
+# Hash of the exact training-family inventory derived by the authenticated
+# step-manifest provider. This is required before reporting held-out families.
+training_family_inventory_sha256: null
+# Hash of the sorted accepted StepRecord scientific identities. Every complete
+# arm must evaluate exactly this authenticated population.
+step_population_sha256: null
+
+seeds:
+  - 20260726
+  - 20260727
+  - 20260728
+
+channel_contract:
+  # Issue #56 must explicitly authorize the missing motif-AST fair control.
+  # The existing frequent motif artifact is macro-derived and remains labeled so.
+  resolved: false
+  channels:
+    - channel_id: ast_dag
+      representation_mode: source_ast_dag
+      enabled: true
+      blocker: null
+    - channel_id: frequent_macro_motif_dag
+      representation_mode: macro_dag_with_frequent_macro_motifs
+      enabled: true
+      blocker: null
+    - channel_id: motif_ast_fair_control
+      representation_mode: train_only_ast_motifs_equal_dictionary_and_mdl_budget
+      enabled: false
+      blocker: "Issue #56 has not authorized ownership for constructing this channel."
+    - channel_id: pure_eml_dag
+      representation_mode: strict_pure_eml_official_v4_dag
+      enabled: true
+      blocker: null
+
+budget:
+  maximum_epochs: 30
+  early_stopping_patience: 5
+  maximum_optimizer_steps: 20000
+  node_edge_batch_budget: 50000
+  wall_time_seconds: 7200.0
+  top_k:
+    - 1
+    - 3
+    - 5
+  parameter_match_tolerance_fraction: 0.05
+  flop_match_tolerance_fraction: 0.10
+  comparison_unit: frozen_optimizer_step_at_node_edge_batch_budget
+
+selection_split: validation
+evaluation_splits:
+  - test_iid
+  - test_ood
+# Filled with the exact Workstream 2 production entry point during integration.
+reproduction_command: null
+# Filled with the exact Goal 7 analysis entry point during integration.
+analysis_reproduction_command: null

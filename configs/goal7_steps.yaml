@@ -1,16 +1,35 @@
-schema_version: geml-rewrite-step-v1
-phase: phase_a_contract_and_fixture_only
-input:
-  positive_trace_requirement: accepted_positive_pair_with_replayed_concrete_trace
-  replay_engine: read_only_goal4_rule_engine_and_verifier
-  state_graph_binding: authenticated_state_expression_to_graph_id_index
-split_policy:
-  inherit_pair_group_closure_exactly: true
-  prohibit_trace_or_eclass_relative_cross_split: true
-output:
-  root: outputs/final/goal7/steps
-  atomic_resumable_shards: true
-  retain_failure_rows: true
-coverage:
-  report_zero_registered_rules: true
-  no_oversampling: true
+schema_version: geml-step-dataset-config-v1
+phase: phase_a_implemented_production_pending
+
+# Phase B must replace all null producer identities with authenticated Workstream 1
+# providers and digests. The extractor fails closed if these are absent or differ.
+production_providers:
+  trace_adapter: null
+  action_replayer: null
+  transition_verifier: null
+
+expected_input_digest: null
+expected_rule_set_digest: null
+expected_verifier_digest: null
+output_root: outputs/final/goal7/steps
+seed: 20260726
+shard_size: 4096
+resume: true
+
+requirements:
+  authenticate_exact_trace_bytes: true
+  require_complete_producer_replay: true
+  replay_every_transition_before_acceptance: true
+  verify_every_replayed_transition: true
+  require_exact_producer_configured_fresh_verifier_identity: true
+  keep_producer_and_fresh_verification_evidence_separate: true
+  reject_entire_trace_when_any_transition_fails: true
+  inherit_authoritative_split_and_group: true
+  retain_all_failures_as_typed_rows: true
+  preserve_zero_rule_coverage: true
+  evaluation_oversampling: false
+
+# No production CLI/provider exists on the pinned Phase-A base. Integration must
+# supply a real command after the Workstream 1 trace contract is merged.
+production_command: null
+production_command_status: pending_workstream_1_integration
