@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from geml.egraph.ir import Operator
@@ -30,6 +31,7 @@ from geml.egraph.rewrite_engine import (
     bidirectional_rules,
     pattern_rule,
 )
+from geml.spec.domains import GrammarVersion
 
 if TYPE_CHECKING:
     from geml.egraph.core import EGraph
@@ -273,4 +275,90 @@ def domain_rules(*, include_optional: bool = False) -> RuleSet:
 
 DOMAIN_RULE_IDS: tuple[str, ...] = tuple(
     dict.fromkeys(rule.rule_id for rule in domain_rules(include_optional=True).rules)
+)
+
+
+@dataclass(frozen=True, slots=True)
+class GrammarV2RuleCapability:
+    """Honest status of one desired rule outside the closed Goal 4 IR.
+
+    These records are not executable rewrite rules.  Encoding an unsupported
+    operator as an opaque leaf or as a misleading existing operator would
+    violate ordered structural identity.
+    """
+
+    grammar_version: GrammarVersion
+    rule_id: str
+    identity: str
+    required_operators: tuple[str, ...]
+    required_guard: str
+    executable: bool
+    blocker: str
+
+
+_V2_RULE_BLOCKER = (
+    "src/geml/egraph/ir.py owns a closed Operator enum without trigonometric or "
+    "inverse-trigonometric nodes; interval assumptions are also absent from the "
+    "read-only rewrite context"
+)
+GRAMMAR_V2_RULE_CAPABILITIES = MappingProxyType(
+    {
+        capability.rule_id: capability
+        for capability in (
+            GrammarV2RuleCapability(
+                grammar_version=GrammarVersion.V2,
+                rule_id="V2-SIN-ASIN",
+                identity="sin(asin(x)) = x",
+                required_operators=("sin", "asin"),
+                required_guard="x in [-1, 1]",
+                executable=False,
+                blocker=_V2_RULE_BLOCKER,
+            ),
+            GrammarV2RuleCapability(
+                grammar_version=GrammarVersion.V2,
+                rule_id="V2-COS-ACOS",
+                identity="cos(acos(x)) = x",
+                required_operators=("cos", "acos"),
+                required_guard="x in [-1, 1]",
+                executable=False,
+                blocker=_V2_RULE_BLOCKER,
+            ),
+            GrammarV2RuleCapability(
+                grammar_version=GrammarVersion.V2,
+                rule_id="V2-TAN-ATAN",
+                identity="tan(atan(x)) = x",
+                required_operators=("tan", "atan"),
+                required_guard="x is finite and real",
+                executable=False,
+                blocker=_V2_RULE_BLOCKER,
+            ),
+            GrammarV2RuleCapability(
+                grammar_version=GrammarVersion.V2,
+                rule_id="V2-ASIN-SIN",
+                identity="asin(sin(x)) = x",
+                required_operators=("asin", "sin"),
+                required_guard="x in [-pi/2, pi/2]",
+                executable=False,
+                blocker=_V2_RULE_BLOCKER,
+            ),
+            GrammarV2RuleCapability(
+                grammar_version=GrammarVersion.V2,
+                rule_id="V2-ACOS-COS",
+                identity="acos(cos(x)) = x",
+                required_operators=("acos", "cos"),
+                required_guard="x in [0, pi]",
+                executable=False,
+                blocker=_V2_RULE_BLOCKER,
+            ),
+            GrammarV2RuleCapability(
+                grammar_version=GrammarVersion.V2,
+                rule_id="V2-ATAN-TAN",
+                identity="atan(tan(x)) = x",
+                required_operators=("atan", "tan"),
+                required_guard="x in (-pi/2, pi/2)",
+                executable=False,
+                blocker=_V2_RULE_BLOCKER,
+            ),
+        )
+    }
 )

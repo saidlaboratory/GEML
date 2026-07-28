@@ -1,0 +1,130 @@
+{
+  "schema_version": "geml-repro-artifacts-v1",
+  "public_folder_url": "https://drive.google.com/drive/folders/1zK5HhWeaFtVJwtby15dO6LDdybVckbfF",
+  "archive_name": "GEML_artifacts_goals_1-5_2026-07-25.tar",
+  "delivery_files": [
+    {
+      "name": "GEML_artifacts_goals_1-5_2026-07-25.tar",
+      "bytes": 35835445760,
+      "drive_id": "1tCxLbx_hNn-JY373YoS4amvl0hVS2Gky",
+      "sha256": "438b11726bd108b2fe971063d8dffbdd580c0f4ec7c42947047693f818290f3e"
+    },
+    {
+      "name": "GEML_artifacts_goals_1-5_2026-07-25_SHA256.txt",
+      "bytes": 106,
+      "drive_id": "1Ug7RcUEYGBfovjDef4SzOi6f-LvAsZJd",
+      "sha256": "d2707643bdec0f59b6353a3249e221df27cd072b539854d258acd4de988384d3"
+    },
+    {
+      "name": "GEML_artifacts_extract_and_verify_macos_windows.txt",
+      "bytes": 3587,
+      "drive_id": "1_iGZ20yhB202VU1sUw9cKenP-qg-8e4U",
+      "sha256": "d4c37799c2544d3ad94f608661b96d14d658051f4beeca77bb33600c43d09c76"
+    },
+    {
+      "name": "GEML_artifacts_extract_and_verify_windows.ps1",
+      "bytes": 3005,
+      "drive_id": "1IOV2S05lmP6TA6kRpa11kLNq7yBcr1ag",
+      "sha256": "10829265099a7dbaa289d4354bbe276667676c57e31679e15f91f3c81d6ac217"
+    },
+    {
+      "name": "ARTIFACT_INDEX.md",
+      "bytes": 7526,
+      "drive_id": "1KycCGZaJgj_oeVae-g7Yo19LR81bHwIM",
+      "sha256": "b3a52cf022c96bf42bf5ab52c15b3d258945f94f5a76f688804d420bd94b91a6"
+    }
+  ],
+  "extracted_tree": {
+    "root_name": "GEML_artifacts",
+    "files": 1210913,
+    "bytes": 34810631623,
+    "minimum_free_bytes_before_extraction": 80000000000,
+    "minimum_free_inodes": 1300000
+  },
+  "canonical_directories": [
+    {
+      "name": "1-8_source_expression_corpus_250k",
+      "files": 33,
+      "bytes": 633973842,
+      "tree_hash_scheme": "path-sha256-lines-v1",
+      "tree_sha256": "0db7b7e9b68c32677621b293d3c1d5dd9ee2ff993bd7ac7d20aaf49916931058"
+    },
+    {
+      "name": "2-7_2-8_official_pure_eml_corpus",
+      "files": 23,
+      "bytes": 52798321,
+      "tree_hash_scheme": "path-sha256-lines-v1",
+      "tree_sha256": "2b864b6333d03f853d78b58ba81a42f895c052eef66b5ecc13759b7566e7f743"
+    },
+    {
+      "name": "3-1_to_3-8_graph_corpus_and_costs",
+      "files": 34,
+      "bytes": 78354451,
+      "tree_hash_scheme": "path-sha256-lines-v1",
+      "tree_sha256": "429d3d7e0028c1f051a9d1e4a5386a632068f138b0392dbbcd9613afb1924125"
+    },
+    {
+      "name": "3-7_3-8_goal3_analysis",
+      "files": 5,
+      "bytes": 42920158,
+      "tree_hash_scheme": "path-sha256-lines-v1",
+      "tree_sha256": "904a3fbee45aa046f37c0194ec28e6f6857b267f6e64f65a55873b575c430388"
+    },
+    {
+      "name": "4-1_to_4-9_goal4_egraph_study",
+      "files": 17,
+      "bytes": 758566053,
+      "tree_hash_scheme": "path-sha256-lines-v1",
+      "tree_sha256": "9506c562f259d46ccd0e64685d9618b431f4e00ce1cfb42d5733fbc639cfc7ee"
+    },
+    {
+      "name": "5-5_frequent_motif_mdl_sweep",
+      "files": 19,
+      "bytes": 1132732190,
+      "tree_hash_scheme": "path-sha256-lines-v1",
+      "tree_sha256": "a8bfceca2610c62228bb989533afeb0ad45b9899cb3e8b4be9aef1c941c3791f"
+    },
+    {
+      "name": "5-6_learned_motif_selection",
+      "files": 11,
+      "bytes": 36156969,
+      "tree_hash_scheme": "path-sha256-lines-v1",
+      "tree_sha256": "059e9d6ecf70414454dcdf654048f502a02963e4de618dcf667e2c67492c55eb"
+    },
+    {
+      "name": "5-7_neural_egraph_candidate_ranker",
+      "files": 16,
+      "bytes": 700283453,
+      "tree_hash_scheme": "path-sha256-lines-v1",
+      "tree_sha256": "18f7ddfab22096cd14a738b3b4ce66163b1db1b938bf85250ed5c5be294e0ebb"
+    },
+    {
+      "name": "5-8_goal6_ready_graph_export",
+      "files": 1210741,
+      "bytes": 31373792576,
+      "tree_hash_scheme": "geml-artifact-tree-v1",
+      "tree_sha256": "9834f3fe892b5f4d2415d8110f19d1f52b4fe9eac2c7e905e6a619c8b0bfae23"
+    },
+    {
+      "name": "5-9_goals1_to_5_final_report",
+      "files": 13,
+      "bytes": 1046084,
+      "tree_hash_scheme": "geml-artifact-tree-v1",
+      "tree_sha256": "c606b64fec63d18f6b7a0d90bd1b4ca3f8ae3fb9bfa955910356a0d3fa593aa8"
+    }
+  ],
+  "root_files": [
+    {
+      "name": "ARTIFACT_INDEX.md",
+      "bytes": 7526,
+      "sha256": "b3a52cf022c96bf42bf5ab52c15b3d258945f94f5a76f688804d420bd94b91a6"
+    }
+  ],
+  "goal_availability": [
+    {"goals": "1-5", "state": "complete", "location": "public_google_drive"},
+    {"goals": "6-9", "state": "missing", "location": null},
+    {"goals": "10", "state": "missing", "location": null},
+    {"goals": "11", "state": "missing", "location": null},
+    {"goals": "12", "state": "deferred", "location": null}
+  ]
+}

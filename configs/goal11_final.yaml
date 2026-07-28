@@ -1,3 +1,30 @@
-schema_version: geml-goal11-final-synthesis-v1
-controlled_gates: [G6, G7, G8, G9, G10]
-external_llm_reference_excluded: true
+schema_version: geml-goal11-final-run-config-v1
+artifact_root: null
+manifest_path: null
+manifest_audit_path: null
+fixed_scale_result_path: null
+fixed_scale_run_config_path: null
+fixed_scale_observations_path: null
+track_evidence_path: null
+external_llm_path: null
+result_path: outputs/final/goal11/final_eval/result.json
+summary_path: outputs/final/goal11/final_eval/GOAL11_SUMMARY.md
+gate_path: outputs/final/goal11/final_eval/GATE_G11.md
+plot_dir: outputs/final/goal11/final_eval/plots
+gate_criteria:
+  expected_seeds:
+    - 20260726
+    - 20260727
+    - 20260728
+  required_tracks:
+    - equivalence
+    - rewrite_proof_simplification
+    - symbolic_regression
+  minimum_supporting_tracks: 3
+  minimum_fixed_scale_panels: 1
+  allow_material_contradiction: false
+  production_threshold_frozen: false
+  decision_rule_digest: null
+  decision_rule_artifact_id: null
+  decision_rule_source_sha256: null
+  decision_rule_source_locator: null
