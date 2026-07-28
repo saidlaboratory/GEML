@@ -40,6 +40,16 @@ class DeterministicFrontier:
     def pop(self) -> FrontierItem:
         return heapq.heappop(self._items)[1]
 
+    def trim_to_beam(self, beam_width: int) -> None:
+        """Retain the highest-priority entries, never the entries popped first."""
+
+        if beam_width < 1:
+            raise ValueError("beam width must be positive")
+        if len(self._items) <= beam_width:
+            return
+        self._items = heapq.nsmallest(beam_width, self._items)
+        heapq.heapify(self._items)
+
     def __bool__(self) -> bool:
         return bool(self._items)
 

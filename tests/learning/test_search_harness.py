@@ -55,3 +55,34 @@ def test_exhausted_search_retains_unsolved_outcome() -> None:
     )
     assert not result.solved
     assert result.telemetry.termination is SearchTermination.EXHAUSTED
+
+
+def test_beam_pruning_retains_highest_priority_successor() -> None:
+    config = SearchConfigV1(
+        beam_width=1,
+        expansion_budget=2,
+        proof_depth_budget=2,
+        wall_seconds_budget=1.0,
+    )
+
+    def transitions(state: str):
+        if state == "source":
+            return (
+                SearchTransition("worse", "worse", policy_score=0.0),
+                SearchTransition("better", "better", policy_score=1.0),
+            )
+        if state == "better":
+            return (SearchTransition("finish", "target", policy_score=0.0),)
+        return ()
+
+    result = search(
+        source_signature="source",
+        target_signature="target",
+        config=config,
+        mode=SearchMode.POLICY,
+        transitions=transitions,
+        verifier=lambda _source, _transition: True,
+    )
+
+    assert result.solved
+    assert result.proof_action_ids == ("better", "finish")

@@ -136,8 +136,7 @@ def search(
                     transition.value_score,
                 )
             )
-        while len(frontier) > config.beam_width:
-            frontier.pop()
+        frontier.trim_to_beam(config.beam_width)
         peak = max(peak, len(frontier))
     if solved_signature is None:
         return SearchResultV1(False, (), (), telemetry())
