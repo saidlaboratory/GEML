@@ -1,0 +1,5 @@
+schema_version: geml-goal9-sr-v1
+phase: phase_a_planning_only
+budget: {wall_seconds: 60.0, expansion_budget: 10000, depth_budget: 12, complexity_budget: 64}
+guidance: [ast_guided, pure_eml_guided]
+seeds: [20260726, 20260727, 20260728]

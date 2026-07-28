@@ -1,0 +1,4 @@
+schema_version: geml-goal9-baselines-v1
+pysr: {version: null, fallback_policy: explicit_gp_fallback_only_if_pysr_unavailable}
+transformer: {backbone: shared_compact_prefix_transformer}
+budget_must_match: configs/goal9_sr.yaml
