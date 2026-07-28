@@ -1,5 +1,94 @@
-schema_version: geml-goal11-llm-reference-v1
-phase: mocked_preflight_only_no_paid_calls
-tracks: {proof_count: 100, sr_count: 100}
-providers: [openai, anthropic, google, moonshot]
-production_requires: [verified_exact_provider_model_id, credentials, explicit_user_spend_confirmation]
+# Goal 11 frontier-LLM external reference panel (issue 11-3 / #82).
+#
+# This is external context, not a controlled baseline. No row produced by this config may
+# enter a controlled Gate G6-G11 comparison.
+#
+# Preflight only (free, no generation call):
+#   python -m geml.experiments.goal11.llm_reference \
+#     --config configs/goal11_llm.yaml \
+#     --output-dir outputs/final/goal11/llm_reference
+#
+# The production panel additionally requires: the frozen #67 proof task ids, the frozen #71
+# SR task ids, provider credentials in the environment, `allow_paid_calls: true`,
+# `spend_confirmed: true`, and a non-zero cost guard. All four are deliberately off here.
+schema_version: geml-goal11-llm-config-v1
+output_root: outputs/final/goal11/llm_reference
+
+# Exactly 100 + 100 frozen tasks per model, identical across every provider and model.
+# Four models x 200 attempts = 800 retained success/failure rows.
+proof_task_count: 100
+sr_task_count: 100
+selection_seed: 20260726
+
+# Model identifiers are PREFERRED ANCHORS recorded from provider documentation on 2026-07-26.
+# They are not assumptions: `preflight` refuses to proceed unless the exact string appears in
+# the provider's own live model-list endpoint. An alias, a fallback, a differently-cased
+# variant, or a substituted provider is refused rather than worked around. To use a newer
+# pinned model, edit this file after confirming the exact id against the provider's model
+# list; the code never chooses one on its own, and `kimi-k3` is on an explicit never-guess
+# list so it cannot be introduced by accident.
+models:
+  - provider: openai
+    model_id: gpt-5.6-sol
+    reasoning_field: reasoning.effort
+    reasoning_value: high
+    max_output_tokens: 16384
+    request_timeout_seconds: 600.0
+    determinism_note: >-
+      The Responses API exposes no seed for reasoning models; sampling is not reproducible.
+      Temperature is left unset because reasoning models may reject it.
+
+  - provider: anthropic
+    # claude-fable-5 is the intentionally higher-capability, higher-cost alternative. Switch
+    # only as a deliberate, recorded cost decision.
+    model_id: claude-opus-5
+    reasoning_field: output_config.effort
+    reasoning_value: high
+    max_output_tokens: 16384
+    request_timeout_seconds: 600.0
+    determinism_note: >-
+      Adaptive thinking is not reproducible. max_tokens is required by this API and is set
+      explicitly.
+
+  - provider: google
+    model_id: gemini-3.6-flash
+    reasoning_field: thinkingConfig.thinkingLevel
+    reasoning_value: high
+    max_output_tokens: 16384
+    request_timeout_seconds: 600.0
+    determinism_note: >-
+      Gemini 3.x uses thinkingLevel and rejects mixing it with thinkingBudget. No seed is
+      exposed.
+
+  - provider: moonshot
+    model_id: kimi-k2.5
+    reasoning_field: thinking.type
+    reasoning_value: enabled
+    max_output_tokens: 16384
+    request_timeout_seconds: 600.0
+    determinism_note: >-
+      Temperature support differs by Kimi model family and is left unset. Provider
+      documentation flagged kimi-k2.5 for platform sunset, so the exact id must be
+      re-validated by preflight immediately before any paid call.
+
+# Bounded concurrency and retries. A retry is nested evidence under the attempt that
+# provoked it; it never creates a new attempt and never increases the 200-attempt
+# denominator.
+max_concurrency: 2
+max_retries: 3
+retry_backoff_seconds: 2.0
+
+# Hard spend ceilings. Zero means "no paid call may proceed", which is the Phase-A state.
+# Production must set explicit non-zero ceilings.
+cost_guard:
+  max_total_usd: 0.0
+  max_per_model_usd: 0.0
+  max_attempts_per_model: 200
+
+# Two independent interlocks. Setting allow_paid_calls without spend_confirmed is rejected
+# by the config validator.
+allow_paid_calls: false
+spend_confirmed: false
+
+# Completed attempts are reloaded rather than re-called.
+resume: true
