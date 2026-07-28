@@ -1,5 +1,68 @@
-schema_version: geml-goal8-simplify-v1
-phase: phase_a_manifest_only
-sample_count: 1000
-methods: [sympy_simplify, geml_uniform, geml_guided]
-retain_no_change_timeout_invalid_and_failed_rows: true
+# Phase-A validation:
+# python -m geml.experiments.goal8.run_simplify \
+#   --config configs/goal8_simplify.yaml --validate-only
+#
+# Freeze the 1,000-row sample manifest before any method output is created.  Production is
+# intentionally blocked until every null digest/checkpoint is authenticated after branch
+# integration.  SymPy is an independent comparator and is never passed to GEML search.
+schema_version: geml-goal8-simplify-config-v1
+stage: production
+output_root: outputs/final/goal8/simplification
+# The literal token remains in the frozen config digest. At file access,
+# GEML_ARTIFACTS_ROOT must be set to an absolute path; unresolved tokens fail closed.
+source_manifest: ${GEML_ARTIFACTS_ROOT}/1-8_source_expression_corpus_250k/manifests/corpus.manifest.json
+source_manifest_sha256: null
+learned_exclusion_manifest: outputs/final/goal8/simplification/learned_exclusions.manifest.json
+learned_exclusion_manifest_sha256: null
+sample_manifest: outputs/final/goal8/simplification/sample.manifest.json
+expected_sample_count: 1000
+sample:
+  seed: 20260726
+  strata_axes:
+    - family
+    - depth_bucket
+    - size_bucket
+    - domain_mode
+    - split
+  depth_bucket_edges: [2, 4, 6, 8, 12]
+  size_bucket_edges: [7, 15, 31, 63, 127]
+seeds:
+  - 20260726
+  - 20260727
+  - 20260728
+methods:
+  - method: uniform
+    learned: false
+    stochastic: true
+    guide_role: proposal_prioritization_only
+    checkpoint_selection_split: not_applicable
+    policy_checkpoint_sha256: null
+  - method: policy
+    learned: true
+    stochastic: false
+    guide_role: proposal_prioritization_only
+    checkpoint_selection_split: validation
+    # Freeze a Goal 7 checkpoint selected on validation only.
+    policy_checkpoint_sha256: null
+budget:
+  beam_width: 32
+  expanded_node_budget: 10000
+  generated_state_budget: 50000
+  search_depth_limit: 24
+  wall_time_seconds: 60.0
+  verifier_call_budget: 50000
+sympy_wall_time_seconds: 60.0
+# Freeze the digest attested by the approved built-in comparator after code/environment freeze.
+sympy_implementation_sha256: null
+cost_objective: official_v4_pure_eml_dag_node_count
+shard_count: 64
+# This manifest must enumerate every training/model-selection relative excluded from the
+# frozen 1,000 evaluation groups.  The runner records its digest and the exact group-set
+# digest used by sample selection.
+rule_set_sha256: null
+verifier_sha256: null
+implementation_sha256: null
+reproduction_command: >-
+  python -m geml.experiments.goal8.run_simplify
+  --config configs/goal8_simplify.yaml
+  --shard-index {shard_index}

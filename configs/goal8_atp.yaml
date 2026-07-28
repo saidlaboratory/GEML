@@ -1,8 +1,59 @@
-schema_version: geml-goal8-atp-v1
-phase: phase_a_planning_only
-problem_count: 256
-beam_width: 16
-expansion_budget: 10000
-proof_depth_budget: 32
-wall_seconds_budget: 60.0
-methods: [uniform_legal, gnn_policy, gnn_policy_value, prefix_transformer]
+# Phase-A validation:
+# python -m geml.experiments.goal8.run_atp --config configs/goal8_atp.yaml --validate-only
+#
+# Production execution remains intentionally unavailable until issues #65-#67 are merged,
+# their benchmark/checkpoints are frozen, and every null digest below is replaced by an
+# authenticated lowercase SHA-256 digest.  All four methods use this one budget object.
+schema_version: geml-goal8-atp-config-v1
+stage: production
+output_root: outputs/final/goal8/atp
+benchmark_manifest: outputs/final/goal8/benchmark/benchmark.manifest.json
+benchmark_manifest_sha256: null
+expected_problem_count: 256
+seeds:
+  - 20260726
+  - 20260727
+  - 20260728
+methods:
+  - method: uniform
+    stochastic: true
+    checkpoint_selection_split: not_applicable
+    policy_checkpoint_sha256: null
+    value_checkpoint_sha256: null
+    transformer_checkpoint_sha256: null
+  - method: policy
+    stochastic: false
+    checkpoint_selection_split: validation
+    # Freeze the Goal 7 policy checkpoint selected on validation data only.
+    policy_checkpoint_sha256: null
+    value_checkpoint_sha256: null
+    transformer_checkpoint_sha256: null
+  - method: policy_value
+    stochastic: false
+    checkpoint_selection_split: validation
+    # Freeze both validation-selected Goal 7 policy and Goal 8 value checkpoints.
+    policy_checkpoint_sha256: null
+    value_checkpoint_sha256: null
+    transformer_checkpoint_sha256: null
+  - method: transformer
+    stochastic: false
+    checkpoint_selection_split: validation
+    policy_checkpoint_sha256: null
+    value_checkpoint_sha256: null
+    # Freeze the validation-selected transformer proposal checkpoint.
+    transformer_checkpoint_sha256: null
+budget:
+  beam_width: 32
+  expanded_node_budget: 10000
+  generated_state_budget: 50000
+  proof_depth_limit: 24
+  wall_time_seconds: 60.0
+  verifier_call_budget: 50000
+shard_count: 64
+rule_set_sha256: null
+verifier_sha256: null
+implementation_sha256: null
+reproduction_command: >-
+  python -m geml.experiments.goal8.run_atp
+  --config configs/goal8_atp.yaml
+  --shard-index {shard_index}
