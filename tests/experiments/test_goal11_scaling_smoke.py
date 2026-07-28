@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from geml.analysis.goal11.scaling import FixedScaleEfficiencyV1, FixedScalePointV1
+from geml.analysis.goal11.scaling import (
+    FixedScaleEfficiencyV1,
+    FixedScalePointV1,
+)
 from geml.experiments.goal11.run_scaling import fixed_scale_status, validate_fixed_scale_results
 
 
@@ -44,3 +47,30 @@ def test_fixed_scale_join_rejects_mixed_controlled_budgets() -> None:
 
     with pytest.raises(ValueError, match="incompatible"):
         validate_fixed_scale_results((first, incompatible))
+
+
+def test_fixed_scale_points_reject_noncanonical_status_or_checksum() -> None:
+    with pytest.raises(ValueError, match="status"):
+        FixedScalePointV1(
+            "proof",
+            "policy",
+            None,
+            "sha256:" + "a" * 64,
+            "sha256:" + "b" * 64,
+            "finished",
+            None,
+            None,
+            FixedScaleEfficiencyV1(None, None, None, None),
+        )
+    with pytest.raises(ValueError, match="digests"):
+        FixedScalePointV1(
+            "proof",
+            "policy",
+            None,
+            "sha256:short",
+            "sha256:" + "b" * 64,
+            "pending",
+            None,
+            None,
+            FixedScaleEfficiencyV1(None, None, None, None),
+        )

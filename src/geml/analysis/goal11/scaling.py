@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from enum import StrEnum
+from math import isfinite
+
+_QUALIFIED_SHA256 = re.compile(r"sha256:[0-9a-f]{64}\Z")
+
+
+class FixedScaleStatus(StrEnum):
+    COMPLETE = "complete"
+    DEFERRED = "deferred"
+    FAILED = "failed"
+    PENDING = "pending"
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,6 +23,23 @@ class FixedScaleEfficiencyV1:
     flop_estimate: int | None
     wall_seconds: float | None
     peak_memory_bytes: int | None
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("parameter_count", self.parameter_count),
+            ("flop_estimate", self.flop_estimate),
+            ("peak_memory_bytes", self.peak_memory_bytes),
+        ):
+            invalid_integer = isinstance(value, bool) or not isinstance(value, int) or value < 0
+            if value is not None and invalid_integer:
+                raise ValueError(f"{name} must be a nonnegative integer or None")
+        if self.wall_seconds is not None and (
+            not isinstance(self.wall_seconds, int | float)
+            or isinstance(self.wall_seconds, bool)
+            or not isfinite(self.wall_seconds)
+            or self.wall_seconds < 0
+        ):
+            raise ValueError("wall_seconds must be a finite nonnegative number or None")
 
     @property
     def complete(self) -> bool:
@@ -42,16 +71,23 @@ class FixedScalePointV1:
     def __post_init__(self) -> None:
         if not self.track or not self.method:
             raise ValueError("fixed-scale points need track and method identities")
-        if not self.config_digest.startswith("sha256:") or not self.budget_digest.startswith(
-            "sha256:"
+        if not _QUALIFIED_SHA256.fullmatch(self.config_digest) or not _QUALIFIED_SHA256.fullmatch(
+            self.budget_digest
         ):
             raise ValueError("fixed-scale points need frozen config and budget digests")
+        if self.status not in {status.value for status in FixedScaleStatus}:
+            raise ValueError("fixed-scale point status is invalid")
         if self.status == "complete" and (
             not self.efficiency.complete or self.quality is None or self.alpha is None
         ):
             raise ValueError(
                 "complete points require quality, alpha, and all resource measurements"
             )
+        for name, value in (("quality", self.quality), ("alpha", self.alpha)):
+            if value is not None and (
+                not isinstance(value, int | float) or isinstance(value, bool) or not isfinite(value)
+            ):
+                raise ValueError(f"{name} must be a finite number or None")
 
 
 def validate_comparable_points(points: tuple[FixedScalePointV1, ...]) -> None:
