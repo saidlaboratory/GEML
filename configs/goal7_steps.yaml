@@ -1,0 +1,16 @@
+schema_version: geml-rewrite-step-v1
+phase: phase_a_contract_and_fixture_only
+input:
+  positive_trace_requirement: accepted_positive_pair_with_replayed_concrete_trace
+  replay_engine: read_only_goal4_rule_engine_and_verifier
+  state_graph_binding: authenticated_state_expression_to_graph_id_index
+split_policy:
+  inherit_pair_group_closure_exactly: true
+  prohibit_trace_or_eclass_relative_cross_split: true
+output:
+  root: outputs/final/goal7/steps
+  atomic_resumable_shards: true
+  retain_failure_rows: true
+coverage:
+  report_zero_registered_rules: true
+  no_oversampling: true
