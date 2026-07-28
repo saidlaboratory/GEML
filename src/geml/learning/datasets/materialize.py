@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from collections import defaultdict
 from collections.abc import Iterable
 from enum import StrEnum
@@ -41,10 +43,15 @@ from geml.learning.datasets.channels import (
 GRAPH_TENSOR_SCHEMA_VERSION = "geml-graph-tensor-v1"
 CHANNEL_FAILURE_SCHEMA_VERSION = "geml-channel-failure-v1"
 MATERIALIZATION_MANIFEST_SCHEMA_VERSION = "geml-goal6-channel-materialization-v1"
+CHANNEL_SHARD_MANIFEST_SCHEMA_VERSION = "geml-goal6-channel-shard-manifest-v1"
+DERIVED_GRAPH_PROVENANCE_SCHEMA_VERSION = "geml-derived-graph-provenance-v1"
+CATEGORICAL_VOCABULARY_SCHEMA_VERSION = "geml-goal6-categorical-vocabulary-v1"
+DYNAMIC_BATCH_PLAN_SCHEMA_VERSION = "geml-goal6-dynamic-batch-plan-v1"
 
 _NonBlankStr = Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]
 _Sha256Digest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 _NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
+_PositiveInt = Annotated[StrictInt, Field(ge=1)]
 
 
 class MaterializationError(ValueError):
@@ -82,6 +89,14 @@ class ChannelFailureStatus(StrEnum):
     FAILED = "failed"
 
 
+class GraphReconstructionStatus(StrEnum):
+    """Validation state recorded for a derived endpoint graph payload."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+    NOT_REQUESTED = "not_requested"
+
+
 class _TensorContract(BaseModel):
     """Strict shared serialization behavior for tensor and ledger records."""
 
@@ -107,6 +122,21 @@ def sha256_digest(data: bytes) -> str:
     """Return an algorithm-qualified content digest."""
 
     return f"sha256:{hashlib.sha256(data).hexdigest()}"
+
+
+class DerivedGraphProvenanceV1(_TensorContract):
+    """Evidence binding a Goal 6-derived endpoint to its source graph build."""
+
+    schema_version: str = DERIVED_GRAPH_PROVENANCE_SCHEMA_VERSION
+    expression_id: _NonBlankStr
+    structural_signature: _NonBlankStr
+    source_expression_id: _NonBlankStr
+    source_builder: _NonBlankStr
+    source_builder_version: _NonBlankStr
+    source_mode: _NonBlankStr
+    vocabulary_digest: _Sha256Digest | None = None
+    reconstruction_status: GraphReconstructionStatus
+    payload_digest: _Sha256Digest
 
 
 class TensorNodeV1(_TensorContract):
@@ -163,6 +193,8 @@ class GraphTensorV1(_TensorContract):
     representation_mode: _NonBlankStr
     graph_id: _NonBlankStr
     expression_id: _NonBlankStr
+    source_payload_digest: _Sha256Digest
+    derived_provenance: DerivedGraphProvenanceV1 | None = None
     pair_id: _NonBlankStr
     endpoint_role: EndpointRole
     target_label: StrictBool
@@ -175,6 +207,22 @@ class GraphTensorV1(_TensorContract):
     def validate_tensor_topology(self) -> Self:
         if self.source_note != channel_source_note(self.channel):
             raise ValueError("source_note must match the declared honest channel provenance")
+        if self.derived_provenance is not None:
+            if self.derived_provenance.expression_id != self.expression_id:
+                raise ValueError(
+                    "derived provenance expression_id must match the tensor expression_id"
+                )
+            if self.derived_provenance.payload_digest != self.source_payload_digest:
+                raise ValueError(
+                    "derived provenance payload_digest must match source_payload_digest"
+                )
+            if (
+                self.derived_provenance.reconstruction_status
+                is not GraphReconstructionStatus.PASSED
+            ):
+                raise ValueError(
+                    "derived graph provenance requires passed reconstruction validation"
+                )
         indexes = tuple(node.index for node in self.nodes)
         if indexes != tuple(range(len(self.nodes))):
             raise ValueError("tensor node indexes must be dense and ordered")
@@ -266,6 +314,168 @@ class ChannelMaterializationManifestV1(_TensorContract):
     production_ready: StrictBool
 
 
+class ChannelShardManifestV1(_TensorContract):
+    """Immutable completion record for one resumable channel-materialization shard."""
+
+    schema_version: str = CHANNEL_SHARD_MANIFEST_SCHEMA_VERSION
+    shard_id: _NonBlankStr
+    channel: RepresentationChannel
+    config_digest: _Sha256Digest
+    input_digest: _Sha256Digest
+    content_digest: _Sha256Digest
+    tensor_count: _NonNegativeInt
+    failure_count: _NonNegativeInt
+    pair_count: _NonNegativeInt
+    node_count: _NonNegativeInt
+    logical_edge_count: _NonNegativeInt
+    message_edge_count: _NonNegativeInt
+    node_count_histogram: dict[_NonBlankStr, _NonNegativeInt]
+    message_edge_count_histogram: dict[_NonBlankStr, _NonNegativeInt]
+
+    @model_validator(mode="after")
+    def validate_histograms(self) -> Self:
+        for name, histogram in (
+            ("node_count_histogram", self.node_count_histogram),
+            ("message_edge_count_histogram", self.message_edge_count_histogram),
+        ):
+            if tuple(histogram) != tuple(sorted(histogram)):
+                raise ValueError(f"{name} keys must be sorted canonically")
+            if sum(histogram.values()) != self.tensor_count:
+                raise ValueError(f"{name} must account for every tensor")
+        return self
+
+
+class CategoricalVocabularyV1(_TensorContract):
+    """Stable categorical IDs fitted only to allowed training channel tensors."""
+
+    schema_version: str = CATEGORICAL_VOCABULARY_SCHEMA_VERSION
+    node_kinds: tuple[_NonBlankStr, ...]
+    node_labels: tuple[_NonBlankStr, ...]
+    exact_values: tuple[_NonBlankStr, ...]
+
+    @model_validator(mode="after")
+    def validate_canonical_vocabularies(self) -> Self:
+        for name, values in (
+            ("node_kinds", self.node_kinds),
+            ("node_labels", self.node_labels),
+            ("exact_values", self.exact_values),
+        ):
+            if tuple(sorted(set(values))) != values:
+                raise ValueError(f"{name} must be sorted and unique")
+        return self
+
+
+class DynamicBatchV1(_TensorContract):
+    """One deterministic node/edge-budget batch of tensor envelopes."""
+
+    graph_ids: tuple[_NonBlankStr, ...] = Field(min_length=1)
+    node_count: _NonNegativeInt
+    message_edge_count: _NonNegativeInt
+
+
+class DynamicBatchPlanV1(_TensorContract):
+    """A fixed budget plan, persisted outside model features and labels."""
+
+    schema_version: str = DYNAMIC_BATCH_PLAN_SCHEMA_VERSION
+    max_nodes: _PositiveInt
+    max_message_edges: _PositiveInt
+    batches: tuple[DynamicBatchV1, ...]
+
+
+def build_training_categorical_vocabulary(
+    tensors: Iterable[GraphTensorV1],
+) -> CategoricalVocabularyV1:
+    """Fit deterministic categorical values from training tensors only."""
+
+    ordered = tuple(tensors)
+    non_training = tuple(
+        tensor.graph_id for tensor in ordered if tensor.split is not CorpusSplit.TRAIN
+    )
+    if non_training:
+        raise MaterializationError(
+            "categorical vocabulary may use training tensors only; "
+            f"found non-training graph IDs {non_training}"
+        )
+    return CategoricalVocabularyV1(
+        node_kinds=tuple(sorted({node.node_kind for tensor in ordered for node in tensor.nodes})),
+        node_labels=tuple(
+            sorted(
+                {node.node_label for tensor in ordered for node in tensor.nodes if node.node_label}
+            )
+        ),
+        exact_values=tuple(
+            sorted(
+                {
+                    canonical_json_bytes(node.exact_value).decode("ascii")
+                    for tensor in ordered
+                    for node in tensor.nodes
+                }
+            )
+        ),
+    )
+
+
+def plan_dynamic_batches(
+    tensors: Iterable[GraphTensorV1],
+    *,
+    max_nodes: int,
+    max_message_edges: int,
+) -> DynamicBatchPlanV1:
+    """Pack graphs deterministically without silently dropping oversize inputs."""
+
+    if type(max_nodes) is not int or max_nodes < 1:
+        raise ValueError("max_nodes must be a positive integer")
+    if type(max_message_edges) is not int or max_message_edges < 1:
+        raise ValueError("max_message_edges must be a positive integer")
+    ordered = tuple(
+        sorted(
+            tensors,
+            key=lambda tensor: (tensor.pair_id, tensor.endpoint_role.value, tensor.graph_id),
+        )
+    )
+    batches: list[DynamicBatchV1] = []
+    pending_ids: list[str] = []
+    pending_nodes = 0
+    pending_edges = 0
+    for tensor in ordered:
+        node_count = len(tensor.nodes)
+        edge_count = len(tensor.message_edges)
+        if node_count > max_nodes or edge_count > max_message_edges:
+            raise MaterializationError(
+                f"graph {tensor.graph_id!r} exceeds the frozen dynamic batch budget "
+                f"({node_count} nodes, {edge_count} message edges)"
+            )
+        if pending_ids and (
+            pending_nodes + node_count > max_nodes or pending_edges + edge_count > max_message_edges
+        ):
+            batches.append(
+                DynamicBatchV1(
+                    graph_ids=tuple(pending_ids),
+                    node_count=pending_nodes,
+                    message_edge_count=pending_edges,
+                )
+            )
+            pending_ids = []
+            pending_nodes = 0
+            pending_edges = 0
+        pending_ids.append(tensor.graph_id)
+        pending_nodes += node_count
+        pending_edges += edge_count
+    if pending_ids:
+        batches.append(
+            DynamicBatchV1(
+                graph_ids=tuple(pending_ids),
+                node_count=pending_nodes,
+                message_edge_count=pending_edges,
+            )
+        )
+    return DynamicBatchPlanV1(
+        max_nodes=max_nodes,
+        max_message_edges=max_message_edges,
+        batches=tuple(batches),
+    )
+
+
 def materialize_graph(
     graph: Graph,
     *,
@@ -276,6 +486,7 @@ def materialize_graph(
     endpoint_role: EndpointRole,
     target_label: bool,
     split: CorpusSplit,
+    derived_provenance: DerivedGraphProvenanceV1 | None = None,
 ) -> GraphTensorV1:
     """Materialize a validated source graph without flattening sharing or child-slot order."""
 
@@ -343,6 +554,8 @@ def materialize_graph(
         representation_mode=canonical.representation_mode,
         graph_id=graph_id,
         expression_id=expression_id,
+        source_payload_digest=canonical.digest,
+        derived_provenance=derived_provenance,
         pair_id=pair_id,
         endpoint_role=endpoint_role,
         target_label=target_label,
@@ -458,6 +671,110 @@ def validate_channel_alignment(
             raise MaterializationError("aligned tensors for one pair disagree on split")
 
 
+def _publish_exact_bytes(destination: Path, payload: bytes, *, label: str) -> None:
+    """Atomically publish bytes or verify exact identity on a safe resume."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        if not destination.is_file():
+            raise MaterializationError(f"{label} destination is not a regular file: {destination}")
+        if destination.read_bytes() != payload:
+            raise MaterializationError(f"resumed {label} differs from requested canonical bytes")
+        return
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            dir=destination.parent,
+            delete=False,
+        ) as temporary:
+            temporary_name = temporary.name
+            temporary.write(payload)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        try:
+            os.link(temporary_name, destination)
+        except FileExistsError:
+            if destination.read_bytes() != payload:
+                raise MaterializationError(
+                    f"concurrently published {label} differs from requested canonical bytes"
+                ) from None
+    finally:
+        if temporary_name is not None:
+            Path(temporary_name).unlink(missing_ok=True)
+
+
+def _channel_rows(
+    tensors: Iterable[GraphTensorV1],
+    failures: Iterable[ChannelFailureV1],
+    *,
+    channel: RepresentationChannel,
+) -> tuple[tuple[GraphTensorV1, ...], tuple[ChannelFailureV1, ...], bytes]:
+    """Order one channel's complete ledger and serialize it canonically."""
+
+    tensor_rows = tuple(sorted(tensors, key=lambda row: (row.pair_id, row.endpoint_role.value)))
+    failure_rows = tuple(sorted(failures, key=lambda row: (row.pair_id, row.endpoint_role.value)))
+    if any(row.channel is not channel for row in (*tensor_rows, *failure_rows)):
+        raise MaterializationError("channel writer accepts exactly one representation channel")
+    rows = (
+        *({"record_type": "tensor", **row.model_dump(mode="json")} for row in tensor_rows),
+        *({"record_type": "failure", **row.model_dump(mode="json")} for row in failure_rows),
+    )
+    payload = b"".join(canonical_json_bytes(row) + b"\n" for row in rows)
+    return tensor_rows, failure_rows, payload
+
+
+def _canonical_counts(values: Iterable[str]) -> dict[str, int]:
+    """Count a channel evidence field with stable key ordering."""
+
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return {key: counts[key] for key in sorted(counts)}
+
+
+def write_channel_shard(
+    tensors: Iterable[GraphTensorV1],
+    failures: Iterable[ChannelFailureV1],
+    output_path: str | Path,
+    *,
+    channel: RepresentationChannel,
+    shard_id: str,
+    config_digest: str,
+    input_digest: str,
+) -> ChannelShardManifestV1:
+    """Write or safely resume a canonical channel shard and completion sidecar."""
+
+    tensor_rows, failure_rows, payload = _channel_rows(tensors, failures, channel=channel)
+    destination = Path(output_path)
+    _publish_exact_bytes(destination, payload, label="channel shard")
+    manifest = ChannelShardManifestV1(
+        shard_id=shard_id,
+        channel=channel,
+        config_digest=config_digest,
+        input_digest=input_digest,
+        content_digest=sha256_digest(payload),
+        tensor_count=len(tensor_rows),
+        failure_count=len(failure_rows),
+        pair_count=len({row.pair_id for row in (*tensor_rows, *failure_rows)}),
+        node_count=sum(len(row.nodes) for row in tensor_rows),
+        logical_edge_count=sum(len(row.logical_edges) for row in tensor_rows),
+        message_edge_count=sum(len(row.message_edges) for row in tensor_rows),
+        node_count_histogram=_canonical_counts(str(len(row.nodes)) for row in tensor_rows),
+        message_edge_count_histogram=_canonical_counts(
+            str(len(row.message_edges)) for row in tensor_rows
+        ),
+    )
+    _publish_exact_bytes(
+        destination.with_suffix(destination.suffix + ".manifest.json"),
+        canonical_json_bytes(manifest.model_dump(mode="json")) + b"\n",
+        label="channel-shard manifest",
+    )
+    return manifest
+
+
 def write_fixture_channel(
     tensors: Iterable[GraphTensorV1],
     failures: Iterable[ChannelFailureV1],
@@ -467,20 +784,9 @@ def write_fixture_channel(
 ) -> ChannelMaterializationManifestV1:
     """Write deterministic fixture JSONL and retain every channel failure row."""
 
-    tensor_rows = tuple(sorted(tensors, key=lambda row: (row.pair_id, row.endpoint_role.value)))
-    failure_rows = tuple(sorted(failures, key=lambda row: (row.pair_id, row.endpoint_role.value)))
-    if any(row.channel is not channel for row in (*tensor_rows, *failure_rows)):
-        raise MaterializationError("fixture writer accepts exactly one representation channel")
-    rows = (
-        *({"record_type": "tensor", **row.model_dump(mode="json")} for row in tensor_rows),
-        *({"record_type": "failure", **row.model_dump(mode="json")} for row in failure_rows),
-    )
-    payload = b"".join(canonical_json_bytes(row) + b"\n" for row in rows)
+    tensor_rows, failure_rows, payload = _channel_rows(tensors, failures, channel=channel)
     destination = Path(output_path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_bytes(payload)
-    temporary.replace(destination)
+    _publish_exact_bytes(destination, payload, label="fixture channel output")
     pair_ids = {row.pair_id for row in (*tensor_rows, *failure_rows)}
     return ChannelMaterializationManifestV1(
         channel=channel,

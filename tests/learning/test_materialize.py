@@ -8,11 +8,17 @@ from geml.contracts.corpus import CorpusSplit
 from geml.graph.schema import ChildRef, Graph, GraphNode, GraphRoot
 from geml.learning.datasets.channels import RepresentationChannel, require_channel_available
 from geml.learning.datasets.materialize import (
+    DerivedGraphProvenanceV1,
+    DynamicBatchPlanV1,
     EndpointRole,
+    GraphReconstructionStatus,
     MaterializationError,
     blocked_channel_failure,
+    build_training_categorical_vocabulary,
     materialize_graph,
+    plan_dynamic_batches,
     validate_channel_alignment,
+    write_channel_shard,
     write_fixture_channel,
 )
 
@@ -192,3 +198,77 @@ def test_fixture_writer_is_deterministic_and_retains_failures(tmp_path) -> None:
     assert first_manifest.content_digest == second_manifest.content_digest
     assert first_manifest.failure_count == 0
     assert failures[0].status.value == "blocked"
+
+
+def test_derived_graph_provenance_binds_validated_source_payload() -> None:
+    base = _tensor(RepresentationChannel.AST_DAG, EndpointRole.LEFT)
+    provenance = DerivedGraphProvenanceV1(
+        expression_id="expr-left",
+        structural_signature="fixture-derived-signature",
+        source_expression_id="source-expr-left",
+        source_builder="goal6-read-only-builder",
+        source_builder_version="fixture-v1",
+        source_mode="ast",
+        vocabulary_digest=None,
+        reconstruction_status=GraphReconstructionStatus.PASSED,
+        payload_digest=base.source_payload_digest,
+    )
+    derived = materialize_graph(
+        _shared_graph(),
+        channel=RepresentationChannel.AST_DAG,
+        graph_id="derived-graph",
+        expression_id="expr-left",
+        pair_id="pair-1",
+        endpoint_role=EndpointRole.LEFT,
+        target_label=True,
+        split=CorpusSplit.TRAIN,
+        derived_provenance=provenance,
+    )
+
+    assert derived.derived_provenance == provenance
+    assert derived.source_payload_digest == provenance.payload_digest
+    assert "derived_provenance" not in derived.model_feature_payload()
+    assert "source_payload_digest" not in derived.model_feature_payload()
+
+
+def test_training_vocabulary_and_dynamic_batches_are_deterministic() -> None:
+    left = _tensor(RepresentationChannel.AST_DAG, EndpointRole.LEFT)
+    right = _tensor(RepresentationChannel.AST_DAG, EndpointRole.RIGHT)
+    vocabulary = build_training_categorical_vocabulary((right, left))
+    plan = plan_dynamic_batches((right, left), max_nodes=2, max_message_edges=4)
+
+    assert vocabulary.node_kinds == ("leaf", "operator")
+    assert vocabulary.node_labels == ("add", "symbol")
+    assert len(vocabulary.exact_values) == 2
+    assert tuple(batch.graph_ids for batch in plan.batches) == (
+        (left.graph_id,),
+        (right.graph_id,),
+    )
+    with pytest.raises(MaterializationError, match="training tensors only"):
+        build_training_categorical_vocabulary(
+            (left.model_copy(update={"split": CorpusSplit.VALIDATION}),)
+        )
+    with pytest.raises(MaterializationError, match="exceeds"):
+        plan_dynamic_batches((left,), max_nodes=1, max_message_edges=4)
+    with pytest.raises(ValueError, match="greater than or equal to 1"):
+        DynamicBatchPlanV1(max_nodes=0, max_message_edges=1, batches=())
+
+
+def test_channel_shard_safe_resume_refuses_mismatched_bytes(tmp_path) -> None:
+    output = tmp_path / "ast.jsonl"
+    tensor = _tensor(RepresentationChannel.AST_DAG, EndpointRole.LEFT)
+    arguments = {
+        "channel": RepresentationChannel.AST_DAG,
+        "shard_id": "train-0000",
+        "config_digest": "sha256:" + "a" * 64,
+        "input_digest": "sha256:" + "b" * 64,
+    }
+    first = write_channel_shard((tensor,), (), output, **arguments)
+    resumed = write_channel_shard((tensor,), (), output, **arguments)
+
+    assert resumed == first
+    assert first.node_count == 2
+    assert first.message_edge_count == 4
+    assert first.node_count_histogram == {"2": 1}
+    with pytest.raises(MaterializationError, match="differs"):
+        write_channel_shard((), (), output, **arguments)

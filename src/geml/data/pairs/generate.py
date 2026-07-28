@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Iterable
+import os
+import tempfile
+from collections.abc import Callable, Iterable, Mapping
 from enum import StrEnum
 from pathlib import Path
+from random import Random
 from typing import Annotated, Protocol, Self, runtime_checkable
 
 from pydantic import (
@@ -34,10 +37,15 @@ DERIVED_EXPRESSION_SCHEMA_VERSION = "geml-derived-expression-v1"
 REWRITE_ACTION_SCHEMA_VERSION = "geml-rewrite-action-v1"
 REWRITE_TRACE_SCHEMA_VERSION = "geml-rewrite-trace-v1"
 PAIR_FIXTURE_MANIFEST_SCHEMA_VERSION = "geml-goal6-pair-fixture-manifest-v1"
+TRAJECTORY_POLICY_SCHEMA_VERSION = "geml-goal6-trajectory-policy-v1"
+TRAJECTORY_OUTCOME_SCHEMA_VERSION = "geml-goal6-trajectory-outcome-v1"
+PAIR_SHARD_MANIFEST_SCHEMA_VERSION = "geml-goal6-pair-shard-manifest-v1"
+DERIVED_SEED_SCHEMA_VERSION = "geml-derived-seed-v1"
 
 _NonBlankStr = Annotated[str, StringConstraints(min_length=1, pattern=r"\S")]
 _Sha256Digest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 _NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
+_PositiveInt = Annotated[StrictInt, Field(ge=1)]
 
 
 class PairContractError(ValueError):
@@ -50,6 +58,18 @@ class PairStatus(StrEnum):
     ACCEPTED = "accepted"
     REJECTED = "rejected"
     FAILED = "failed"
+
+
+class TrajectoryOutcomeStatus(StrEnum):
+    """Every outcome of a bounded concrete-trajectory attempt."""
+
+    ACCEPTED = "accepted"
+    EXHAUSTED = "exhausted"
+    SHORTFALL = "shortfall"
+    INVALID = "invalid"
+    UNSUPPORTED = "unsupported"
+    VERIFIER_ERROR = "verifier_error"
+    TIMEOUT = "timeout"
 
 
 class VerificationTier(StrEnum):
@@ -330,6 +350,330 @@ class RewriteTraceV1(_PairContract):
         return sha256_digest(canonical_json_bytes(self.model_dump(mode="json")))
 
 
+class TrajectoryPolicyV1(_PairContract):
+    """Frozen bounded-search policy for deterministic concrete trace generation."""
+
+    schema_version: str = TRAJECTORY_POLICY_SCHEMA_VERSION
+    min_trace_length: _PositiveInt
+    max_trace_length: _PositiveInt
+    max_attempts_per_source: _PositiveInt
+    forbid_immediate_inverse: StrictBool = True
+    action_selection: _NonBlankStr = "derived_seed_uniform_legal_action"
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> Self:
+        if self.min_trace_length > self.max_trace_length:
+            raise ValueError("min_trace_length cannot exceed max_trace_length")
+        return self
+
+
+class TrajectoryGenerationOutcomeV1(_PairContract):
+    """A retained outcome from one source/attempt, including non-success paths."""
+
+    schema_version: str = TRAJECTORY_OUTCOME_SCHEMA_VERSION
+    source_expression_id: _NonBlankStr
+    attempt_index: _NonNegativeInt
+    derived_seed: StrictInt
+    status: TrajectoryOutcomeStatus
+    trace: RewriteTraceV1 | None = None
+    detail: _NonBlankStr
+
+    @model_validator(mode="after")
+    def validate_trace_status(self) -> Self:
+        if self.status is TrajectoryOutcomeStatus.ACCEPTED:
+            if self.trace is None or self.trace.replay_status is not ReplayStatus.PASSED:
+                raise ValueError("accepted trajectory outcomes require a passed concrete trace")
+        elif self.trace is not None:
+            raise ValueError(
+                "non-accepted trajectory outcomes must retain no partial trace as success"
+            )
+        return self
+
+
+def derive_trajectory_seed(
+    *,
+    component: str,
+    run_seed: int,
+    source_expression_id: str,
+    attempt_index: int,
+) -> int:
+    """Derive one portable 64-bit seed from immutable, versioned identity fields.
+
+    This is the executable `geml-derived-seed-v1` rule documented in the
+    package-wide ML policy.  It deliberately uses canonical JSON and SHA-256,
+    never process-randomized Python hashing or ambient global RNG state.
+    """
+
+    if not isinstance(component, str) or not component.strip():
+        raise ValueError("component must be a nonblank string")
+    if type(run_seed) is not int:
+        raise ValueError("run_seed must be an integer")
+    if not isinstance(source_expression_id, str) or not source_expression_id.strip():
+        raise ValueError("source_expression_id must be a nonblank string")
+    if type(attempt_index) is not int or attempt_index < 0:
+        raise ValueError("attempt_index must be a nonnegative integer")
+    payload = {
+        "attempt_index": attempt_index,
+        "component": component,
+        "immutable_record_id": source_expression_id,
+        "run_seed": run_seed,
+        "schema_version": DERIVED_SEED_SCHEMA_VERSION,
+    }
+    return int.from_bytes(hashlib.sha256(canonical_json_bytes(payload)).digest()[:8], "big")
+
+
+ConcreteActionEnumerator = Callable[[TraceStateV1, int, str], Iterable[RewriteActionV1]]
+ConcreteActionApplier = Callable[[TraceStateV1, RewriteActionV1, str], TraceStateV1 | None]
+
+
+def _is_immediate_inverse(previous: RewriteActionV1, candidate: RewriteActionV1) -> bool:
+    """Identify the exact structural inverse of the immediately preceding action."""
+
+    return (
+        previous.rule_id == candidate.rule_id
+        and previous.occurrence_path == candidate.occurrence_path
+        and previous.source_structural_signature == candidate.successor_structural_signature
+        and previous.successor_structural_signature == candidate.source_structural_signature
+    )
+
+
+def _trajectory_failure(
+    *,
+    source_expression_id: str,
+    attempt_index: int,
+    derived_seed: int,
+    status: TrajectoryOutcomeStatus,
+    detail: str,
+) -> TrajectoryGenerationOutcomeV1:
+    """Construct one typed retained non-success outcome."""
+
+    return TrajectoryGenerationOutcomeV1(
+        source_expression_id=source_expression_id,
+        attempt_index=attempt_index,
+        derived_seed=derived_seed,
+        status=status,
+        detail=detail,
+    )
+
+
+def generate_concrete_trajectory_attempts(
+    source: TraceStateV1,
+    *,
+    run_seed: int,
+    domain_mode: str,
+    rule_set_digest: str,
+    policy_digest: str,
+    policy: TrajectoryPolicyV1,
+    enumerate_actions: ConcreteActionEnumerator,
+    apply_action: ConcreteActionApplier,
+    verifier_version: str,
+) -> tuple[TrajectoryGenerationOutcomeV1, ...]:
+    """Generate bounded concrete trajectories and retain every failed attempt.
+
+    The injected callbacks are the only bridge to the frozen Goal 4 rule
+    engine.  This module neither reinterprets saturation provenance as a trace
+    nor invents a second semantic verifier.  The first accepted trajectory may
+    be used by a quota scheduler, but every preceding shortfall, timeout,
+    unsupported, invalid, and verifier-error outcome remains in the returned
+    ledger for persistence.
+    """
+
+    if not isinstance(domain_mode, str) or not domain_mode.strip():
+        raise ValueError("domain_mode must be a nonblank string")
+    if not isinstance(verifier_version, str) or not verifier_version.strip():
+        raise ValueError("verifier_version must be a nonblank string")
+    outcomes: list[TrajectoryGenerationOutcomeV1] = []
+    for attempt_index in range(policy.max_attempts_per_source):
+        derived_seed = derive_trajectory_seed(
+            component="goal6.pairs.trajectory",
+            run_seed=run_seed,
+            source_expression_id=source.expression_id,
+            attempt_index=attempt_index,
+        )
+        rng = Random(derived_seed)
+        requested_length = rng.randint(policy.min_trace_length, policy.max_trace_length)
+        states = [source]
+        actions: list[RewriteActionV1] = []
+        transitions: list[TransitionVerificationV1] = []
+        failure: TrajectoryGenerationOutcomeV1 | None = None
+        for _step_index in range(requested_length):
+            current = states[-1]
+            try:
+                enumerated = tuple(enumerate_actions(current, derived_seed, domain_mode))
+            except TimeoutError:
+                failure = _trajectory_failure(
+                    source_expression_id=source.expression_id,
+                    attempt_index=attempt_index,
+                    derived_seed=derived_seed,
+                    status=TrajectoryOutcomeStatus.TIMEOUT,
+                    detail="concrete action enumeration timed out",
+                )
+                break
+            except NotImplementedError:
+                failure = _trajectory_failure(
+                    source_expression_id=source.expression_id,
+                    attempt_index=attempt_index,
+                    derived_seed=derived_seed,
+                    status=TrajectoryOutcomeStatus.UNSUPPORTED,
+                    detail="concrete action enumeration is unsupported",
+                )
+                break
+            except Exception as error:  # callback boundary: evidence must retain its failure
+                failure = _trajectory_failure(
+                    source_expression_id=source.expression_id,
+                    attempt_index=attempt_index,
+                    derived_seed=derived_seed,
+                    status=TrajectoryOutcomeStatus.VERIFIER_ERROR,
+                    detail=f"concrete action enumeration failed: {type(error).__name__}",
+                )
+                break
+            if any(
+                action.source_structural_signature != current.structural_signature
+                for action in enumerated
+            ):
+                failure = _trajectory_failure(
+                    source_expression_id=source.expression_id,
+                    attempt_index=attempt_index,
+                    derived_seed=derived_seed,
+                    status=TrajectoryOutcomeStatus.INVALID,
+                    detail="enumerated action source signature differs from current concrete state",
+                )
+                break
+            legal = tuple(
+                action
+                for action in sorted(enumerated, key=lambda action: action.semantic_digest)
+                if not (
+                    policy.forbid_immediate_inverse
+                    and actions
+                    and _is_immediate_inverse(actions[-1], action)
+                )
+            )
+            if not legal:
+                status = (
+                    TrajectoryOutcomeStatus.EXHAUSTED
+                    if not actions
+                    else TrajectoryOutcomeStatus.SHORTFALL
+                )
+                failure = _trajectory_failure(
+                    source_expression_id=source.expression_id,
+                    attempt_index=attempt_index,
+                    derived_seed=derived_seed,
+                    status=status,
+                    detail="no legal concrete action remains under the frozen trace policy",
+                )
+                break
+            action = legal[rng.randrange(len(legal))]
+            try:
+                successor = apply_action(current, action, domain_mode)
+            except TimeoutError:
+                failure = _trajectory_failure(
+                    source_expression_id=source.expression_id,
+                    attempt_index=attempt_index,
+                    derived_seed=derived_seed,
+                    status=TrajectoryOutcomeStatus.TIMEOUT,
+                    detail="concrete action application timed out",
+                )
+                break
+            except NotImplementedError:
+                failure = _trajectory_failure(
+                    source_expression_id=source.expression_id,
+                    attempt_index=attempt_index,
+                    derived_seed=derived_seed,
+                    status=TrajectoryOutcomeStatus.UNSUPPORTED,
+                    detail="concrete action application is unsupported",
+                )
+                break
+            except Exception as error:  # callback boundary: evidence must retain its failure
+                failure = _trajectory_failure(
+                    source_expression_id=source.expression_id,
+                    attempt_index=attempt_index,
+                    derived_seed=derived_seed,
+                    status=TrajectoryOutcomeStatus.VERIFIER_ERROR,
+                    detail=f"concrete action application failed: {type(error).__name__}",
+                )
+                break
+            if successor is None:
+                failure = _trajectory_failure(
+                    source_expression_id=source.expression_id,
+                    attempt_index=attempt_index,
+                    derived_seed=derived_seed,
+                    status=TrajectoryOutcomeStatus.UNSUPPORTED,
+                    detail="concrete action has no supported successor",
+                )
+                break
+            if successor.structural_signature != action.successor_structural_signature:
+                failure = _trajectory_failure(
+                    source_expression_id=source.expression_id,
+                    attempt_index=attempt_index,
+                    derived_seed=derived_seed,
+                    status=TrajectoryOutcomeStatus.INVALID,
+                    detail=(
+                        "concrete action successor differs from its persisted structural signature"
+                    ),
+                )
+                break
+            evidence = {
+                "action_digest": action.semantic_digest,
+                "domain_mode": domain_mode,
+                "schema_version": "geml-transition-verification-evidence-v1",
+                "source": current.model_dump(mode="json"),
+                "successor": successor.model_dump(mode="json"),
+                "verifier_version": verifier_version,
+            }
+            actions.append(action)
+            states.append(successor)
+            transitions.append(
+                TransitionVerificationV1(
+                    action_digest=action.semantic_digest,
+                    source_structural_signature=current.structural_signature,
+                    successor_structural_signature=successor.structural_signature,
+                    verifier_version=verifier_version,
+                    status=ReplayStatus.PASSED,
+                    evidence_digest=sha256_digest(canonical_json_bytes(evidence)),
+                    detail="concrete action replayed to stored successor",
+                )
+            )
+        if failure is not None:
+            outcomes.append(failure)
+            continue
+        if len(actions) < policy.min_trace_length:
+            outcomes.append(
+                _trajectory_failure(
+                    source_expression_id=source.expression_id,
+                    attempt_index=attempt_index,
+                    derived_seed=derived_seed,
+                    status=TrajectoryOutcomeStatus.SHORTFALL,
+                    detail="trajectory did not meet the frozen minimum trace length",
+                )
+            )
+            continue
+        trace = RewriteTraceV1(
+            source=source,
+            goal=states[-1],
+            states=tuple(states),
+            actions=tuple(actions),
+            transitions=tuple(transitions),
+            verified_step_count=len(transitions),
+            rule_set_digest=rule_set_digest,
+            policy_digest=policy_digest,
+            domain_mode=domain_mode,
+            generation_seed=derived_seed,
+            replay_status=ReplayStatus.PASSED,
+        )
+        outcomes.append(
+            TrajectoryGenerationOutcomeV1(
+                source_expression_id=source.expression_id,
+                attempt_index=attempt_index,
+                derived_seed=derived_seed,
+                status=TrajectoryOutcomeStatus.ACCEPTED,
+                trace=trace,
+                detail="accepted bounded concrete trajectory",
+            )
+        )
+        break
+    return tuple(outcomes)
+
+
 @runtime_checkable
 class TransitionVerifier(Protocol):
     """Injected production verifier boundary for concrete-action replay."""
@@ -525,6 +869,193 @@ class PairFixtureManifestV1(_PairContract):
     failed_count: _NonNegativeInt
 
 
+class PairShardManifestV1(_PairContract):
+    """Completion sidecar for one content-addressed, resumable pair shard."""
+
+    schema_version: str = PAIR_SHARD_MANIFEST_SCHEMA_VERSION
+    shard_id: _NonBlankStr
+    config_digest: _Sha256Digest
+    input_digest: _Sha256Digest
+    rule_set_digest: _Sha256Digest
+    content_digest: _Sha256Digest
+    attempted_count: _NonNegativeInt
+    record_count: _NonNegativeInt
+    accepted_count: _NonNegativeInt
+    rejected_count: _NonNegativeInt
+    failed_count: _NonNegativeInt
+    outcome_counts: dict[_NonBlankStr, _NonNegativeInt]
+    split_counts: dict[_NonBlankStr, _NonNegativeInt]
+    label_counts: dict[_NonBlankStr, _NonNegativeInt]
+    endpoint_family_counts: dict[_NonBlankStr, _NonNegativeInt]
+    endpoint_domain_counts: dict[_NonBlankStr, _NonNegativeInt]
+    depth_counts: dict[_NonBlankStr, _NonNegativeInt]
+    trace_length_counts: dict[_NonBlankStr, _NonNegativeInt]
+    verification_tier_counts: dict[_NonBlankStr, _NonNegativeInt]
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> Self:
+        if self.attempted_count != self.record_count:
+            raise ValueError("attempted_count must equal the retained shard record_count")
+        if self.record_count != self.accepted_count + self.rejected_count + self.failed_count:
+            raise ValueError("pair-shard status counts must sum to record_count")
+        per_record = (
+            self.outcome_counts,
+            self.split_counts,
+            self.label_counts,
+            self.depth_counts,
+            self.trace_length_counts,
+            self.verification_tier_counts,
+        )
+        if any(sum(counts.values()) != self.record_count for counts in per_record):
+            raise ValueError("every per-record pair-shard count must sum to record_count")
+        if sum(self.endpoint_family_counts.values()) != 2 * self.record_count:
+            raise ValueError("endpoint_family_counts must count both endpoints of each record")
+        if sum(self.endpoint_domain_counts.values()) != 2 * self.record_count:
+            raise ValueError("endpoint_domain_counts must count both endpoints of each record")
+        for name, counts in (
+            ("outcome_counts", self.outcome_counts),
+            ("split_counts", self.split_counts),
+            ("label_counts", self.label_counts),
+            ("endpoint_family_counts", self.endpoint_family_counts),
+            ("endpoint_domain_counts", self.endpoint_domain_counts),
+            ("depth_counts", self.depth_counts),
+            ("trace_length_counts", self.trace_length_counts),
+            ("verification_tier_counts", self.verification_tier_counts),
+        ):
+            if tuple(counts) != tuple(sorted(counts)):
+                raise ValueError(f"{name} keys must be sorted canonically")
+        return self
+
+
+def _publish_exact_bytes(destination: Path, payload: bytes, *, label: str) -> None:
+    """Atomically publish bytes or verify that an existing resume target matches.
+
+    A completion sidecar is published only after its shard bytes are available.
+    Existing bytes are never overwritten: a resume either proves exact identity
+    or fails loudly rather than accepting a stale or corrupt partial output.
+    """
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        if not destination.is_file():
+            raise PairContractError(f"{label} destination is not a regular file: {destination}")
+        if destination.read_bytes() != payload:
+            raise PairContractError(f"resumed {label} differs from the requested canonical bytes")
+        return
+    temporary_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{destination.name}.",
+            suffix=".tmp",
+            dir=destination.parent,
+            delete=False,
+        ) as temporary:
+            temporary_name = temporary.name
+            temporary.write(payload)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        try:
+            os.link(temporary_name, destination)
+        except FileExistsError:
+            if destination.read_bytes() != payload:
+                raise PairContractError(
+                    f"concurrently published {label} differs from the requested canonical bytes"
+                ) from None
+    finally:
+        if temporary_name is not None:
+            Path(temporary_name).unlink(missing_ok=True)
+
+
+def _canonical_counts(values: Iterable[str]) -> dict[str, int]:
+    """Count one categorical evidence field with deterministic key ordering."""
+
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return {key: counts[key] for key in sorted(counts)}
+
+
+def write_pair_shard(
+    records: Iterable[PairRecordV1],
+    output_path: str | Path,
+    *,
+    shard_id: str,
+    config_digest: str,
+    input_digest: str,
+    rule_set_digest: str,
+    depth_by_pair_id: Mapping[str, int],
+) -> PairShardManifestV1:
+    """Write or safely resume one canonical pair shard and completion manifest."""
+
+    ordered = deterministic_fixture_records(records)
+    missing_depths = tuple(
+        record.pair_id for record in ordered if record.pair_id not in depth_by_pair_id
+    )
+    if missing_depths:
+        raise PairContractError(f"pair shard is missing frozen depth metadata for {missing_depths}")
+    if any(
+        type(depth_by_pair_id[record.pair_id]) is not int or depth_by_pair_id[record.pair_id] < 0
+        for record in ordered
+    ):
+        raise PairContractError("pair-shard depths must be nonnegative integers")
+    payload = b"".join(
+        canonical_json_bytes(record.model_dump(mode="json")) + b"\n" for record in ordered
+    )
+    destination = Path(output_path)
+    _publish_exact_bytes(destination, payload, label="pair shard")
+    manifest = PairShardManifestV1(
+        shard_id=shard_id,
+        config_digest=config_digest,
+        input_digest=input_digest,
+        rule_set_digest=rule_set_digest,
+        content_digest=sha256_digest(payload),
+        attempted_count=len(ordered),
+        record_count=len(ordered),
+        accepted_count=sum(record.status is PairStatus.ACCEPTED for record in ordered),
+        rejected_count=sum(record.status is PairStatus.REJECTED for record in ordered),
+        failed_count=sum(record.status is PairStatus.FAILED for record in ordered),
+        outcome_counts=_canonical_counts(
+            record.outcome_type if record.outcome_type is not None else record.status.value
+            for record in ordered
+        ),
+        split_counts=_canonical_counts(record.source_split.value for record in ordered),
+        label_counts=_canonical_counts(
+            (
+                "positive"
+                if record.label is True
+                else "negative"
+                if record.label is False
+                else "unlabeled"
+            )
+            for record in ordered
+        ),
+        endpoint_family_counts=_canonical_counts(
+            endpoint.operator_family
+            for record in ordered
+            for endpoint in (record.left, record.right)
+        ),
+        endpoint_domain_counts=_canonical_counts(
+            endpoint.domain_mode for record in ordered for endpoint in (record.left, record.right)
+        ),
+        depth_counts=_canonical_counts(str(depth_by_pair_id[record.pair_id]) for record in ordered),
+        trace_length_counts=_canonical_counts(
+            str(len(record.trace.actions)) if record.trace is not None else "none"
+            for record in ordered
+        ),
+        verification_tier_counts=_canonical_counts(
+            record.verification_tier.value for record in ordered
+        ),
+    )
+    manifest_path = destination.with_suffix(destination.suffix + ".manifest.json")
+    _publish_exact_bytes(
+        manifest_path,
+        canonical_json_bytes(manifest.model_dump(mode="json")) + b"\n",
+        label="pair-shard manifest",
+    )
+    return manifest
+
+
 def deterministic_fixture_records(records: Iterable[PairRecordV1]) -> tuple[PairRecordV1, ...]:
     """Sort and validate fixture records without dropping rejected or failed evidence."""
 
@@ -547,10 +1078,7 @@ def write_fixture_pairs(
         canonical_json_bytes(record.model_dump(mode="json")) + b"\n" for record in ordered
     )
     destination = Path(output_path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_bytes(payload)
-    temporary.replace(destination)
+    _publish_exact_bytes(destination, payload, label="fixture pair output")
     return PairFixtureManifestV1(
         seed=seed,
         row_count=len(ordered),

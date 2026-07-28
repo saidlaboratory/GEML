@@ -25,3 +25,29 @@ materialization:
   preserve_repeated_references: true
   resumable_shards: true
   atomic_finalization: true
+  shard_contract:
+    schema_version: geml-goal6-channel-shard-manifest-v1
+    records: canonical_jsonl_sorted_by_pair_id_and_endpoint_role
+    sidecar: immutable_completion_manifest
+    resume: exact_bytes_only
+derived_endpoints:
+  required_provenance:
+    - expression_id
+    - structural_signature
+    - source_expression_id
+    - source_builder
+    - source_builder_version
+    - source_mode
+    - vocabulary_digest_when_relevant
+    - reconstruction_status
+    - payload_digest
+  require_reconstruction_status: passed
+categorical_vocabulary:
+  schema_version: geml-goal6-categorical-vocabulary-v1
+  fit_split: train_only
+  values: canonical_json_encoded
+batching:
+  schema_version: geml-goal6-dynamic-batch-plan-v1
+  unit: graph_tensor_envelope
+  max_nodes: production_pilot_required
+  max_message_edges: production_pilot_required

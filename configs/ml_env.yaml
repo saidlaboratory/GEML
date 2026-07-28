@@ -10,6 +10,22 @@ production_seeds:
   - 20260726
   - 20260727
   - 20260728
+seed_derivation:
+  schema_version: geml-derived-seed-v1
+  canonicalization: UTF-8 canonical JSON with lexicographically sorted object keys, compact separators, and finite values only
+  digest: SHA-256
+  output: first 8 digest bytes interpreted as an unsigned big-endian integer in [0, 2^64 - 1]
+  required_payload_fields:
+    - schema_version
+    - component
+    - run_seed
+    - immutable_record_id
+    - attempt_index
+  runtime_mapping:
+    python_random: use the full unsigned 64-bit derived integer
+    numpy: reduce modulo 2^32 only at the NumPy seeding boundary and record both values
+    torch_cpu: use the full unsigned 64-bit derived integer
+    torch_cuda: use the full unsigned 64-bit derived integer for every CUDA generator
 development_selection:
   selection_split: validation
   selected_once_before_test: true

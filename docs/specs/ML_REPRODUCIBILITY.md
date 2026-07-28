@@ -22,6 +22,27 @@ read production outputs.
 three production seeds, precision policy, batch policy, and hardware profile.
 It is a policy artifact, not a hardware discovery result.
 
+## Canonical configuration and seed derivation
+
+Persist configuration as finite, canonical JSON: UTF-8, lexicographically
+sorted object keys, compact `,`/`:` separators, and no NaN or infinity. Its
+`configuration_hash` is `sha256:` followed by the SHA-256 digest of those exact
+bytes. A run whose checked configuration differs by one byte is a different
+run; mutable absolute paths and machine-local cache locations are excluded from
+the deterministic configuration content.
+
+Derived seeds use `geml-derived-seed-v1`. The payload is the same canonical
+JSON form and contains `schema_version`, `component`, `run_seed`, immutable
+`record_id`, and `attempt_index`. Compute SHA-256 and interpret its first eight
+bytes as an unsigned big-endian 64-bit integer. This makes the integer width,
+byte order, and namespace explicit and avoids Python's process-randomized
+`hash()`.
+
+Use that full integer for Python's local `random.Random`, PyTorch CPU, and each
+CUDA generator. NumPy's narrower API receives it reduced modulo `2**32`; record
+both the full derived value and that boundary value in the run envelope. No
+module-level or ambient global RNG is an evidence source.
+
 ## RunEnvelopeV1
 
 Every generated dataset, training cell, search shard, external-reference
@@ -32,7 +53,7 @@ least these fields:
 | --- | --- |
 | `schema_version` | Exactly `geml-run-envelope-v1`. |
 | `configuration` / `configuration_hash` | Canonical configuration content and its SHA-256 digest. |
-| `git_commit` | Full commit SHA that produced the output. |
+| `git_commit` | Full commit SHA that produced the output, plus an explicit clean/dirty state and dirty diff digest when applicable. |
 | `package_versions` | Python and relevant package versions. |
 | `seeds` | Every seed used, including data-loader and search seeds where distinct. |
 | `hardware` / `precision` | Accelerator/host description, requested and effective precision. |
@@ -47,6 +68,12 @@ least these fields:
 Run envelopes are append-only evidence. Atomic finalization may replace an
 incomplete *temporary* file, but it must not overwrite a previous failed row
 or conceal a failed attempt.
+
+Checkpoint metadata distinguishes `latest` (the newest resumable optimizer and
+loader state) from `best` (the validation-selected checkpoint). A test or OOD
+row may only name the already-frozen `best` checkpoint; it must never choose a
+new one. Resume records both the prior output/checkpoint digest and the reason
+for the interrupted or restarted cell.
 
 ## Seeds and selection
 
