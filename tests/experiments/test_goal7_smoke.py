@@ -782,7 +782,7 @@ def test_checked_in_production_config_exposes_blockers() -> None:
     blockers = config.production_blockers()
     assert config.stage is GridStage.PRODUCTION
     assert config.expected_step_count is None
-    assert "issue #56 four-channel contract is unresolved" in blockers
+    assert "issue #56 four-channel contract is unresolved" not in blockers
     assert "expected_step_count is unresolved" in blockers
     assert "training_family_inventory_sha256 is unresolved" in blockers
     assert "step_population_sha256 is unresolved" in blockers

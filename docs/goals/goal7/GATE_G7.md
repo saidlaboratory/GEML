@@ -106,12 +106,12 @@ The step-manifest authenticator separately derives a digest over the sorted
 accepted step scientific identities. Every complete cell must match that exact
 population; equal row counts and agreement among arms are not sufficient.
 
-## Current blocker
+## Current production dependencies
 
-The four-channel contract in issue #56 is unresolved. The existing frequent
-motif artifact is a **macro-derived** motif DAG, and the required train-only
-motif-AST fair control does not exist within the current ownership scope.
-`configs/goal7_grid.yaml` therefore leaves that channel disabled and all
-production hashes and the step denominator null. The runner refuses production
-execution until the contract, Workstream 1 dataset/registry/verifier digests,
-and Workstream 2 harness/model digests are supplied.
+The four-channel contract is resolved in `docs/specs/PRE_PHASE_B_DECISIONS.md`.
+The existing frequent motif artifact remains labeled **macro-derived**, and the
+train-only motif-AST control uses an equal entry/MDL budget. Production hashes
+and the step denominator remain null until Phase B materializes the aligned
+channels, step manifest, dataset/registry/verifier digests, and harness/model
+digests. The runner refuses production execution until those evidence
+identities are supplied.

@@ -6,7 +6,7 @@ from enum import StrEnum
 
 
 class RepresentationChannel(StrEnum):
-    """The proposed four-arm contract, including the currently blocked fair control."""
+    """The approved four-arm representation contract."""
 
     AST_DAG = "ast_dag"
     PURE_EML_DAG = "pure_eml_dag"
@@ -35,8 +35,11 @@ CHANNEL_SOURCE_CONTRACT: dict[RepresentationChannel, tuple[ChannelState, str]] =
         ),
     ),
     RepresentationChannel.MOTIF_AST_FAIR_CONTROL: (
-        ChannelState.BLOCKED,
-        "requires an explicit issue-scope decision to mine a train-only motif-AST control",
+        ChannelState.AVAILABLE,
+        (
+            "train-only exact motif compression over AST-DAG with the frequent macro-motif "
+            "dictionary count and MDL-bit budget"
+        ),
     ),
 }
 

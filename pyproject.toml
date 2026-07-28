@@ -7,6 +7,7 @@ name = "geml"
 version = "0.1.0"
 description = "Graph learning over a single-operator representation of mathematics"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "matplotlib>=3.9",

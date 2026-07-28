@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from geml.compression.motif.mdl import vocabulary_mdl_bits
+from geml.compression.motif.mine import MotifMiningConfig, MotifMiningRecord, mine_motifs
+from geml.compression.motif.vocabulary import MotifPool
 from geml.contracts.corpus import CorpusSplit
 from geml.graph.schema import ChildRef, Graph, GraphNode, GraphRoot
 from geml.learning.datasets.channels import RepresentationChannel, require_channel_available
@@ -15,7 +18,9 @@ from geml.learning.datasets.materialize import (
     MaterializationError,
     blocked_channel_failure,
     build_training_categorical_vocabulary,
+    compress_motif_ast_control,
     materialize_graph,
+    mine_motif_ast_control_vocabulary,
     plan_dynamic_batches,
     validate_channel_alignment,
     write_channel_shard,
@@ -110,12 +115,76 @@ def _frequent_macro_motif_graph() -> Graph:
     )
 
 
+def _macro_graph() -> Graph:
+    shared = _shared_graph()
+    return Graph(
+        nodes={
+            node_id: GraphNode(
+                node_id=node.node_id,
+                family="macro",
+                kind=node.kind,
+                label=node.label,
+                value=node.value,
+                children=node.children,
+            )
+            for node_id, node in shared.nodes.items()
+        },
+        roots=(
+            GraphRoot(
+                root_id="root-order-0",
+                target_id="root",
+                representation_mode="macro:official_v4:is_pure_eml=false",
+            ),
+        ),
+    )
+
+
+def _motif_ast_control_graph() -> Graph:
+    macro_records = tuple(
+        MotifMiningRecord(
+            expression_id=f"macro-{index}",
+            split=CorpusSplit.TRAIN,
+            graph=_macro_graph(),
+        )
+        for index in range(2)
+    )
+    reference = mine_motifs(
+        macro_records,
+        MotifMiningConfig(
+            pool=MotifPool.MACRO,
+            min_size=2,
+            max_size=2,
+            min_support_count=2,
+            vocabulary_limit=4,
+        ),
+    ).vocabulary
+    ast_records = tuple(
+        MotifMiningRecord(
+            expression_id=f"ast-{index}",
+            split=CorpusSplit.TRAIN,
+            graph=_shared_graph(),
+        )
+        for index in range(2)
+    )
+    mined = mine_motif_ast_control_vocabulary(
+        ast_records,
+        reference_vocabulary=reference,
+    )
+    assert vocabulary_mdl_bits(mined.vocabulary.templates) <= vocabulary_mdl_bits(
+        reference.templates
+    )
+    compressed = compress_motif_ast_control(_shared_graph(), mined.vocabulary)
+    assert compressed.compressed is not None
+    return compressed.compressed.graph
+
+
 def _tensor(channel: RepresentationChannel, role: EndpointRole):
     graph = {
         RepresentationChannel.AST_DAG: _shared_graph,
         RepresentationChannel.PURE_EML_DAG: _pure_eml_graph,
         RepresentationChannel.FREQUENT_MACRO_MOTIF_DAG: _frequent_macro_motif_graph,
-    }.get(channel, _shared_graph)()
+        RepresentationChannel.MOTIF_AST_FAIR_CONTROL: _motif_ast_control_graph,
+    }[channel]()
     return materialize_graph(
         graph,
         channel=channel,
@@ -145,7 +214,7 @@ def test_materialization_preserves_repeated_reference_and_ordered_slots() -> Non
     assert tensor.nodes[0].root_orders == (0,)
 
 
-def test_alignment_requires_explicit_blocker_rows_for_every_slot() -> None:
+def test_alignment_requires_every_available_channel_slot() -> None:
     available = (
         _tensor(RepresentationChannel.AST_DAG, EndpointRole.LEFT),
         _tensor(RepresentationChannel.AST_DAG, EndpointRole.RIGHT),
@@ -153,40 +222,37 @@ def test_alignment_requires_explicit_blocker_rows_for_every_slot() -> None:
         _tensor(RepresentationChannel.PURE_EML_DAG, EndpointRole.RIGHT),
         _tensor(RepresentationChannel.FREQUENT_MACRO_MOTIF_DAG, EndpointRole.LEFT),
         _tensor(RepresentationChannel.FREQUENT_MACRO_MOTIF_DAG, EndpointRole.RIGHT),
-    )
-    failures = tuple(
-        blocked_channel_failure(
-            pair_id="pair-1",
-            endpoint_role=role,
-            channel=RepresentationChannel.MOTIF_AST_FAIR_CONTROL,
-        )
-        for role in EndpointRole
+        _tensor(RepresentationChannel.MOTIF_AST_FAIR_CONTROL, EndpointRole.LEFT),
+        _tensor(RepresentationChannel.MOTIF_AST_FAIR_CONTROL, EndpointRole.RIGHT),
     )
 
-    validate_channel_alignment(available, failures, expected_pair_ids=("pair-1",))
+    validate_channel_alignment(available, (), expected_pair_ids=("pair-1",))
     with pytest.raises(MaterializationError, match="missing"):
-        validate_channel_alignment(available, (), expected_pair_ids=("pair-1",))
+        validate_channel_alignment(available[:-1], (), expected_pair_ids=("pair-1",))
 
 
-def test_blocked_motif_ast_cannot_be_substituted_or_materialized() -> None:
-    with pytest.raises(ValueError, match="requires an explicit issue-scope decision"):
-        require_channel_available(RepresentationChannel.MOTIF_AST_FAIR_CONTROL)
-    with pytest.raises(ValueError, match="blocked"):
-        _tensor(RepresentationChannel.MOTIF_AST_FAIR_CONTROL, EndpointRole.LEFT)
+def test_motif_ast_is_available_but_plain_ast_cannot_be_substituted() -> None:
+    require_channel_available(RepresentationChannel.MOTIF_AST_FAIR_CONTROL)
+    tensor = _tensor(RepresentationChannel.MOTIF_AST_FAIR_CONTROL, EndpointRole.LEFT)
+    assert tensor.representation_family == "motif"
+    assert tensor.representation_mode.startswith("motif:ast:motif-vocabulary:")
+    with pytest.raises(MaterializationError, match="vocabulary-bound"):
+        materialize_graph(
+            _shared_graph(),
+            channel=RepresentationChannel.MOTIF_AST_FAIR_CONTROL,
+            graph_id="dishonest-control",
+            expression_id="expr-left",
+            pair_id="pair-1",
+            endpoint_role=EndpointRole.LEFT,
+            target_label=True,
+            split=CorpusSplit.TRAIN,
+        )
 
 
 def test_fixture_writer_is_deterministic_and_retains_failures(tmp_path) -> None:
     first = tmp_path / "first.jsonl"
     second = tmp_path / "second.jsonl"
     tensors = (_tensor(RepresentationChannel.AST_DAG, EndpointRole.LEFT),)
-    failures = (
-        blocked_channel_failure(
-            pair_id="pair-1",
-            endpoint_role=EndpointRole.RIGHT,
-            channel=RepresentationChannel.MOTIF_AST_FAIR_CONTROL,
-        ),
-    )
-
     first_manifest = write_fixture_channel(
         tensors, (), first, channel=RepresentationChannel.AST_DAG
     )
@@ -197,7 +263,15 @@ def test_fixture_writer_is_deterministic_and_retains_failures(tmp_path) -> None:
     assert first.read_bytes() == second.read_bytes()
     assert first_manifest.content_digest == second_manifest.content_digest
     assert first_manifest.failure_count == 0
-    assert failures[0].status.value == "blocked"
+
+
+def test_blocked_failure_rejects_the_now_available_motif_ast_channel() -> None:
+    with pytest.raises(ValueError, match="declared blocked"):
+        blocked_channel_failure(
+            pair_id="pair-1",
+            endpoint_role=EndpointRole.RIGHT,
+            channel=RepresentationChannel.MOTIF_AST_FAIR_CONTROL,
+        )
 
 
 def test_derived_graph_provenance_binds_validated_source_payload() -> None:

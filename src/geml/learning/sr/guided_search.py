@@ -37,8 +37,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from geml.ast.builder import build_ast_from_parsed
 from geml.ast.statistics import structural_signature
 from geml.data.sr.benchmark import (
-    ALLOWED_V1_OPERATORS,
     ComplexityMeasure,
+    EGraphFragmentEquivalenceVerifier,
     EquivalenceOutcome,
     EquivalenceResult,
     EquivalenceVerifier,
@@ -46,7 +46,6 @@ from geml.data.sr.benchmark import (
     NumericFitStatus,
     ObservationSet,
     SRTask,
-    UnavailableEquivalenceVerifier,
     check_grammar,
     evaluate_numeric_fit,
     measure_complexity,
@@ -374,9 +373,9 @@ class ErrorPriorityScorer:
 # Shared candidate-generation moves
 # --------------------------------------------------------------------------------------
 
-#: The frozen primitive inventory. Both arms receive exactly this and nothing else.
+#: The frozen verifier-supported primitive inventory. Both arms receive exactly this.
 SHARED_BINARY_MOVES: tuple[str, ...] = ("add", "subtract", "multiply", "divide")
-SHARED_UNARY_MOVES: tuple[str, ...] = ("negate", "exp", "log", "sin", "cos", "tanh")
+SHARED_UNARY_MOVES: tuple[str, ...] = ("negate", "exp", "log")
 SHARED_CONSTANTS: tuple[sympy.Expr, ...] = (
     sympy.Integer(1),
     sympy.Integer(2),
@@ -672,7 +671,7 @@ def run_guided_search(
 
     now = time.perf_counter if clock is None else clock
     started = now()
-    active_verifier = verifier or UnavailableEquivalenceVerifier()
+    active_verifier = verifier or EGraphFragmentEquivalenceVerifier()
     capability = active_verifier.capability()
     descriptor = scorer.descriptor()
 
@@ -905,11 +904,11 @@ def _evaluate_candidate(
             materialized=materialized,
             fit=None,
         )
-    if not set(check.used_operators).issubset(ALLOWED_V1_OPERATORS):  # pragma: no cover
+    if not set(check.used_operators).issubset(task.allowed_operators):
         row = SRCandidate(
             **base,
             status=CandidateStatus.OUT_OF_GRAMMAR,
-            detail="candidate used an operator outside the shared inventory",
+            detail="candidate used an operator outside this task's frozen verifier fragment",
         )
         return row, ScoringRequest(
             task_id=task.task_id,

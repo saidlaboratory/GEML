@@ -41,22 +41,15 @@ Expected cells: 18 (6 arms x 3 seeds). Present cells: 0.
 
 ## 3. Blocking dependencies
 
-### 3.1 Issue 6-2 / #56 four-channel contract — **blocker**
+### 3.1 Issue 6-2 / #56 four-channel contract — **resolved before production**
 
-The grid cannot name its four channels. Issue #56 names an AST-DAG, a pure-EML-DAG, a
-"frequent-motif EML-DAG", and a motif-AST fair control. The immutable Goal 5 export actually
-contains a **macro-derived** `frequent_motif_dag` whose frozen mode ends
-`:macro:macro:official_v4:is_pure_eml=false`, and contains **no motif-AST channel at all**. Issue
-#56 also places motif mining out of scope, so the fourth channel cannot be constructed inside the
-current ownership boundary.
+The integration decision in `docs/specs/PRE_PHASE_B_DECISIONS.md` approves AST-DAG,
+pure-EML-DAG, the honestly labeled macro-derived frequent-motif DAG, and a new train-only
+motif-AST fair control. The control is capped by both the reference vocabulary entry limit
+and exact dictionary MDL bits, and every compressed graph must reconstruct.
 
-The runner therefore refuses to start production until exactly four aligned approved channels exist
-in the merged registry. It will not substitute the macro-DAG for the missing motif-AST control, and
-it will not relabel a macro-derived channel as strict pure EML. Both refusals are asserted by tests.
-
-**Decision needed from the coordinator:** either amend #56 to authorize a train-only motif-AST fair
-control with the same dictionary/MDL budget, or explicitly reduce the grid to the three channels
-that genuinely exist and restate the claim accordingly.
+Production artifacts are not yet materialized, but the channel identity/scope blocker is
+closed. The runner still refuses missing or misaligned channel rows and dishonest relabeling.
 
 ### 3.2 Encoder width and virtual-node freeze — **pending preflight**
 

@@ -10,6 +10,7 @@ from geml.data.sr.benchmark import (
     ALLOWED_V1_OPERATORS,
     FEYNMAN_EQUATIONS,
     BenchmarkConfig,
+    EGraphFragmentEquivalenceVerifier,
     EquivalenceOutcome,
     EquivalenceResult,
     ExclusionReason,
@@ -159,6 +160,14 @@ def test_build_task_returns_grammar_check_for_unsupported_operator():
     result = _build(sympy.asin(x), (_positive("x", lower="1/4", upper="3/4"),))
     assert isinstance(result, GrammarCheck)
     assert result.reason is ExclusionReason.UNSUPPORTED_OPERATOR
+
+
+def test_build_task_retains_v1_trig_as_a_goal9_verifier_gap():
+    x = sympy.Symbol("x", positive=True)
+    result = _build(sympy.sin(x), (_positive("x", lower="1/4", upper="3/4"),))
+    assert isinstance(result, GrammarCheck)
+    assert result.reason is ExclusionReason.VERIFIER_GAP
+    assert result.offending_tokens == ("sin",)
 
 
 # --------------------------------------------------------------------------------------
@@ -351,6 +360,35 @@ def test_default_verifier_never_produces_an_exact_recovery_claim(single_variable
     assert result.outcome is EquivalenceOutcome.UNSUPPORTED
 
 
+def test_egraph_fragment_verifier_proves_only_supported_equalities():
+    verifier = EGraphFragmentEquivalenceVerifier()
+    proved = verify_exact_recovery(
+        verifier,
+        target_srepr="Add(Symbol('x', real=True), Integer(0))",
+        candidate_srepr="Symbol('x', real=True)",
+        domain_mode="safe_real",
+        used_operators=("add", "integer", "symbol"),
+    )
+    unknown = verify_exact_recovery(
+        verifier,
+        target_srepr="Symbol('x', real=True)",
+        candidate_srepr="Integer(1)",
+        domain_mode="safe_real",
+        used_operators=("symbol",),
+    )
+    unsupported = verify_exact_recovery(
+        verifier,
+        target_srepr="Symbol('x', real=True)",
+        candidate_srepr="sin(Symbol('x', real=True))",
+        domain_mode="safe_real",
+        used_operators=("symbol",),
+    )
+
+    assert proved.outcome is EquivalenceOutcome.VERIFIED
+    assert unknown.outcome is EquivalenceOutcome.UNKNOWN
+    assert unsupported.outcome is EquivalenceOutcome.UNSUPPORTED
+
+
 def test_unsupported_operators_short_circuit_before_the_verifier_runs():
     result = verify_exact_recovery(
         _FixtureVerifier(EquivalenceOutcome.VERIFIED),
@@ -490,7 +528,7 @@ def test_quota_shortfall_is_recorded_rather_than_repaired():
     assert quota.shortfall > 0
 
 
-def test_manifest_stays_blocked_until_the_verifier_decision_is_made():
+def test_manifest_is_freezable_under_the_frozen_fragment_decision():
     config = BenchmarkConfig(
         synthetic=SyntheticConfig(
             target_count=2,
@@ -516,15 +554,14 @@ def test_manifest_stays_blocked_until_the_verifier_decision_is_made():
         created_at="2026-07-26T00:00:00Z",
         reproduction_command="python -m geml.data.sr.benchmark ...",
     )
-    assert manifest.status is ManifestStatus.BLOCKED_PENDING_VERIFIER_DECISION
-    assert "verifier" in manifest.status_detail
+    assert manifest.status is ManifestStatus.COMPLETE
 
-    unblocked = build_manifest(
+    explicitly_blocked = build_manifest(
         tasks=generated.tasks,
         exclusions=(),
         quotas=generated.quotas,
         task_set=SRTaskSet.SYNTHETIC,
-        config=config.model_copy(update={"allow_production_freeze": True}),
+        config=config.model_copy(update={"allow_production_freeze": False}),
         config_hash="0" * 64,
         config_path="configs/goal9_benchmark.yaml",
         inspected_count=generated.attempts,
@@ -532,7 +569,7 @@ def test_manifest_stays_blocked_until_the_verifier_decision_is_made():
         created_at="2026-07-26T00:00:00Z",
         reproduction_command="python -m geml.data.sr.benchmark ...",
     )
-    assert unblocked.status is ManifestStatus.COMPLETE
+    assert explicitly_blocked.status is ManifestStatus.BLOCKED_PENDING_VERIFIER_DECISION
 
 
 def test_write_and_reload_round_trips_tasks_observations_and_manifest(tmp_path):
@@ -663,8 +700,8 @@ def test_feynman_selection_is_stable_across_runs():
     ]
 
 
-def test_verifier_supported_denominator_is_smaller_than_the_task_count():
-    """Trigonometric and hyperbolic targets lie outside the Goal 4 e-graph fragment."""
+def test_curated_tasks_all_lie_inside_the_frozen_verifier_fragment():
+    """Unsupported source formulas remain exclusions rather than entering denominators."""
 
     config = BenchmarkConfig(
         feynman=FeynmanConfig(
@@ -677,4 +714,5 @@ def test_verifier_supported_denominator_is_smaller_than_the_task_count():
     )
     curated = curate_feynman_tasks(config)
     supported = sum(1 for built in curated.tasks if built.task.verifier_supported_fragment)
-    assert 0 < supported < len(curated.tasks)
+    assert supported == len(curated.tasks)
+    assert any(row.reason is ExclusionReason.VERIFIER_GAP for row in curated.exclusions)

@@ -17,12 +17,13 @@ constructor/mode/region denominator. At 100 decimal working digits, the
 preregistered `1e-60` tolerances retain 40 guard digits. “Precision units” means
 error divided by `10^-100`, not an IEEE binary ULP.
 
-Three ownership limitations remain visible:
+Three scientific limitations remain visible:
 
 1. the high-precision backend does not preserve the sign bit of zero;
 2. exact inverse-trig endpoints require a nonnegative-radicand proof not
    expressible by the currently owned verifier interface;
-3. the closed Goal 4 operator IR cannot encode executable inverse-trig rules.
+3. executable inverse-trig e-graph rules are outside the approved
+   compiler-conformance-only scope.
 
 At the pinned 100-digit precision, all eight `asin`/`acos` endpoint/mode cells
 retain nonfinite raw-EML outcomes; independent IEEE endpoint probes remain

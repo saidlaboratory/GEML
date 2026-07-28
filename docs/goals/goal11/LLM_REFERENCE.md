@@ -168,12 +168,11 @@ separate fields and are always reported as a pair with explicit denominators.**
 
 ---
 
-## 7. Ownership blocker: provider dependencies
+## 7. Provider dependency decision
 
-**No assigned issue owns a `[llm]` optional-dependency edit in `pyproject.toml`.** This
-implementation therefore uses only `urllib` from the standard library, and touches no root
-metadata. Each adapter is a small request builder plus a small response parser; there is no
-generic client framework, no retry library, and no vendored SDK.
+The integration decision approves the existing `urllib` standard-library implementation and
+no `[llm]` dependency. Each adapter remains a small request builder plus a small response
+parser; there is no generic client framework, retry library, or vendored SDK.
 
 `PROVIDER_DEPENDENCY_NOTE` records the stop condition in code: if a provider ever requires
 behaviour that cannot stay small and auditable here — streaming, SSE reconnection, signed

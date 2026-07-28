@@ -281,15 +281,16 @@ python -m geml.experiments.goal10.rerun_studies \
 Passing sampled points supports the sourced construction; it is not a proof
 that every recursive EML intermediate is total.
 
-## E-graph ownership blocker
+## E-graph boundary
 
 `src/geml/egraph/ir.py` defines a closed `Operator` enum containing neither
 trigonometric nor inverse-trigonometric operators. Its rewrite context also has
 no interval assumptions such as `x in [-1,1]` or
-`x in [-pi/2,pi/2]`. Issue #75 does not own either contract.
+`x in [-pi/2,pi/2]`. The conformance-only Goal 10 scope does not require
+either contract.
 
-`GRAMMAR_V2_RULE_CAPABILITIES` therefore records the desired identities,
-guards, version, and exact blocker as nonexecutable metadata. It does not add
+`GRAMMAR_V2_RULE_CAPABILITIES` records the desired identities, guards, version,
+and missing executable capabilities as nonexecutable metadata. It does not add
 opaque string leaves, pretend another operator is inverse trig, or modify the
 v1 `DOMAIN_RULES`. Executable rules require an explicit ownership extension for
 at least:
@@ -298,7 +299,8 @@ at least:
 2. a declared interval-assumption representation and provenance-preserving
    guards.
 
-Until then, no executable inverse-trig rule is claimed.
+No executable inverse-trig rule is claimed, and this is an intentional scope
+boundary rather than a blocker to compiler conformance.
 
 ## Remaining scientific-review items
 
@@ -307,6 +309,7 @@ Until then, no executable inverse-trig rule is claimed.
    limitations.
 2. Decide whether IEEE signed-zero parity is a required numeric-output
    contract. The current pure symbolic IR has no signed-zero literal.
-3. Extend e-graph ownership before implementing guarded inverse-trig rules.
+3. Extend the e-graph IR and interval-assumption contract only in a separately
+   authorized future experiment.
 4. Keep all Goal 10 results labeled grammar-v2 conformance. No v2 learning or
    Goals 1–5 regeneration follows from this compiler extension.

@@ -497,7 +497,10 @@ def _manifest_for(built, config):
 
 
 def test_runner_refuses_to_score_an_unfrozen_benchmark(task_bundle, budget):
-    manifest = _manifest_for(task_bundle, SRBenchmarkConfig())
+    manifest = _manifest_for(
+        task_bundle,
+        SRBenchmarkConfig(allow_production_freeze=False),
+    )
     assert manifest.status is ManifestStatus.BLOCKED_PENDING_VERIFIER_DECISION
     config = GuidedSearchConfig(budget=budget, seeds=(1,))
     with pytest.raises(Goal9RunError, match="unfrozen benchmark"):

@@ -22,13 +22,11 @@ master_seed: 20260726
 fit_seed: 20260727
 evaluation_seed: 20260728
 
-# Hard interlock for the open Goal 9 verification-scope decision. While this is false every
-# generated manifest is written with status `blocked_pending_verifier_decision` and must not
-# be treated as the frozen production benchmark. The coordinator flips it to true only after
-# either (a) assigning an owned full-v1 equivalence verifier adapter, or (b) explicitly
-# restricting the benchmark grammar to the rigorously supported fragment. Flipping it after
-# seeing method results would be a post-hoc restriction and is not permitted.
-allow_production_freeze: false
+# Frozen before any method result: Goal 9 is restricted to the exact operator fragment
+# supported by the Goal 4 e-graph verifier. Trig/hyperbolic source formulas remain retained
+# verifier-gap exclusions; they are not silently redistributed into the benchmark.
+verifier_scope: egraph_fragment_v1
+allow_production_freeze: true
 
 synthetic:
   # Frozen scale from the shared brief. Family quotas are predeclared and must sum to
@@ -36,11 +34,9 @@ synthetic:
   # regenerated until favourable tasks appear.
   target_count: 256
   family_quotas:
-    - [algebraic_core, 72]
-    - [powers_division_rationals, 56]
-    - [exp_log, 48]
-    - [trig_hyperbolic, 48]
-    - [mixed_elementary, 32]
+    - [algebraic_core, 96]
+    - [powers_division_rationals, 80]
+    - [exp_log, 80]
 
   # A disjoint development pool. Development tasks may select a configuration; they are
   # never scored and never enter a reported denominator. Structural targets are deduplicated

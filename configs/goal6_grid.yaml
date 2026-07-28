@@ -16,11 +16,9 @@ seeds:
 
 # Channel identities are NOT listed here.
 #
-# Issue 6-2/#56 is unresolved: it names a "frequent-motif EML-DAG" and a motif-AST fair control,
-# but the immutable Goal 5 export contains a macro-derived frequent_motif_dag and no motif-AST
-# channel. Hard-coding four names here would bake that contradiction into the results table.
-# The runner consumes approved channel identities from the merged #56 registry and refuses to run
-# production until exactly four aligned approved channels exist.
+# The integrated #56 decision approves four honestly labeled channels. The runner consumes
+# their identities from the registry so the macro-derived channel cannot be relabeled strict
+# EML and the train-only motif-AST control cannot be replaced by a plain AST proxy.
 channels:
   source: registry
   required_count: 4

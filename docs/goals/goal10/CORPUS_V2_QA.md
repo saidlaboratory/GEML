@@ -46,8 +46,9 @@ python -m geml.experiments.goal10.corpus_v2 \
   --output-dir outputs/final/goal10/conformance
 ```
 
-Phase A uses temporary output directories and a smaller fixture. The final
-bounded run waits for every Goal 10 ownership blocker to be resolved.
+Phase A uses temporary output directories and a smaller fixture. The
+conformance-only ownership boundary is resolved; the final bounded run begins
+in Phase B and must retain the declared endpoint and signed-zero limitations.
 
 The 250k-v1 corpus and every Goals 1–5 artifact remain immutable. This command
 creates no shard family, train/validation/test split, DAG, motif, graph export,

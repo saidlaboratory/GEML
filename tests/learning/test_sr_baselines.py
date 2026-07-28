@@ -373,7 +373,7 @@ def test_baseline_complexity_ceiling_matches_the_controlled_arms(task_bundle, bu
 
     symbol = sympy.Symbol("x", positive=True)
     bulky = sympy.srepr(
-        sympy.exp(symbol) + sympy.log(symbol) + sympy.sin(symbol) + sympy.cos(symbol),
+        sympy.exp(symbol) + sympy.log(symbol) + (symbol + 1) ** 2,
         order="none",
     )
     strict = budget.model_copy(update={"max_complexity": 3})

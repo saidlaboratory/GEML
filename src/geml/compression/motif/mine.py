@@ -20,7 +20,7 @@ from geml.compression.motif.vocabulary import (
     build_motif_vocabulary,
 )
 from geml.contracts.corpus import CorpusSplit
-from geml.graph.schema import EML_FAMILY, MACRO_FAMILY, Graph
+from geml.graph.schema import AST_FAMILY, EML_FAMILY, MACRO_FAMILY, Graph
 from geml.graph.validate import validate_graph
 
 type MotifRecordSource = Iterable["MotifMiningRecord"] | Callable[[], Iterable["MotifMiningRecord"]]
@@ -216,6 +216,8 @@ def _family_and_mode(graph: Graph) -> tuple[str, str]:
 
 
 def _pool_accepts(pool: MotifPool, family: str) -> bool:
+    if pool is MotifPool.AST:
+        return family == AST_FAMILY
     if pool is MotifPool.PURE_EML:
         return family == EML_FAMILY
     if pool is MotifPool.MACRO:

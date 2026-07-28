@@ -31,12 +31,12 @@ import sympy
 from pydantic import BaseModel, ConfigDict, Field
 
 from geml.data.sr.benchmark import (
+    EGraphFragmentEquivalenceVerifier,
     EquivalenceOutcome,
     EquivalenceVerifier,
     NumericFitStatus,
     ObservationSet,
     SRTask,
-    UnavailableEquivalenceVerifier,
     check_grammar,
     evaluate_numeric_fit,
     verify_exact_recovery,
@@ -72,7 +72,7 @@ PYSR_PINNED_VERSION = "1.5.10"
 #: the shared v1 inventory are ever offered, so PySR cannot search a richer space than the
 #: controlled arms.
 PYSR_BINARY_OPERATORS: tuple[str, ...] = ("+", "-", "*", "/")
-PYSR_UNARY_OPERATORS: tuple[str, ...] = ("exp", "log", "sin", "cos", "tanh")
+PYSR_UNARY_OPERATORS: tuple[str, ...] = ("exp", "log")
 
 _FROZEN = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
@@ -646,7 +646,7 @@ def run_pysr_baseline(
         )
 
     started = time.perf_counter()
-    active_verifier = verifier or UnavailableEquivalenceVerifier()
+    active_verifier = verifier or EGraphFragmentEquivalenceVerifier()
     try:
         proposals = adapter.fit(
             task=task, observations=fit_observations, native_budget=native, seed=seed
@@ -794,7 +794,7 @@ def run_gp_fallback_baseline(
         )
 
     started = time.perf_counter()
-    active_verifier = verifier or UnavailableEquivalenceVerifier()
+    active_verifier = verifier or EGraphFragmentEquivalenceVerifier()
     rng = Random(seed)
     symbols = symbols_for_task(task)
     population = [
@@ -949,7 +949,7 @@ def run_transformer_baseline(
         )
 
     started = time.perf_counter()
-    active_verifier = verifier or UnavailableEquivalenceVerifier()
+    active_verifier = verifier or EGraphFragmentEquivalenceVerifier()
     try:
         proposals = proposer.propose(
             task=task,

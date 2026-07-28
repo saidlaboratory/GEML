@@ -13,6 +13,7 @@ import os
 import tempfile
 from collections import defaultdict
 from collections.abc import Iterable
+from dataclasses import replace
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Self
@@ -28,6 +29,23 @@ from pydantic import (
     model_validator,
 )
 
+from geml.compression.motif.compress import (
+    MotifCompressionResult,
+    MotifCompressionStatus,
+    compress_graph,
+)
+from geml.compression.motif.mdl import vocabulary_mdl_bits
+from geml.compression.motif.mine import (
+    MotifMiningConfig,
+    MotifMiningRecord,
+    MotifMiningResult,
+    mine_motifs,
+)
+from geml.compression.motif.vocabulary import (
+    MotifPool,
+    MotifVocabulary,
+    build_motif_vocabulary,
+)
 from geml.contracts.corpus import CorpusSplit
 from geml.export.schema import canonicalize_graph
 from geml.graph.schema import Graph
@@ -566,6 +584,82 @@ def materialize_graph(
     )
 
 
+def mine_motif_ast_control_vocabulary(
+    records: Iterable[MotifMiningRecord],
+    *,
+    reference_vocabulary: MotifVocabulary,
+) -> MotifMiningResult:
+    """Mine train-only AST motifs under the frequent macro vocabulary's exact budget.
+
+    The fair control uses the reference vocabulary's size/support settings, maximum entry
+    count, and full self-delimiting dictionary-bit budget. Candidate discovery remains
+    exhaustive under those settings; only the final canonical frequency-ranked prefix is
+    reduced to satisfy the equal-budget constraint.
+    """
+
+    if reference_vocabulary.pool is not MotifPool.MACRO:
+        raise ValueError("the motif-AST control requires the frequent macro vocabulary")
+    mined = mine_motifs(
+        records,
+        MotifMiningConfig(
+            pool=MotifPool.AST,
+            min_size=reference_vocabulary.min_size,
+            max_size=reference_vocabulary.max_size,
+            min_support_count=reference_vocabulary.min_support_count,
+            vocabulary_limit=None,
+        ),
+    )
+    reference_budget = vocabulary_mdl_bits(reference_vocabulary.templates)
+    entry_limit = reference_vocabulary.vocabulary_limit
+    selected = []
+    for template in mined.vocabulary.templates:
+        if entry_limit is not None and len(selected) >= entry_limit:
+            break
+        candidate = (*selected, template)
+        if vocabulary_mdl_bits(candidate) > reference_budget:
+            break
+        selected.append(template)
+
+    vocabulary = build_motif_vocabulary(
+        pool=MotifPool.AST,
+        min_size=mined.vocabulary.min_size,
+        max_size=mined.vocabulary.max_size,
+        min_support_count=mined.vocabulary.min_support_count,
+        vocabulary_limit=entry_limit,
+        training_transaction_count=mined.vocabulary.training_transaction_count,
+        processed_count=mined.vocabulary.processed_count,
+        failure_count=mined.vocabulary.failure_count,
+        training_fingerprint=mined.vocabulary.training_fingerprint,
+        templates=tuple(selected),
+    )
+    return replace(mined, vocabulary=vocabulary)
+
+
+def compress_motif_ast_control(
+    graph: Graph,
+    vocabulary: MotifVocabulary,
+) -> MotifCompressionResult:
+    """Compress one AST-DAG and bind its exact train-only vocabulary in the mode label."""
+
+    if vocabulary.pool is not MotifPool.AST:
+        raise ValueError("motif-AST compression requires an AST vocabulary")
+    result = compress_graph(graph, vocabulary)
+    if result.status is not MotifCompressionStatus.SUCCESS or result.compressed is None:
+        return result
+    compressed = result.compressed
+    labeled_graph = Graph(
+        nodes=compressed.graph.nodes,
+        roots=tuple(
+            replace(
+                root,
+                representation_mode=f"motif:ast:{vocabulary.vocabulary_id}:ast",
+            )
+            for root in compressed.graph.roots
+        ),
+    )
+    return replace(result, compressed=replace(compressed, graph=labeled_graph))
+
+
 def _validate_channel_representation(
     channel: RepresentationChannel,
     representation_family: str,
@@ -595,6 +689,17 @@ def _validate_channel_representation(
         ):
             raise MaterializationError(
                 "frequent_macro_motif_dag requires the immutable frequent macro-motif source mode"
+            )
+        return
+    if channel is RepresentationChannel.MOTIF_AST_FAIR_CONTROL:
+        prefix = "motif:ast:motif-vocabulary:"
+        if (
+            representation_family != "motif"
+            or not representation_mode.startswith(prefix)
+            or not representation_mode.endswith(":ast")
+        ):
+            raise MaterializationError(
+                "motif_ast_fair_control requires a train-only, vocabulary-bound AST motif graph"
             )
 
 

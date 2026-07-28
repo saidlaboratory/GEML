@@ -16,11 +16,11 @@
 
 | Item | State |
 |---|---|
-| Frozen benchmark manifest | not frozen — `blocked_pending_verifier_decision` |
+| Frozen benchmark manifest | not generated — verifier scope is frozen and production-ready |
 | Guided EML/AST search rows | none |
 | PySR rows | none — PySR is not installed and is not a core dependency |
 | GP fallback rows | none |
-| Transformer-SR rows | none — Workstream 2 owns the backbone and has not merged |
+| Transformer-SR rows | none — shared backbone is merged; production training is pending |
 | External LLM reference rows | none — issue 11-3 makes no paid calls in Phase A |
 | **Gate G9** | **`insufficient_evidence`** |
 
@@ -106,14 +106,8 @@ These are attached to every generated report:
 
 ## 7. Blocking dependencies
 
-1. **The Goal 9 verification-scope decision** (see `docs/specs/SR_TASK_SPEC.md` §7.3). Until
-   the coordinator either assigns an owned full-v1 equivalence verifier adapter or explicitly
-   restricts the benchmark grammar, the benchmark manifest stays
-   `blocked_pending_verifier_decision` and Gate G9 stays `insufficient_evidence`.
-2. **Workstream 2** — the compact GNN/prefix-transformer backbone and the shared harness.
-   Until they merge, guidance comes from an injected fixture scorer that is explicitly
-   labelled `not_trained`, and the transformer-SR baseline reports
-   `dependency_unavailable`.
-3. **A decision on PySR** — whether the production host installs pinned `pysr==1.5.10` with
+1. **Production benchmark and method rows** — the e-graph-fragment decision is frozen, but
+   task generation and controlled runs have not started.
+2. **A decision on PySR** — whether the production host installs pinned `pysr==1.5.10` with
    its Julia runtime, or whether the explicitly labelled in-repository GP fallback is used
    instead. Both paths are implemented; neither is ever relabelled as the other.

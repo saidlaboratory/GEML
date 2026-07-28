@@ -15,12 +15,12 @@ GPU, API key, production `outputs/`, or the 35 GB artifact archive.
 
 ## Current blockers and non-claims
 
-- The final environment lock depends on issue 6-0/#54, which is being implemented in a
-  parallel workstream. This branch intentionally creates neither `requirements-lock.txt`
-  nor `uv.lock`. At integration, adopt exactly the one lock format selected by #54, install
-  from it in a clean environment, and record its SHA-256.
-- Goals 6-9 and the Goal 11 provider adapter are merge-pending. Their smoke commands report
-  `merge_pending`; they are not replaced by weaker tests.
+- Integration selected `requirements-lock.txt` as the single core/development lock. Its
+  preproduction SHA-256 is
+  `8ffe1353c4179b059e196e3e671b62d7f8e9e71d137f872109bdb907c3c72d7e`.
+  Optional CUDA-dependent ML versions remain pinned in `configs/ml_env.yaml`.
+- All six Phase-A workstreams are integrated. Their smokes establish wiring and contracts,
+  not production results.
 - Goal 10 and Goals 11-12 files in this workstream are Phase-A fixtures/scaffolds, not
   production results.
 - Goals 6-12 production artifacts are currently `missing` or `deferred` in the artifact
@@ -46,8 +46,8 @@ test "$(git rev-parse HEAD)" = '<release-commit>'
 
 python3.12 -m venv .venv
 . .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[dev]'
+python -m pip install -r requirements-lock.txt
+python -m pip install -e . --no-deps
 ```
 
 ### Windows PowerShell
@@ -63,14 +63,13 @@ if ((git rev-parse HEAD) -ne "<release-commit>") {
 }
 
 py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+.\.venv\Scripts\python.exe -m pip install -e . --no-deps
 ```
 
-The pip upgrade and editable install above are only a Phase-A developer setup. At release
-integration, replace both lines with #54's single approved bootstrap/installer version and
-lock-file procedure; record their hashes rather than upgrading to whatever is newest. A
-release is not environment-reproducible until a clean install from that lock passes:
+The editable package install is dependency-free; all resolved core/development packages come
+from the selected lock. A release is not environment-reproducible until a clean install from
+that lock passes:
 
 ```bash
 python -m pytest
@@ -307,13 +306,13 @@ three experiment-level conformance tests. The same form applies on Windows with
 | 3 | `python -m scripts.repro smoke --goal 3 --execute` | ready |
 | 4 | `python -m scripts.repro smoke --goal 4 --execute` | ready |
 | 5 | `python -m scripts.repro smoke --goal 5 --execute` | ready |
-| 6 | `python -m scripts.repro smoke --goal 6 --execute` | merge-pending Workstream 2 |
-| 7 | `python -m scripts.repro smoke --goal 7 --execute` | merge-pending Workstream 3 |
-| 8 | `python -m scripts.repro smoke --goal 8 --execute` | merge-pending Workstream 4 |
-| 9 | `python -m scripts.repro smoke --goal 9 --execute` | merge-pending Workstream 5 |
-| 10 | `python -m scripts.repro smoke --goal 10 --execute` | workstream-local, integration pending |
-| 11 | `python -m scripts.repro smoke --goal 11 --execute` | merge-pending provider fixture |
-| 12 | `python -m scripts.repro smoke --goal 12 --execute` | workstream-local, integration pending |
+| 6 | `python -m scripts.repro smoke --goal 6 --execute` | ready |
+| 7 | `python -m scripts.repro smoke --goal 7 --execute` | ready |
+| 8 | `python -m scripts.repro smoke --goal 8 --execute` | ready |
+| 9 | `python -m scripts.repro smoke --goal 9 --execute` | ready |
+| 10 | `python -m scripts.repro smoke --goal 10 --execute` | ready |
+| 11 | `python -m scripts.repro smoke --goal 11 --execute` | ready; provider calls mocked |
+| 12 | `python -m scripts.repro smoke --goal 12 --execute` | ready |
 
 A missing target returns exit code 3 and its exact path. After merge, run the listing again;
 every row must say `ready`, then execute all 12 commands separately and record command, start
@@ -379,22 +378,22 @@ project window is a planning constraint, not a performance result.
 
 ## Production run plan
 
-These are production plans, not smoke commands. The exact CLI flags remain merge-pending and
-must be copied from each merged pipeline's `--help` and frozen config; do not invent an
-adapter flag. Before launch, bind every cell to its config content/hash, release commit,
+These are production plans, not smoke commands. Before launch, copy exact CLI flags from
+each integrated pipeline's `--help` and frozen config; do not invent an adapter flag. Bind
+every cell to its config content/hash, release commit,
 package lock/hash, seeds, inputs/checksums, profile, shard ID/count, checkpoint directory,
 output directory, and exact command in `RunEnvelopeV1`.
 
 | Goal | Immutable inputs / production cell | Sharding and resume | Profile and current state |
 |---:|---|---|---|
 | 1-5 | No production command: use authenticated immutable artifacts | Never regenerate or overwrite; checksum input tree | CPU authentication only; complete public handoff |
-| 6 | Pair generation, four aligned channels, six arms x three seeds, analysis/Gate G6 | Pair/channel shards by frozen source group; training cell = `(arm, seed)`; resume same config digest from atomic latest checkpoint | CPU plus 2xH100; launchers merge-pending |
-| 7 | Step extraction, policy/transformer cells, fixed grid, Gate G7 | Step shards by trace group; training cells by model/seed; checkpoint model/optimizer/scheduler/RNG and replay ledger | CPU plus 2xH100; merge-pending |
-| 8 | Value training, 256-proof ATP comparison, 1,000-expression simplification | Value cells by seed; ATP/simplification by frozen problem-ID ranges; completed rows content-addressed and never overwritten | CPU-heavy plus 2xH100; merge-pending |
-| 9 | Frozen SR benchmark, EML/AST guided search, PySR or labeled GP fallback, transformer-SR, Gate G9 | Shard by frozen task-ID ranges and seed; checkpoint search frontier/model state; preserve timeouts/invalid outputs | CPU-heavy plus 2xH100; merge-pending |
-| 10 | v2 conformance generation, repeat hash, structure/domain/numeric audits, compatibility checks | CPU shards by operator/domain/case; atomic rows and audit checkpoints; no training and no Goals 1-5 regeneration | CPU; workstream-local, ownership blockers recorded |
-| 11 | Workshop manifest, fixed-scale efficiency, no-retraining synthesis, external LLM panel | Analysis consumes immutable manifests; LLM has exactly 200 frozen attempts/model with bounded concurrency/retries and one retained row/task | CPU/API; provider adapter merge-pending |
-| 12 | Final report, checksum index, reproducibility verification, paper/release | Rebuild deterministically from frozen manifests; publication uploads resumable; never mutate evidence | CPU; final integration pending |
+| 6 | Pair generation, four aligned channels, six arms x three seeds, analysis/Gate G6 | Pair/channel shards by frozen source group; training cell = `(arm, seed)`; resume same config digest from atomic latest checkpoint | CPU plus 2xH100; integrated, production pending |
+| 7 | Step extraction, policy/transformer cells, fixed grid, Gate G7 | Step shards by trace group; training cells by model/seed; checkpoint model/optimizer/scheduler/RNG and replay ledger | CPU plus 2xH100; integrated, production pending |
+| 8 | Value training, 256-proof ATP comparison, 1,000-expression simplification | Value cells by seed; ATP/simplification by frozen problem-ID ranges; completed rows content-addressed and never overwritten | CPU-heavy plus 2xH100; integrated, production pending |
+| 9 | Frozen SR benchmark, EML/AST guided search, PySR or labeled GP fallback, transformer-SR, Gate G9 | Shard by frozen task-ID ranges and seed; checkpoint search frontier/model state; preserve timeouts/invalid outputs | CPU-heavy plus 2xH100; verifier scope frozen, production pending |
+| 10 | v2 conformance generation, repeat hash, structure/domain/numeric audits, compatibility checks | CPU shards by operator/domain/case; atomic rows and audit checkpoints; no training and no Goals 1-5 regeneration | CPU; conformance scope resolved, production pending |
+| 11 | Workshop manifest, fixed-scale efficiency, no-retraining synthesis, external LLM panel | Analysis consumes immutable manifests; LLM has exactly 200 frozen attempts/model with bounded concurrency/retries and one retained row/task | CPU/API; integrated, paid calls still separately gated |
+| 12 | Final report, checksum index, reproducibility verification, paper/release | Rebuild deterministically from frozen manifests; publication uploads resumable; never mutate evidence | CPU; integrated scaffold, authenticated results pending |
 
 For every executable pipeline, production launch must follow this shape after the real merged
 CLI is verified:

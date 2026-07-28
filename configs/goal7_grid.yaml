@@ -32,9 +32,8 @@ seeds:
   - 20260728
 
 channel_contract:
-  # Issue #56 must explicitly authorize the missing motif-AST fair control.
-  # The existing frequent motif artifact is macro-derived and remains labeled so.
-  resolved: false
+  # Frozen by docs/specs/PRE_PHASE_B_DECISIONS.md before production results.
+  resolved: true
   channels:
     - channel_id: ast_dag
       representation_mode: source_ast_dag
@@ -46,8 +45,8 @@ channel_contract:
       blocker: null
     - channel_id: motif_ast_fair_control
       representation_mode: train_only_ast_motifs_equal_dictionary_and_mdl_budget
-      enabled: false
-      blocker: "Issue #56 has not authorized ownership for constructing this channel."
+      enabled: true
+      blocker: null
     - channel_id: pure_eml_dag
       representation_mode: strict_pure_eml_official_v4_dag
       enabled: true

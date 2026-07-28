@@ -21,14 +21,11 @@ cannot slip through as an opaque leaf.
 
 Verifier boundary
 -----------------
-This module deliberately does **not** implement an arbitrary full-v1 equivalence oracle.
-The repository does not currently own one: ``geml.verification.eml`` audits pinned compiler
-constructions, and the Goal 4 e-graph operator enum omits every trigonometric and hyperbolic
-source operator. Goal 9 therefore declares a narrow :class:`EquivalenceVerifier` protocol with
-capability introspection and typed outcomes, and ships
-:class:`UnavailableEquivalenceVerifier` as the default so that no exact-recovery claim can be
-produced by accident. Failure to prove equivalence is ``unknown``; it is never
-``not_equivalent``.
+Goal 9 is explicitly restricted to the rigorously supported Goal 4 e-graph fragment. The
+bounded :class:`EGraphFragmentEquivalenceVerifier` can certify positive equivalence results
+inside that fragment. It is intentionally incomplete: failure to find a proof is ``unknown``,
+never ``not_equivalent``. Trigonometric and hyperbolic v1 expressions remain valid elsewhere
+in GEML, but are excluded from this benchmark with a retained verifier-gap reason.
 """
 
 import argparse
@@ -54,6 +51,12 @@ from geml.ast.builder import build_ast_from_parsed
 from geml.ast.statistics import structural_signature
 from geml.contracts.ast import ASTTree
 from geml.data.generation.generator import derive_expression_id
+from geml.egraph.core import EGraph
+from geml.egraph.policy import ExtractionStatus, ResourceLimits, RewriteMode
+from geml.egraph.rewrite_engine import RewriteContext, SaturationLimits, saturate
+from geml.egraph.rules_domain import domain_rules
+from geml.egraph.rules_safe import SAFE_RULES
+from geml.experiments.goal4.runtime import assumption_environment_for, ast_tree_to_expr
 from geml.parsing.srepr import SreprParseError, parse_srepr
 from geml.spec.domains import DOMAIN_REGISTRY
 from geml.spec.operators import OPERATOR_REGISTRY
@@ -659,6 +662,10 @@ EGRAPH_FRAGMENT_OPERATORS: frozenset[str] = frozenset(
         "log",
     }
 )
+GOAL9_VERIFIER_SCOPE = "egraph_fragment_v1"
+GOAL9_DOMAIN_MODES: tuple[str, ...] = tuple(
+    sorted(name for name, policy in DOMAIN_REGISTRY.items() if policy.enabled_for_generation)
+)
 
 
 def srepr_constructors(srepr_text: str) -> tuple[str, ...]:
@@ -1002,6 +1009,18 @@ def build_task(
     check = check_grammar(target_srepr)
     if not check.in_grammar:
         return check
+    if not set(check.used_operators).issubset(EGRAPH_FRAGMENT_OPERATORS):
+        unsupported = tuple(sorted(set(check.used_operators).difference(EGRAPH_FRAGMENT_OPERATORS)))
+        return GrammarCheck(
+            in_grammar=False,
+            used_operators=check.used_operators,
+            offending_tokens=unsupported,
+            reason=ExclusionReason.VERIFIER_GAP,
+            detail=(
+                "operators outside the frozen Goal 9 e-graph verifier fragment: "
+                + ", ".join(unsupported)
+            ),
+        )
 
     task_id = derive_task_id(
         task_set=task_set,
@@ -1021,15 +1040,6 @@ def build_task(
         variables, expression, symbols, task_id=task_id, policy=evaluation_policy
     )
 
-    supported = set(check.used_operators).issubset(EGRAPH_FRAGMENT_OPERATORS)
-    note = (
-        "operators lie inside the Goal 4 e-graph fragment; a verifier adapter is still "
-        "required before any exact-recovery claim"
-        if supported
-        else "target uses trigonometric or hyperbolic operators that the Goal 4 e-graph "
-        "operator enum does not contain"
-    )
-
     task = SRTask(
         task_id=task_id,
         task_set=task_set,
@@ -1042,14 +1052,17 @@ def build_task(
         target_display=sympy.sstr(expression, order="none"),
         target_expression_id=expression_id,
         target_structural_signature=structural_signature(tree),
-        allowed_operators=ALLOWED_V1_OPERATORS,
+        allowed_operators=tuple(sorted(EGRAPH_FRAGMENT_OPERATORS)),
         used_operators=check.used_operators,
         complexity=complexity,
         fit_policy=fit_policy,
         evaluation_policy=evaluation_policy,
         provenance=provenance,
-        verifier_supported_fragment=supported,
-        verifier_capability_note=note,
+        verifier_supported_fragment=True,
+        verifier_capability_note=(
+            "target lies inside the frozen Goal 9 e-graph fragment; exact recovery is "
+            "certified only when bounded equality saturation merges target and candidate"
+        ),
     )
     return BuiltTask(task=task, fit_observations=fit, evaluation_observations=evaluation)
 
@@ -1122,12 +1135,7 @@ class EquivalenceVerifier(Protocol):
 
 
 class UnavailableEquivalenceVerifier:
-    """Default verifier: declares no capability and always reports ``unsupported``.
-
-    This is the Phase-A default precisely so that no exact-recovery number can be produced
-    before the coordinator either assigns an owned full-v1 verifier adapter or explicitly
-    restricts the benchmark grammar to a rigorously supported fragment.
-    """
+    """Explicit no-verifier option that always reports ``unsupported``."""
 
     verifier_id = "geml-sr-verifier-unavailable"
     verifier_version = "0"
@@ -1163,6 +1171,133 @@ class UnavailableEquivalenceVerifier:
         )
 
 
+class EGraphFragmentEquivalenceVerifier:
+    """Sound, bounded positive-equivalence prover for the frozen Goal 9 fragment.
+
+    The verifier inserts both expressions into one Goal 4 e-graph and runs only the
+    repository's approved sound/guarded rules under the task's declared assumptions.
+    Equality is certified only when the two root e-classes merge. Saturation incompleteness
+    therefore produces ``unknown`` rather than a false inequivalence claim.
+    """
+
+    verifier_id = "geml-goal4-egraph-fragment"
+    verifier_version = "1"
+
+    def capability(self) -> VerifierCapability:
+        """Return the exact operator and domain boundary of the adapter."""
+
+        return VerifierCapability(
+            verifier_id=self.verifier_id,
+            verifier_version=self.verifier_version,
+            supported_operators=tuple(sorted(EGRAPH_FRAGMENT_OPERATORS)),
+            supported_domain_modes=GOAL9_DOMAIN_MODES,
+            decides_inequivalence=False,
+            notes=(
+                "Positive proofs only via bounded Goal 4 equality saturation; a proof "
+                "shortfall is unknown, never not_equivalent."
+            ),
+        )
+
+    def check_equivalence(
+        self, *, target_srepr: str, candidate_srepr: str, domain_mode: str, timeout_seconds: float
+    ) -> EquivalenceResult:
+        """Attempt a bounded equality-saturation proof under declared domain assumptions."""
+
+        started = time.perf_counter()
+        target_check = check_grammar(target_srepr)
+        candidate_check = check_grammar(candidate_srepr)
+        operators = set(target_check.used_operators) | set(candidate_check.used_operators)
+        if (
+            not target_check.in_grammar
+            or not candidate_check.in_grammar
+            or not operators.issubset(EGRAPH_FRAGMENT_OPERATORS)
+            or domain_mode not in GOAL9_DOMAIN_MODES
+        ):
+            return EquivalenceResult(
+                outcome=EquivalenceOutcome.UNSUPPORTED,
+                verifier_id=self.verifier_id,
+                verifier_version=self.verifier_version,
+                elapsed_seconds=time.perf_counter() - started,
+                evidence="expression or domain is outside the frozen e-graph fragment",
+            )
+
+        target_tree = build_target_ast(
+            target_srepr,
+            expression_id=derive_expression_id(
+                domain_mode=domain_mode,
+                sympy_srepr=target_srepr,
+            ),
+        )
+        candidate_tree = build_target_ast(
+            candidate_srepr,
+            expression_id=derive_expression_id(
+                domain_mode=domain_mode,
+                sympy_srepr=candidate_srepr,
+            ),
+        )
+        variable_names = tuple(
+            sorted(
+                {
+                    str(node.value["name"])
+                    for tree in (target_tree, candidate_tree)
+                    for node in tree.nodes
+                    if node.label == "symbol"
+                    and isinstance(node.value, Mapping)
+                    and isinstance(node.value.get("name"), str)
+                }
+            )
+        )
+        formal_mode = domain_mode in {"positive_real", "nonzero_real"}
+        rewrite_mode = RewriteMode.POSITIVE_REAL_FORMAL if formal_mode else RewriteMode.SAFE_REAL
+        rules = SAFE_RULES.merged_with(domain_rules()) if formal_mode else SAFE_RULES
+        resources = ResourceLimits(
+            max_iterations=256,
+            max_egraph_nodes=100_000,
+            max_rewrite_attempts=250_000,
+            timeout_seconds=timeout_seconds,
+        )
+        egraph = EGraph(limits=resources)
+        target_root = egraph.add(ast_tree_to_expr(target_tree))
+        candidate_root = egraph.add(ast_tree_to_expr(candidate_tree))
+        if egraph.find(target_root) == egraph.find(candidate_root):
+            return EquivalenceResult(
+                outcome=EquivalenceOutcome.VERIFIED,
+                verifier_id=self.verifier_id,
+                verifier_version=self.verifier_version,
+                elapsed_seconds=time.perf_counter() - started,
+                evidence="roots were structurally congruent on insertion",
+            )
+
+        outcome = saturate(
+            egraph,
+            rules,
+            RewriteContext(
+                mode=rewrite_mode,
+                assumptions=assumption_environment_for(domain_mode, variable_names),
+            ),
+            SaturationLimits(resources=resources, max_eclasses=100_000),
+        )
+        merged = egraph.find(target_root) == egraph.find(candidate_root)
+        if merged:
+            result = EquivalenceOutcome.VERIFIED
+        elif outcome.report.status is ExtractionStatus.TIMEOUT:
+            result = EquivalenceOutcome.TIMEOUT
+        else:
+            result = EquivalenceOutcome.UNKNOWN
+        return EquivalenceResult(
+            outcome=result,
+            verifier_id=self.verifier_id,
+            verifier_version=self.verifier_version,
+            elapsed_seconds=time.perf_counter() - started,
+            evidence=(
+                f"status={outcome.report.status.value}; "
+                f"iterations={outcome.report.iterations}; "
+                f"rewrites_applied={outcome.report.rewrites_applied}; "
+                f"roots_merged={str(merged).lower()}"
+            ),
+        )
+
+
 def verify_exact_recovery(
     verifier: EquivalenceVerifier,
     *,
@@ -1188,7 +1323,16 @@ def verify_exact_recovery(
             elapsed_seconds=0.0,
             evidence="identical canonical target representation",
         )
-    if not capability.supports(operators=used_operators, domain_mode=domain_mode):
+    target_check = check_grammar(target_srepr)
+    candidate_check = check_grammar(candidate_srepr)
+    combined_operators = (
+        set(used_operators) | set(target_check.used_operators) | set(candidate_check.used_operators)
+    )
+    if (
+        not target_check.in_grammar
+        or not candidate_check.in_grammar
+        or not capability.supports(operators=combined_operators, domain_mode=domain_mode)
+    ):
         return EquivalenceResult(
             outcome=EquivalenceOutcome.UNSUPPORTED,
             verifier_id=capability.verifier_id,
@@ -1808,11 +1952,9 @@ class SyntheticConfig(BaseModel):
     target_count: int = Field(default=SYNTHETIC_TASK_TARGET, ge=1)
     development_count: int = Field(default=32, ge=0)
     family_quotas: tuple[tuple[str, int], ...] = (
-        ("algebraic_core", 72),
-        ("powers_division_rationals", 56),
-        ("exp_log", 48),
-        ("trig_hyperbolic", 48),
-        ("mixed_elementary", 32),
+        ("algebraic_core", 96),
+        ("powers_division_rationals", 80),
+        ("exp_log", 80),
     )
     variable_counts: tuple[int, ...] = (1, 2, 3)
     depths: tuple[int, ...] = (2, 3, 4)
@@ -1833,6 +1975,16 @@ class SyntheticConfig(BaseModel):
                 f"family quotas sum to {total}, which differs from target_count "
                 f"{self.target_count}; quotas are predeclared and must be explicit"
             )
+        unsupported = sorted(
+            family
+            for family, _ in self.family_quotas
+            if family not in {"algebraic_core", "powers_division_rationals", "exp_log"}
+        )
+        if unsupported:
+            raise ValueError(
+                "synthetic family quotas must stay inside the frozen verifier fragment; "
+                f"unsupported families: {unsupported}"
+            )
         return self
 
 
@@ -1846,7 +1998,8 @@ class BenchmarkConfig(BaseModel):
     master_seed: int = FROZEN_SEEDS[0]
     fit_seed: int = FROZEN_SEEDS[1]
     evaluation_seed: int = FROZEN_SEEDS[2]
-    allow_production_freeze: bool = False
+    verifier_scope: str = GOAL9_VERIFIER_SCOPE
+    allow_production_freeze: bool = True
     synthetic: SyntheticConfig = SyntheticConfig()
     feynman: FeynmanConfig = FeynmanConfig()
 
@@ -1855,6 +2008,8 @@ class BenchmarkConfig(BaseModel):
         seeds = (self.master_seed, self.fit_seed, self.evaluation_seed)
         if len(set(seeds)) != len(seeds):
             raise ValueError("master, fit, and evaluation seeds must all differ")
+        if self.verifier_scope != GOAL9_VERIFIER_SCOPE:
+            raise ValueError(f"verifier_scope must be the frozen value {GOAL9_VERIFIER_SCOPE!r}")
         return self
 
 
@@ -2109,16 +2264,12 @@ _FAMILY_BINARY_OPERATORS: Mapping[str, tuple[str, ...]] = {
     "algebraic_core": ("add", "subtract", "multiply"),
     "powers_division_rationals": ("add", "subtract", "multiply", "divide", "power"),
     "exp_log": ("add", "multiply", "divide"),
-    "trig_hyperbolic": ("add", "subtract", "multiply"),
-    "mixed_elementary": ("add", "subtract", "multiply", "divide", "power"),
 }
 
 _FAMILY_UNARY_OPERATORS: Mapping[str, tuple[str, ...]] = {
     "algebraic_core": ("negate",),
     "powers_division_rationals": ("negate",),
     "exp_log": ("exp", "log", "negate"),
-    "trig_hyperbolic": ("sin", "cos", "tan", "sinh", "cosh", "tanh"),
-    "mixed_elementary": ("negate", "exp", "log", "sin", "cos", "tanh"),
 }
 
 #: Closed real intervals paired with each enabled domain mode.
@@ -2384,10 +2535,12 @@ def build_manifest(
     if not config.allow_production_freeze:
         status = ManifestStatus.BLOCKED_PENDING_VERIFIER_DECISION
         detail = (
-            "allow_production_freeze is false: the coordinator must either assign an owned "
-            "full-v1 equivalence verifier adapter or explicitly restrict the benchmark "
-            "grammar to the rigorously supported fragment before this manifest is frozen"
+            "allow_production_freeze is false: the explicit manual interlock prevents this "
+            "manifest from being frozen"
         )
+    elif any(not built.task.verifier_supported_fragment for built in tasks):
+        status = ManifestStatus.BLOCKED_PENDING_VERIFIER_DECISION
+        detail = "one or more tasks lies outside the frozen e-graph verifier fragment"
     elif shortfall:
         status = ManifestStatus.SHORTFALL
         detail = f"{shortfall} task slots across {len(quotas)} strata were not filled"

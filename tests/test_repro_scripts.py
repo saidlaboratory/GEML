@@ -7,6 +7,7 @@ import io
 import json
 import subprocess
 import tarfile
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -612,9 +613,8 @@ def test_reproducibility_guide_keeps_smoke_production_and_lock_status_honest() -
         assert f"smoke --goal {goal} --execute" in guide
     for token in (
         "requirements-lock.txt",
-        "uv.lock",
-        "intentionally creates neither",
-        "merge-pending",
+        "8ffe1353c4179b059e196e3e671b62d7f8e9e71d137f872109bdb907c3c72d7e",
+        "All six Phase-A workstreams are integrated",
         "1,740-second hard cap",
         "2xH100",
         "4xH100",
@@ -657,19 +657,19 @@ def test_paper_plan_is_fixed_scale_traceable_and_venue_bounded() -> None:
     ):
         assert token in outline
     assert "external, verifier-normalized reference only" in normalized_outline
-    assert "does not own an actual manuscript path" in normalized_outline
+    assert "docs/paper/manuscript.tex" in normalized_outline
     assert "No placeholder value may be rendered as a result" in figures
     assert "There is intentionally no corpus-size scaling plot" in figures
     assert "final-report locator and artifact-manifest ID/checksum" in figures
 
 
-def test_release_checklist_retains_legal_and_manuscript_blockers() -> None:
+def test_release_checklist_records_resolved_legal_and_manuscript_decisions() -> None:
     checklist = Path("docs/RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
     normalized = " ".join(checklist.split()).lower()
 
     for token in (
-        "year(s) + legal holder",
-        "must not be inferred",
+        "Copyright (c) 2026 GEML contributors",
+        "docs/paper/manuscript.tex",
         "single approved lock",
         "All 12 smoke commands",
         "No corpus-size scaling curve",
@@ -679,4 +679,15 @@ def test_release_checklist_retains_legal_and_manuscript_blockers() -> None:
         "2026-07-31 AoE",
     ):
         assert token.lower() in normalized
-    assert "does not own one" in normalized
+    assert "pre_phase_b_decisions.md" in normalized
+
+
+def test_mit_license_metadata_and_readme_are_consistent() -> None:
+    license_text = Path("LICENSE").read_text(encoding="utf-8")
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert license_text.startswith("MIT License\n")
+    assert "Copyright (c) 2026 GEML contributors" in license_text
+    assert project["license"] == "MIT"
+    assert "[MIT License](LICENSE)" in readme

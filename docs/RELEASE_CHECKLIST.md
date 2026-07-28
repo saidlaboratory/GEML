@@ -4,20 +4,21 @@ Status: Phase-A checklist. Unchecked items are blockers, not implied completions
 
 ## Hard blockers
 
-- [ ] Issue 6-0/#54 has selected exactly one lock format and the integrated release contains
-      that one lock with a recorded SHA-256.
+- [x] Issue 6-0/#54 selected `requirements-lock.txt` as the single core/development lock;
+      preproduction SHA-256:
+      `8ffe1353c4179b059e196e3e671b62d7f8e9e71d137f872109bdb907c3c72d7e`.
 - [ ] Issue 12-0 final report is complete, checksum-authenticated, and refuses unsupported
       claims.
 - [ ] Issue 12-1 fresh-clone verification has run after all workstreams merge.
-- [ ] Issue #86 has received the exact team-approved MIT copyright
-      `year(s) + legal holder` string.
+- [x] Issue #86 uses the approved attribution
+      `Copyright (c) 2026 GEML contributors`.
 - [ ] The canonical MIT text, package metadata, README license link, third-party notice audit,
       and public license detection agree.
-- [ ] An integration issue explicitly owns the actual manuscript-source path. Issue 12-2 does
-      not own one, so no manuscript source may be created under this issue.
+- [x] Integration owns the future manuscript source at `docs/paper/manuscript.tex`; it must
+      not be created until authenticated result artifacts exist.
 
-MIT is the approved license, but the holder/year must not be inferred from Git history,
-account names, or team names.
+The approved license decision and remaining publication checks are recorded in
+`docs/specs/PRE_PHASE_B_DECISIONS.md`.
 
 ## Evidence and scientific contract
 

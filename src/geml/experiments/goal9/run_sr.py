@@ -25,13 +25,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from geml.data.sr.benchmark import (
     FROZEN_SEEDS,
     BenchmarkManifest,
+    EGraphFragmentEquivalenceVerifier,
     EquivalenceVerifier,
     ManifestStatus,
     ObservationRole,
     ObservationSet,
     SRSplitRole,
     SRTask,
-    UnavailableEquivalenceVerifier,
     load_manifest,
     load_observation_sets,
     load_tasks,
@@ -211,7 +211,7 @@ def run_sweep(
     budgets = {method.value: config.budget for method, _ in CONTROLLED_ARMS}
     digest = assert_matched_budgets(budgets)
     active_scorers = scorers or build_scorers()
-    active_verifier = verifier or UnavailableEquivalenceVerifier()
+    active_verifier = verifier or EGraphFragmentEquivalenceVerifier()
     index = _observation_index(observation_sets)
 
     results: list[SRMethodResult] = []

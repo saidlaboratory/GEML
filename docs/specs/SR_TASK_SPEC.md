@@ -1,14 +1,14 @@
 # GEML symbolic-regression task specification (Goal 9)
 
-**Owner:** issue [9-0] (#71) · **Status:** Phase-A specification, not frozen for production
+**Owner:** issue [9-0] (#71) · **Status:** Phase-A implementation complete; production pending
 **Schema versions:** `geml-sr-task-v1`, `geml-sr-observation-set-v1`,
 `geml-sr-benchmark-manifest-v1`, `geml-sr-exclusion-v1`
 **Implementation:** `src/geml/data/sr/benchmark.py` · **Configuration:**
 `configs/goal9_benchmark.yaml` · **Tests:** `tests/data/test_sr_benchmark.py`
 
 This document specifies the bounded symbolic-regression benchmark used by Goal 9. It is a
-v1 study: the task population, the search space, and the reported metrics are all defined
-over the immutable v1 source grammar. Nothing here regenerates or modifies Goals 1–5.
+v1 study restricted, before results, to the Goal 4 e-graph-verifiable operator fragment.
+Nothing here regenerates or modifies Goals 1–5.
 
 ---
 
@@ -30,12 +30,12 @@ expression**. Each task record (`SRTask`) carries:
 | `target_display` | non-authoritative presentation form |
 | `target_expression_id` | existing `geml-expression-v1` identity |
 | `target_structural_signature` | `geml.ast.statistics.structural_signature` of the source AST |
-| `allowed_operators` | the enabled v1 vocabulary |
+| `allowed_operators` | the frozen Goal 4 e-graph-verifiable subset of v1 |
 | `used_operators` | operators actually present in the target |
 | `complexity` | exact structural complexity measure (section 5) |
 | `fit_policy`, `evaluation_policy` | the two frozen sampling policies |
 | `provenance` | verbatim source record for curated tasks; `null` for synthetic tasks |
-| `verifier_supported_fragment` | whether `used_operators` lies inside the Goal 4 e-graph operator enum |
+| `verifier_supported_fragment` | always true for an accepted Goal 9 task |
 | `verifier_capability_note` | why that flag has the value it has |
 
 The **exact target is not model input**. Search, baselines, and the external LLM panel are
@@ -52,6 +52,17 @@ lives on the task record, which is consumed by scoring code only.
 add, cos, cosh, divide, exp, integer, log, multiply, negate, one, power,
 rational, sin, sinh, subtract, symbol, tan, tanh
 ```
+
+That remains the repository-wide v1 source vocabulary. Goal 9 freezes the smaller
+`EGRAPH_FRAGMENT_OPERATORS` search and target vocabulary:
+
+```
+add, divide, exp, integer, log, multiply, negate, one, power, rational,
+subtract, symbol
+```
+
+The distinction is deliberate: Goal 9 does not disable trig elsewhere in GEML. It only
+excludes expressions that its exact-recovery verifier cannot rigorously certify.
 
 Grammar-v2 candidates are therefore **excluded by construction**, not by a hand-maintained
 deny-list: the registry marks `pi` and `e` as `pending_verification` with
@@ -172,21 +183,20 @@ configuration refuses to validate otherwise:
 
 | Family | Quota |
 |---|---:|
-| `algebraic_core` | 72 |
-| `powers_division_rationals` | 56 |
-| `exp_log` | 48 |
-| `trig_hyperbolic` | 48 |
-| `mixed_elementary` | 32 |
+| `algebraic_core` | 96 |
+| `powers_division_rationals` | 80 |
+| `exp_log` | 80 |
 | **Total** | **256** |
 
 Secondary strata: `variable_counts = [1, 2, 3]`, `depths = [2, 3, 4]`,
 `domain_modes = [positive_real, safe_real, nonzero_real]`.
 
-Per-family operator pools stay inside the enabled vocabulary. Domain-unsafe constructions
+Per-family operator pools stay inside the frozen verifier fragment. Domain-unsafe constructions
 are restricted at generation time rather than repaired afterwards: `log` and rational
 exponents are only generated on `positive_real`, and on non-positive domains division is
-limited to a non-zero integer denominator. Trigonometric poles (`tan`) are permitted and
-handled by the rejection rules.
+limited to a non-zero integer denominator. Trigonometric and hyperbolic families are
+explicitly outside this benchmark. Their former quota was replaced before production
+results; source formulas remain visible as verifier-gap exclusions.
 
 **Acceptance rules.** A candidate is accepted only if it is a non-constant expression whose
 free symbols are exactly the declared variables, whose `srepr` passes the grammar gate,
@@ -314,9 +324,9 @@ exception becomes a typed `error` row.
 equivalence outcome of any kind. **Numerical closeness is never exact recovery**
 (`test_numeric_agreement_alone_is_not_exact_recovery`).
 
-### 7.3 The open verification-scope blocker
+### 7.3 Frozen verification scope
 
-There is currently **no owned full-v1 arbitrary equivalence service** in this repository:
+There is no owned full-v1 arbitrary equivalence service in this repository:
 
 * `geml.verification.eml.symbolic`, `.numeric`, and `.audit` audit the *pinned compiler's*
   constructions. Their public entry points take an `operator: str` from a small closed set
@@ -326,25 +336,21 @@ There is currently **no owned full-v1 arbitrary equivalence service** in this re
   hyperbolic source operator is absent. Its `validate_candidate` confirms membership already
   established by e-graph construction; it is a bounded search, not a decision procedure.
 
-Consequently:
+The coordinator selected the rigorously supported fragment before production results:
 
-* `UnavailableEquivalenceVerifier` is the **default** and declares zero capability, so no
-  exact-recovery number can be produced by accident.
-* `EGRAPH_FRAGMENT_OPERATORS` and `SRTask.verifier_supported_fragment` record, per task,
-  whether the operators even lie inside that fragment. This is capability metadata, never a
-  claim of coverage.
-* `configs/goal9_benchmark.yaml` sets `allow_production_freeze: false`, and
-  `build_manifest()` therefore stamps every manifest
-  `blocked_pending_verifier_decision`.
+* `verifier_scope: egraph_fragment_v1` is frozen in
+  `configs/goal9_benchmark.yaml`;
+* accepted tasks and generated candidates are limited to
+  `EGRAPH_FRAGMENT_OPERATORS`;
+* trig/hyperbolic Feynman formulas remain retained `verifier_gap` exclusions;
+* `EGraphFragmentEquivalenceVerifier` inserts target and candidate into one bounded Goal 4
+  e-graph and runs only approved sound/guarded rules under declared assumptions;
+* exact recovery is `verified` only if the root e-classes merge;
+* timeout is retained, and any other proof shortfall is `unknown`;
+* the verifier never emits `not_equivalent`.
 
-**Required coordinator decision, before any benchmark freeze or exact-recovery claim** —
-exactly one of:
-
-1. assign an owned full-v1 equivalence verifier adapter (contract, owner, and write path); or
-2. explicitly restrict the benchmark grammar to the rigorously supported fragment.
-
-Choosing option 2 *after* seeing method results would be a post-hoc restriction and is not
-permitted.
+`UnavailableEquivalenceVerifier` remains available for explicit negative-path tests and
+callers that intentionally disable verification, but it is not the production default.
 
 ---
 
@@ -372,13 +378,14 @@ bytes) and `config_path`, source name and version, generator version, `created_a
 
 ## 9. Phase-A test coverage
 
-`tests/data/test_sr_benchmark.py` (35 tests, tiny hand-written fixtures, no `outputs/`
+`tests/data/test_sr_benchmark.py` (tiny hand-written fixtures, no `outputs/`
 dependency) covers: one- and two-variable tasks; exact rational observations; domain
 rejection; singularity rejection; duplicate structural targets; unsupported operators,
 constants, and inexact literals; deterministic hashing and two-run agreement; the
 development/benchmark split and leakage check; the exact-versus-numeric distinction; the
-verifier capability short-circuit, the `unknown`-not-`not_equivalent` rule, the
-counterexample requirement, and typed verifier errors; quota shortfall; the manifest freeze
+e-graph positive proof, candidate-side capability short-circuit, the
+`unknown`-not-`not_equivalent` rule, the
+counterexample requirement, and typed verifier errors; quota shortfall; the explicit freeze
 interlock; write/reload round-trips; and the complete Feynman inspection ledger with
 provenance preserved.
 
@@ -386,5 +393,5 @@ provenance preserved.
 
 ## 10. Deliberately out of scope
 
-Corpus v2, grammar-v2 operators and constants, noisy large-scale SR, model training,
-production benchmark freezing, and any edit to Goals 1–5.
+Corpus v2, grammar-v2 operators and constants, noisy large-scale SR, model training, and
+production benchmark execution.

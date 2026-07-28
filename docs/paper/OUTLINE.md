@@ -18,9 +18,9 @@ Recheck the official page, linked submission system, current ACL/EMNLP template,
 rules, reference/appendix treatment, anonymity policy, and archival choice immediately before
 submission. This cached checklist is not authority for a future submission.
 
-Issue 12-2 owns this outline, the figure inventory, and the release checklist, but it does not
-own an actual manuscript path. The coordinator must extend an integration issue with an
-explicit manuscript-source path before creating `paper.tex`, `paper.md`, or equivalent.
+Issue 12-2 owns this outline and figure inventory. Integration now owns the future manuscript
+at `docs/paper/manuscript.tex`; it must not be created until authenticated result artifacts
+exist.
 
 ## One research question
 
@@ -300,10 +300,9 @@ denominators, meaningful failures/nulls, compute fairness, and limitations.
 
 1. Freeze the Goal 11 workshop manifest and authenticate all required artifacts.
 2. Generate the final report and claim/checksum index.
-3. Resolve #86's exact MIT holder/year, release metadata, and third-party notices.
-4. Obtain explicit ownership for the manuscript source.
-5. Populate methods and data sections from frozen contracts.
-6. Populate results only from C1-C12 authenticated evidence.
-7. Run independent technical, mathematical, statistical, claim-discipline, and anonymity
+3. Confirm third-party notices and public MIT license detection.
+4. Create the authorized manuscript source and populate methods/data from frozen contracts.
+5. Populate results only from C1-C12 authenticated evidence.
+6. Run independent technical, mathematical, statistical, claim-discipline, and anonymity
    reviews.
-8. Recheck venue requirements and freeze the submission/release commit.
+7. Recheck venue requirements and freeze the submission/release commit.

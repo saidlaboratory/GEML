@@ -85,24 +85,23 @@ and does not duplicate their persisted schemas:
 - issue 7-3 accepts an injected cell executor and authoritative run-envelope
   adapter.
 
-The fixture run-envelope adapter is deliberately fixture-only and must be
-removed once the Workstream 2 provider is merged.
+The shared Workstream 2 envelope implementation is now merged. Fixture adapters remain
+fixture-only and may not be used as production evidence.
 
 ## Production readiness
 
-The checked-in production configuration is intentionally non-runnable. It
-retains three honest available channels and the blocked motif-AST fair-control
-channel rather than substituting the macro-motif artifact. Production requires:
+The checked-in production configuration remains non-runnable until Phase B identities are
+materialized. The four-channel contract is resolved and includes the honest macro-motif
+label plus the train-only motif-AST fair control. Production still requires:
 
-1. an explicit issue #56 decision and a fourth aligned channel;
+1. four aligned materialized channel artifacts;
 2. an immutable issue 7-0 step manifest and exact row denominator;
 3. rule-registry and verifier digests;
 4. shared harness, GNN, transformer, and implementation digests;
 5. the complete materialized training-configuration digest;
 6. an authenticated training-family inventory digest;
 7. an authenticated accepted-step population digest;
-8. exact cell and analysis reproduction-command templates;
-9. an authoritative Workstream 2 run-envelope adapter.
+8. exact cell and analysis reproduction-command templates.
 
 The exact production entry point is deliberately null until that adapter is
 merged; the checked-in config does not advertise a command that cannot yet run.

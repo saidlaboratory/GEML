@@ -13,8 +13,8 @@ channels:
     state: available
     source: immutable Goal 5 frequent motif graph over official-v4 macro representation; not strict EML
   - name: motif_ast_fair_control
-    state: blocked
-    source: requires an explicit issue-scope decision to mine a train-only motif-AST control
+    state: available
+    source: train-only exact motif compression over AST-DAG with the frequent macro-motif dictionary count and MDL-bit budget
 alignment:
   require_identical_pair_ids_labels_and_splits: true
   retain_failure_ledger: true
@@ -30,6 +30,14 @@ materialization:
     records: canonical_jsonl_sorted_by_pair_id_and_endpoint_role
     sidecar: immutable_completion_manifest
     resume: exact_bytes_only
+motif_ast_control:
+  discovery_split: train
+  source_family: ast
+  reference_vocabulary: immutable Goal 5 frequent macro-motif vocabulary
+  equal_vocabulary_entry_limit: true
+  equal_dictionary_mdl_bit_budget: true
+  ranking: canonical_train_frequency
+  require_exact_reconstruction: true
 derived_endpoints:
   required_provenance:
     - expression_id

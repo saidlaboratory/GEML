@@ -45,10 +45,9 @@ reason to rerun, reseed, or reduce the benchmark.
 The procedure is evaluated in this order and stops at the first match.
 
 1. **`insufficient_evidence` if exact-verification coverage is unknown.** Coverage is known
-   only when every benchmark manifest has status `complete`. While the Goal 9
-   verification-scope decision is open, every manifest is stamped
-   `blocked_pending_verifier_decision`, so the gate cannot pass. This is a hard interlock:
-   there is no code path from an unknown-coverage benchmark to `pass`.
+   only when every benchmark manifest has status `complete`. The frozen
+   `egraph_fragment_v1` scope can produce complete manifests; a missing, shortfall, manually
+   interlocked, or out-of-scope manifest cannot pass.
 2. **`insufficient_evidence` if the report is not complete.** Any blocking validation issue —
    a missing manifest, missing rows, a schema-version mismatch, or unmatched budgets between
    the two representation arms — forces this state. A fixture-only report is always
@@ -96,9 +95,8 @@ evidence.
 
 | Blocker | Effect on the gate |
 |---|---|
-| Goal 9 verification-scope decision is open | manifests are not frozen → coverage unknown → cannot pass |
+| Production benchmark manifest not generated | coverage rows do not exist → cannot pass |
 | No production search or baseline rows | report is incomplete → `insufficient_evidence` |
-| Workstream 2 backbone unmerged | transformer-SR reports `dependency_unavailable` |
 | PySR install decision not made | reference side may be `gp_fallback`, labelled as such |
 
 ---
