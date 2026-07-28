@@ -1,0 +1,6 @@
+schema_version: geml-goal8-proof-benchmark-v1
+phase: phase_a_fixture_only
+required_problem_count: 256
+selection: deterministic_sorted_pair_id_with_predeclared_family_tier_quotas
+leakage_policy: exclude_every_training_or_validation_group_closure
+replay_policy: read_only_goal4_verifier_replay_required

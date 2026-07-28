@@ -1,0 +1,20 @@
+schema_version: geml-training-config-v1
+epochs: 30
+optimizer: adamw
+learning_rate: 0.0003
+weight_decay: 0.01
+precision: bf16
+deterministic_algorithms_requested: true
+dynamic_batch:
+  node_budget: 12000
+  edge_budget: 48000
+  gradient_accumulation_steps: 1
+early_stopping:
+  patience: 5
+  minimize_metric: true
+  minimum_delta: 0.0
+runtime:
+  default_execution: independent_seed_or_experiment_cells
+  ddp_requires_measured_throughput_pilot: true
+  atomic_checkpoint_and_result_writes: true
+  record_host_gpu_memory_and_precision: true

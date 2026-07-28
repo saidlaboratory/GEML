@@ -1,0 +1,46 @@
+schema_version: geml-goal6-pairs-config-v1
+pair_schema_version: geml-pair-record-v1
+output_root: outputs/final/goal6/pairs
+production_seed: 20260726
+seed_derivation:
+  schema_version: geml-derived-seed-v1
+  component: goal6.pairs.trajectory
+  output: first_8_sha256_bytes_unsigned_big_endian
+base_counts:
+  train: 50000
+  validation: 5000
+  test_iid: 5000
+  test_ood: 5000
+positive_generation:
+  source: concrete_replayable_rule_engine_trajectories
+  goal4_eclass_provenance_is_trace: false
+  policy:
+    schema_version: geml-goal6-trajectory-policy-v1
+    min_trace_length: 1
+    max_trace_length: 8
+    max_attempts_per_source: 4
+    forbid_immediate_inverse: true
+    action_selection: derived_seed_uniform_legal_action
+negative_generation:
+  absolute_size_tolerance: 2
+  numeric_disagreement_is_formal_certificate: false
+split_policy:
+  group_and_relative_cross_partition: prohibited
+  evaluation_views_change_base_counts: false
+  ood_views:
+    ood_stress:
+      source_split: test_ood
+      strict_depth_claim: prohibited
+    strict_depth_ood:
+      requires_disjoint_frozen_depth_support: true
+    family_ood:
+      requires_evaluation_families_absent_from_training: true
+runtime:
+  resumable: true
+  atomic_finalization: true
+  retain_rejections_and_failures: true
+  shard_contract:
+    schema_version: geml-goal6-pair-shard-manifest-v1
+    records: canonical_jsonl_sorted_by_pair_id
+    sidecar: immutable_completion_manifest
+    resume: exact_bytes_only

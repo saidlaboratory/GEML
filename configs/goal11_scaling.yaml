@@ -1,0 +1,3 @@
+schema_version: geml-goal11-fixed-scale-efficiency-v1
+phase: fixed_scale_only
+forbid_scaling_claims: true

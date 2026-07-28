@@ -1,0 +1,8 @@
+schema_version: geml-goal8-value-v1
+phase: phase_a_contract_only
+target: remaining_verified_rewrite_step_distance
+loss: huber_regression_on_nonnegative_distance
+exclude_frozen_benchmark_group_closures: true
+seeds: [20260726, 20260727, 20260728]
+epochs: 30
+selection: validation_only_early_stopping

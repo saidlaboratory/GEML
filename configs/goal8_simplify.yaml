@@ -1,0 +1,5 @@
+schema_version: geml-goal8-simplify-v1
+phase: phase_a_manifest_only
+sample_count: 1000
+methods: [sympy_simplify, geml_uniform, geml_guided]
+retain_no_change_timeout_invalid_and_failed_rows: true

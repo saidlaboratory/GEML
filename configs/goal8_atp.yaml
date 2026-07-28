@@ -1,0 +1,8 @@
+schema_version: geml-goal8-atp-v1
+phase: phase_a_planning_only
+problem_count: 256
+beam_width: 16
+expansion_budget: 10000
+proof_depth_budget: 32
+wall_seconds_budget: 60.0
+methods: [uniform_legal, gnn_policy, gnn_policy_value, prefix_transformer]

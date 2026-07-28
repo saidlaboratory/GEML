@@ -1,0 +1,9 @@
+schema_version: geml-goal7-grid-v1
+phase: phase_a_planning_only
+step_manifest: outputs/final/goal7/steps/manifest.json
+step_manifest_sha256: sha256:pending-authenticated-step-manifest
+output_directory: outputs/final/goal7/grid
+epochs: 30
+top_k: 5
+arms: [ast_gine, pure_eml_gine, frequent_macro_motif_gine, motif_ast_control_gine, prefix_transformer, uniform_legal_action]
+seeds: [20260726, 20260727, 20260728]

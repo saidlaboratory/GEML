@@ -1,0 +1,5 @@
+schema_version: geml-goal11-llm-reference-v1
+phase: mocked_preflight_only_no_paid_calls
+tracks: {proof_count: 100, sr_count: 100}
+providers: [openai, anthropic, google, moonshot]
+production_requires: [verified_exact_provider_model_id, credentials, explicit_user_spend_confirmation]
