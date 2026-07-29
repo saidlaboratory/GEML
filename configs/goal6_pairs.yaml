@@ -1,3 +1,13 @@
+# Production build command (issue 6-1):
+#
+#   GEML_ARTIFACTS_ROOT=/absolute/path/to/delivered/artifacts \
+#   PYTHONPATH=src python3 -m geml.data.pairs --config configs/goal6_pairs.yaml
+#
+# The driver resolves the frozen 1-8 corpus manifest through
+# GEML_ARTIFACTS_ROOT and fails closed - with a typed error naming what is
+# missing - until the artifact root, the corpus manifest, and the concrete
+# rule-engine/verifier providers are all present. It never substitutes
+# fixture or synthetic data for a missing production input.
 schema_version: geml-goal6-pairs-config-v1
 pair_schema_version: geml-pair-record-v1
 output_root: outputs/final/goal6/pairs
