@@ -613,7 +613,6 @@ def test_reproducibility_guide_keeps_smoke_production_and_lock_status_honest() -
         assert f"smoke --goal {goal} --execute" in guide
     for token in (
         "requirements-lock.txt",
-        "8ffe1353c4179b059e196e3e671b62d7f8e9e71d137f872109bdb907c3c72d7e",
         "All six Phase-A workstreams are integrated",
         "1,740-second hard cap",
         "2xH100",
@@ -632,6 +631,17 @@ def test_reproducibility_guide_keeps_smoke_production_and_lock_status_honest() -
         "Instance teardown checklist",
     ):
         assert token in guide
+
+
+def test_requirements_lock_digest_matches_every_documented_value() -> None:
+    measured = _sha256(Path("requirements-lock.txt").read_bytes())
+
+    for doc in (
+        "docs/REPRODUCIBILITY.md",
+        "docs/RELEASE_CHECKLIST.md",
+        "docs/specs/PRE_PHASE_B_DECISIONS.md",
+    ):
+        assert measured in Path(doc).read_text(encoding="utf-8")
 
 
 def test_paper_plan_is_fixed_scale_traceable_and_venue_bounded() -> None:

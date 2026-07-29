@@ -17,7 +17,9 @@ GPU, API key, production `outputs/`, or the 35 GB artifact archive.
 
 - Integration selected `requirements-lock.txt` as the single core/development lock. Its
   preproduction SHA-256 is
-  `8ffe1353c4179b059e196e3e671b62d7f8e9e71d137f872109bdb907c3c72d7e`.
+  `1ec81a07d64f969a58abb7ce205107e8e23b360258e330d134be1ccedae87c51`.
+  The originally frozen value (`8ffe1353…`) never matched the committed lock file; it was
+  re-frozen to the measured digest of the committed content on 2026-07-29 by lead decision.
   Optional CUDA-dependent ML versions remain pinned in `configs/ml_env.yaml`.
 - All six Phase-A workstreams are integrated. Their smokes establish wiring and contracts,
   not production results.

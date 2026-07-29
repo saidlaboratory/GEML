@@ -15,7 +15,9 @@ trained while making them.
   compatibility copies were not treated as independent scientific evidence.
 - `requirements-lock.txt` is the one approved core/development lock format. Its frozen
   preproduction SHA-256 is
-  `8ffe1353c4179b059e196e3e671b62d7f8e9e71d137f872109bdb907c3c72d7e`.
+  `1ec81a07d64f969a58abb7ce205107e8e23b360258e330d134be1ccedae87c51`.
+  The originally frozen value (`8ffe1353…`) never matched the committed lock file; it was
+  re-frozen to the measured digest of the committed content on 2026-07-29 by lead decision.
   CUDA-dependent optional ML versions remain separately pinned in `configs/ml_env.yaml`.
 
 ## Decision 1: four representation channels
