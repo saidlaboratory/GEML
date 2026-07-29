@@ -150,7 +150,8 @@ def test_each_arm_family_trains_to_a_complete_row(arm: ArmSpec, tmp_path: Path) 
     assert row.failure_reason is None
     assert set(row.metrics_by_view) == {"train", "validation", "test_iid"}
     for metrics in row.metrics_by_view.values():
-        assert set(metrics) == {"validation_loss", "accuracy"}
+        assert set(metrics) == {"loss", "validation_loss", "accuracy"}
+        assert metrics["loss"] == metrics["validation_loss"]
         assert 0.0 <= metrics["accuracy"] <= 1.0
     assert row.denominators_by_view["test_iid"] == {
         "attempted": 2,
@@ -202,6 +203,18 @@ def test_a_different_seed_actually_changes_the_run(tmp_path: Path) -> None:
     assert first.status is CellStatus.COMPLETE, first.failure_reason
     assert second.status is CellStatus.COMPLETE, second.failure_reason
     assert first.metrics_by_view != second.metrics_by_view
+
+
+def test_a_custom_early_stopping_criterion_trains(tmp_path: Path) -> None:
+    """A criterion beyond the two built-in names must still be satisfiable."""
+
+    payload = cell_config(tmp_path).model_dump()
+    payload["early_stopping"] = {**payload["early_stopping"], "criterion": "bce", "mode": "min"}
+    config = HarnessConfig.model_validate(payload)
+    row = make_runner(commit="a" * 40).run_cell(TRIVIAL_ARM, PRODUCTION_SEEDS[0], config)
+    assert row.status is CellStatus.COMPLETE, row.failure_reason
+    for metrics in row.metrics_by_view.values():
+        assert metrics["bce"] == metrics["loss"] == metrics["validation_loss"]
 
 
 def test_missing_provider_is_an_explicit_failed_row(tmp_path: Path) -> None:

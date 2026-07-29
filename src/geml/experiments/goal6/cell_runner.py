@@ -217,6 +217,7 @@ class _PairTaskBase:
             weight_decay=policy.weight_decay,
         )
         self.loss = nn.BCEWithLogitsLoss()
+        self.criterion = config.early_stopping.criterion
 
     def example_count(self, split: str) -> int:
         return len(self.dataset.get(split, ()))
@@ -262,7 +263,18 @@ class _PairTaskBase:
                 correct += int(((logits > 0.0) == (labels > 0.5)).sum())
                 total += labels.numel()
         self.model.train()
-        return {"validation_loss": total_loss / total, "accuracy": correct / total}
+        mean_loss = total_loss / total
+        metrics = {
+            "loss": mean_loss,
+            # 'validation_loss' stays for existing configs and recorded rows, even though this
+            # method also scores train and test views.
+            "validation_loss": mean_loss,
+            "accuracy": correct / total,
+        }
+        # The BCE loss is the only loss this task computes, so any configured early-stopping
+        # criterion beyond the named metrics reads it under the config's own name.
+        metrics.setdefault(self.criterion, mean_loss)
+        return metrics
 
     def state_dict(self) -> dict[str, object]:
         buffer = io.BytesIO()
