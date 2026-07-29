@@ -6,7 +6,7 @@ Status: Phase-A checklist. Unchecked items are blockers, not implied completions
 
 - [x] Issue 6-0/#54 selected `requirements-lock.txt` as the single core/development lock;
       preproduction SHA-256:
-      `8ffe1353c4179b059e196e3e671b62d7f8e9e71d137f872109bdb907c3c72d7e`.
+      `1ec81a07d64f969a58abb7ce205107e8e23b360258e330d134be1ccedae87c51`.
 - [ ] Issue 12-0 final report is complete, checksum-authenticated, and refuses unsupported
       claims.
 - [ ] Issue 12-1 fresh-clone verification has run after all workstreams merge.
