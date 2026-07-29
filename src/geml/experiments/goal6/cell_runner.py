@@ -105,6 +105,33 @@ class GraphExample:
     node_is_root: tuple[int, ...] | None = None
     node_root_order: tuple[int, ...] | None = None
 
+    def require_complete(self) -> GraphExample:
+        """Refuse the neutral defaults when this example claims to come from persisted data.
+
+        In-memory fixtures may leave the optional columns unset, but anything constructed from
+        materialized shards must route through this check: a loader that forgets a value-plane or
+        root column then fails loudly instead of silently zeroing that plane for every node.
+        """
+
+        missing = [
+            name
+            for name in (
+                "node_value_category",
+                "node_value_sign",
+                "node_value_magnitude",
+                "node_value_bucket",
+                "node_is_root",
+                "node_root_order",
+            )
+            if getattr(self, name) is None
+        ]
+        if missing:
+            raise CellRunnerError(
+                f"persisted graph example left model-plane columns unset: {missing}; shard "
+                "loading must populate every column explicitly rather than defaulting to neutral"
+            )
+        return self
+
 
 @dataclass(frozen=True)
 class PairExample:
