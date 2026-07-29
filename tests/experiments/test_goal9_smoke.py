@@ -1,5 +1,7 @@
 """Tiny end-to-end smoke for the matched-budget Goal 9 guided search (issue 9-1)."""
 
+import json
+
 import pytest
 import sympy
 
@@ -35,6 +37,7 @@ from geml.learning.sr.guided_search import (
     SearchBudget,
     SemanticCandidate,
     SRMethod,
+    SRMethodResult,
     SRRepresentation,
     TerminationReason,
     assert_matched_budgets,
@@ -129,6 +132,17 @@ class _AlwaysVerifiedVerifier:
             verifier_version="1",
             elapsed_seconds=0.0,
             evidence="fixture",
+        )
+
+
+class _TrainedStubScorer(ErrorPriorityScorer):
+    """A stand-in for a trained scorer: non-fixture id, trained policy."""
+
+    def descriptor(self) -> ScorerDescriptor:
+        return ScorerDescriptor(
+            scorer_id=f"trained-stub:{self._representation.value}",
+            representation=self._representation,
+            training_data_policy="trained_excluding_benchmark_test",
         )
 
 
@@ -566,14 +580,6 @@ def test_sweep_rejects_injected_fixture_scorers_without_the_flag(tmp_path, task_
 def test_resume_rejects_preexisting_fixture_scorer_cells(tmp_path, task_bundle, budget):
     """A resumed production sweep must not silently reload cells the fixture scorer wrote."""
 
-    class _TrainedStubScorer(ErrorPriorityScorer):
-        def descriptor(self) -> ScorerDescriptor:
-            return ScorerDescriptor(
-                scorer_id=f"trained-stub:{self._representation.value}",
-                representation=self._representation,
-                training_data_policy="trained_excluding_benchmark_test",
-            )
-
     arguments = {
         "tasks": [task_bundle.task],
         "observation_sets": [
@@ -587,6 +593,50 @@ def test_resume_rejects_preexisting_fixture_scorer_cells(tmp_path, task_bundle, 
         config=GuidedSearchConfig(budget=budget, seeds=(20260726,), allow_fixture_scorers=True),
     )
     with pytest.raises(UntrainedScorerError, match="fixture scorer ids"):
+        run_sweep(
+            **arguments,
+            config=GuidedSearchConfig(budget=budget, seeds=(20260726,)),
+            scorers={
+                representation: _TrainedStubScorer(representation)
+                for _method, representation in CONTROLLED_ARMS
+            },
+        )
+
+
+def test_resume_rejects_persisted_not_trained_policy_cells(tmp_path, task_bundle, budget):
+    """The persisted training_data_policy blocks resume even when the scorer id carries no
+    fixture prefix, so an untrained scorer cannot hide behind a production-looking id."""
+
+    class _UntrainedNonFixtureScorer(ErrorPriorityScorer):
+        def descriptor(self) -> ScorerDescriptor:
+            return ScorerDescriptor(
+                scorer_id=f"untrained-stub:{self._representation.value}",
+                representation=self._representation,
+            )
+
+    arguments = {
+        "tasks": [task_bundle.task],
+        "observation_sets": [
+            task_bundle.fit_observations,
+            task_bundle.evaluation_observations,
+        ],
+        "output_root": tmp_path,
+    }
+    run_sweep(
+        **arguments,
+        config=GuidedSearchConfig(budget=budget, seeds=(20260726,), allow_fixture_scorers=True),
+        scorers={
+            representation: _UntrainedNonFixtureScorer(representation)
+            for _method, representation in CONTROLLED_ARMS
+        },
+    )
+    persisted = load_results(tmp_path)
+    assert {result.scorer_id for result in persisted} == {
+        "untrained-stub:pure_eml",
+        "untrained-stub:ast",
+    }
+    assert {result.training_data_policy for result in persisted} == {"not_trained"}
+    with pytest.raises(UntrainedScorerError, match="refuses to reload untrained-scorer"):
         run_sweep(
             **arguments,
             config=GuidedSearchConfig(budget=budget, seeds=(20260726,)),
@@ -655,3 +705,31 @@ def test_write_result_round_trips(tmp_path, task_bundle, budget):
     (reloaded,) = load_results(tmp_path)
     assert reloaded.task_id == result.task_id
     assert reloaded.telemetry.expansions == result.telemetry.expansions
+    # The scorer's declared policy is persisted on the result and every proposed row.
+    assert reloaded.training_data_policy == "not_trained"
+    assert reloaded.candidates
+    assert {row.training_data_policy for row in reloaded.candidates} == {"not_trained"}
+
+
+def test_rows_persisted_without_a_policy_still_load(tmp_path, task_bundle, budget):
+    """Rows written before training_data_policy existed keep loading, and the field
+    defaults to empty rather than a fabricated policy."""
+
+    result = run_guided_search(
+        task=task_bundle.task,
+        fit_observations=task_bundle.fit_observations,
+        evaluation_observations=None,
+        method=SRMethod.AST_GUIDED,
+        representation=SRRepresentation.AST,
+        scorer=ErrorPriorityScorer(SRRepresentation.AST),
+        budget=budget,
+        budget_digest=budget.digest(),
+        seed=31,
+    )
+    payload = json.loads(write_result(result, tmp_path).read_text(encoding="utf-8"))
+    payload.pop("training_data_policy")
+    for row in payload["candidates"]:
+        row.pop("training_data_policy")
+    stripped = SRMethodResult.model_validate(payload)
+    assert stripped.training_data_policy == ""
+    assert all(row.training_data_policy == "" for row in stripped.candidates)

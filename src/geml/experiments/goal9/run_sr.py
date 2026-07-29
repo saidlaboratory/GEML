@@ -260,9 +260,9 @@ def run_sweep(
                         target.read_text(encoding="utf-8")
                     )
                     if not config.allow_fixture_scorers:
-                        # The persisted row carries no training_data_policy, so the fixture
-                        # id prefix is the signal that the cell was never scored by a
-                        # trained model.
+                        # Rows persisted before training_data_policy existed carry only
+                        # the fixture id prefix; newer rows also persist the policy, so
+                        # both signals are checked.
                         fixture_ids = sorted(
                             {
                                 scorer_id
@@ -278,6 +278,14 @@ def run_sweep(
                                 f"resumed cell {target} carries fixture scorer ids "
                                 f"{fixture_ids}; a sweep without allow_fixture_scorers "
                                 "refuses to reload fixture-scored evidence"
+                            )
+                        if reloaded.training_data_policy == "not_trained" or any(
+                            row.training_data_policy == "not_trained" for row in reloaded.candidates
+                        ):
+                            raise UntrainedScorerError(
+                                f"resumed cell {target} persists training_data_policy="
+                                "'not_trained'; a sweep without allow_fixture_scorers "
+                                "refuses to reload untrained-scorer evidence"
                             )
                     counters["resumed"] += 1
                     results.append(reloaded)

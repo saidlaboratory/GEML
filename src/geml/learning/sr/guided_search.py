@@ -218,6 +218,9 @@ class SRCandidate(BaseModel):
     status: CandidateStatus
     detail: str = ""
     proposal_scorer_id: str = ""
+    #: The proposing scorer's declared training_data_policy. Empty on rows persisted
+    #: before the field existed and on baseline rows that carry no guidance model.
+    training_data_policy: str = ""
     proposal_score: float | None = None
     proposal_step: int = Field(default=0, ge=0)
     parent_candidate_id: str | None = None
@@ -262,6 +265,9 @@ class SRMethodResult(BaseModel):
     backend_name: str = ""
     backend_version: str = ""
     scorer_id: str = ""
+    #: The scorer's declared training_data_policy, persisted so resume and analysis
+    #: guards need not infer it from the scorer id. Empty on pre-existing rows.
+    training_data_policy: str = ""
     verifier_id: str = ""
     verifier_version: str = ""
     telemetry: ResourceTelemetry
@@ -751,6 +757,7 @@ def run_guided_search(
                     fit_observations=fit_observations,
                     budget=budget,
                     scorer_id=descriptor.scorer_id,
+                    training_data_policy=descriptor.training_data_policy,
                 )
                 if row.status is not CandidateStatus.EVALUATED:
                     invalid += 1
@@ -842,6 +849,7 @@ def run_guided_search(
         budget=budget,
         budget_digest=budget_digest,
         scorer_id=descriptor.scorer_id,
+        training_data_policy=descriptor.training_data_policy,
         verifier_id=capability.verifier_id,
         verifier_version=capability.verifier_version,
         telemetry=telemetry,
@@ -867,6 +875,7 @@ def _evaluate_candidate(
     fit_observations: ObservationSet,
     budget: SearchBudget,
     scorer_id: str,
+    training_data_policy: str,
 ) -> tuple[SRCandidate, ScoringRequest]:
     """Build one candidate row plus its scoring request, without ever raising."""
 
@@ -888,6 +897,7 @@ def _evaluate_candidate(
         "evaluation_fit": None,
         "equivalence": None,
         "proposal_scorer_id": scorer_id,
+        "training_data_policy": training_data_policy,
         "proposal_step": step,
         "parent_candidate_id": parent_candidate_id,
     }

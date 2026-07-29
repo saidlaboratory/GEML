@@ -261,12 +261,20 @@ class Goal9Summary(BaseModel):
 
 
 def is_fixture_row(result: SRMethodResult) -> bool:
-    """Return whether a row was produced by a fixture scorer rather than a trained model."""
+    """Return whether a row was produced by a fixture scorer rather than a trained model.
+
+    Newer rows persist the scorer's ``training_data_policy``; ``not_trained`` marks a
+    fixture row regardless of its scorer id. Rows persisted before that field existed
+    are still recognised by the fixture id prefix.
+    """
 
     if result.scorer_id.startswith(FIXTURE_SCORER_ID_PREFIX):
         return True
+    if result.training_data_policy == "not_trained":
+        return True
     return any(
         candidate.proposal_scorer_id.startswith(FIXTURE_SCORER_ID_PREFIX)
+        or candidate.training_data_policy == "not_trained"
         for candidate in result.candidates
     )
 
@@ -336,18 +344,27 @@ def validate_inputs(
     fixture_rows = [result for result in results if is_fixture_row(result)]
     if fixture_rows:
         first = fixture_rows[0]
-        example = first.scorer_id or next(
-            candidate.proposal_scorer_id
-            for candidate in first.candidates
-            if candidate.proposal_scorer_id.startswith(FIXTURE_SCORER_ID_PREFIX)
+        example = (
+            first.scorer_id
+            or first.training_data_policy
+            or next(
+                (
+                    candidate.proposal_scorer_id or candidate.training_data_policy
+                    for candidate in first.candidates
+                    if candidate.proposal_scorer_id.startswith(FIXTURE_SCORER_ID_PREFIX)
+                    or candidate.training_data_policy == "not_trained"
+                ),
+                "not_trained",
+            )
         )
         issues.append(
             ValidationIssue(
                 code="fixture_scorer_rows",
                 detail=(
                     f"{len(fixture_rows)} of {len(results)} rows carry a fixture scorer id "
-                    f"(for example {example!r}); fixture rows can only feed a fixture-only "
-                    "report, never a production verdict"
+                    f"or an untrained training_data_policy (for example {example!r}); "
+                    "fixture rows can only feed a fixture-only report, never a production "
+                    "verdict"
                 ),
             )
         )
