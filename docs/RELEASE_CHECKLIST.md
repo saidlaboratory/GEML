@@ -7,6 +7,9 @@ Status: Phase-A checklist. Unchecked items are blockers, not implied completions
 - [x] Issue 6-0/#54 selected `requirements-lock.txt` as the single core/development lock;
       preproduction SHA-256:
       `1ec81a07d64f969a58abb7ce205107e8e23b360258e330d134be1ccedae87c51`.
+      The originally frozen value (`8ffe1353…`) never matched the committed lock file; it
+      was re-frozen to the measured digest of the committed content on 2026-07-29 by lead
+      decision.
 - [ ] Issue 12-0 final report is complete, checksum-authenticated, and refuses unsupported
       claims.
 - [ ] Issue 12-1 fresh-clone verification has run after all workstreams merge.
