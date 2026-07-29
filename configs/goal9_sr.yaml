@@ -41,3 +41,8 @@ require_benchmark_test_split: true
 # until the verification-scope decision is made. Fixture smokes set this to true
 # explicitly; production must not.
 allow_unfrozen_benchmark: false
+
+# Second hard interlock. Without an injected trained-scorer factory the sweep refuses to
+# run rather than falling back to the untrained fixture scorer. Fixture smokes set this to
+# true explicitly; production must not.
+allow_fixture_scorers: false

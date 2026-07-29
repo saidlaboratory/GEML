@@ -7,7 +7,8 @@ issue 9-2 share it rather than re-implementing it.
 
 Phase A runs only tiny fixture cells with injected scorers. The production sweep is deferred
 until the shared compact model and harness merge and the Goal 9 verification-scope decision
-is made.
+is made. Until then a sweep refuses to run on the untrained fixture scorer unless the
+configuration explicitly marks it as a fixture smoke (``allow_fixture_scorers``).
 """
 
 import argparse
@@ -37,6 +38,7 @@ from geml.data.sr.benchmark import (
     load_tasks,
 )
 from geml.learning.sr.guided_search import (
+    FIXTURE_SCORER_ID_PREFIX,
     CandidateScorer,
     ErrorPriorityScorer,
     RunStatus,
@@ -64,6 +66,10 @@ class Goal9RunError(ValueError):
     """A run configuration or input manifest was invalid."""
 
 
+class UntrainedScorerError(Goal9RunError):
+    """A non-fixture sweep was asked to run without a trained guidance model."""
+
+
 class GuidedSearchConfig(BaseModel):
     """Configuration for the matched EML/AST guided-search comparison."""
 
@@ -77,6 +83,7 @@ class GuidedSearchConfig(BaseModel):
     verifier_timeout_seconds: float = Field(default=5.0, gt=0.0)
     require_benchmark_test_split: bool = True
     allow_unfrozen_benchmark: bool = False
+    allow_fixture_scorers: bool = False
 
     @model_validator(mode="after")
     def _seeds_are_distinct(self) -> "GuidedSearchConfig":
@@ -174,15 +181,23 @@ def _observation_index(
 
 def build_scorers(
     factory: "object | None" = None,
+    *,
+    allow_fixture: bool = False,
 ) -> dict[SRRepresentation, CandidateScorer]:
     """Return one scorer per controlled representation.
 
-    ``factory`` lets a caller inject the shared compact model once Workstream 2 merges. With
-    no factory the deterministic Phase-A fixture scorer is used, which is honest about not
-    being a trained model.
+    ``factory`` lets a caller inject the shared compact model once Workstream 2 merges.
+    Without a factory the deterministic Phase-A fixture scorer is returned only when
+    ``allow_fixture`` marks the sweep as a fixture smoke; a production sweep must never fall
+    back silently to an untrained heuristic.
     """
 
     if factory is None:
+        if not allow_fixture:
+            raise UntrainedScorerError(
+                "no trained-scorer factory was injected; refusing to sweep with the "
+                "untrained fixture scorer. Set allow_fixture_scorers only for fixture smokes."
+            )
         return {
             representation: ErrorPriorityScorer(representation)
             for _method, representation in CONTROLLED_ARMS
@@ -205,12 +220,26 @@ def run_sweep(
     """Run every (task, arm, seed) cell under one shared budget.
 
     Both arms are validated to have received a byte-identical budget before any cell runs,
-    and the shared digest is stamped on every emitted row.
+    and the shared digest is stamped on every emitted row. Unless the configuration
+    explicitly marks the sweep as a fixture smoke, every scorer — injected or not — must
+    declare a trained identity, so a production sweep cannot run on an untrained heuristic.
     """
 
     budgets = {method.value: config.budget for method, _ in CONTROLLED_ARMS}
     digest = assert_matched_budgets(budgets)
-    active_scorers = scorers or build_scorers()
+    active_scorers = scorers or build_scorers(allow_fixture=config.allow_fixture_scorers)
+    if not config.allow_fixture_scorers:
+        for scorer in active_scorers.values():
+            descriptor = scorer.descriptor()
+            if (
+                descriptor.scorer_id.startswith(FIXTURE_SCORER_ID_PREFIX)
+                or descriptor.training_data_policy == "not_trained"
+            ):
+                raise UntrainedScorerError(
+                    f"scorer {descriptor.scorer_id!r} declares training_data_policy="
+                    f"{descriptor.training_data_policy!r}; a sweep without "
+                    "allow_fixture_scorers requires trained scorers"
+                )
     active_verifier = verifier or EGraphFragmentEquivalenceVerifier()
     index = _observation_index(observation_sets)
 
@@ -227,10 +256,31 @@ def run_sweep(
                 counters["planned"] += 1
                 target = Path(output_root) / method.value / f"{task.task_id}.seed{seed}.json"
                 if config.resume and target.exists():
-                    counters["resumed"] += 1
-                    results.append(
-                        SRMethodResult.model_validate_json(target.read_text(encoding="utf-8"))
+                    reloaded = SRMethodResult.model_validate_json(
+                        target.read_text(encoding="utf-8")
                     )
+                    if not config.allow_fixture_scorers:
+                        # The persisted row carries no training_data_policy, so the fixture
+                        # id prefix is the signal that the cell was never scored by a
+                        # trained model.
+                        fixture_ids = sorted(
+                            {
+                                scorer_id
+                                for scorer_id in (
+                                    reloaded.scorer_id,
+                                    *(row.proposal_scorer_id for row in reloaded.candidates),
+                                )
+                                if scorer_id.startswith(FIXTURE_SCORER_ID_PREFIX)
+                            }
+                        )
+                        if fixture_ids:
+                            raise UntrainedScorerError(
+                                f"resumed cell {target} carries fixture scorer ids "
+                                f"{fixture_ids}; a sweep without allow_fixture_scorers "
+                                "refuses to reload fixture-scored evidence"
+                            )
+                    counters["resumed"] += 1
+                    results.append(reloaded)
                     continue
                 result = run_guided_search(
                     task=task,

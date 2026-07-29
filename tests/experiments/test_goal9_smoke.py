@@ -22,6 +22,7 @@ from geml.experiments.goal9.run_sr import (
     CONTROLLED_ARMS,
     Goal9RunError,
     GuidedSearchConfig,
+    UntrainedScorerError,
     build_scorers,
     run_sweep,
     select_tasks,
@@ -538,8 +539,68 @@ def test_runner_refuses_to_score_development_tasks(budget):
         select_tasks([built.task], manifest, config)
 
 
+def test_build_scorers_refuses_untrained_fixture_fallback(budget):
+    """The documented production command must never silently sweep with the untrained
+    heuristic: no injected factory and no fixture opt-in is a hard error."""
+    with pytest.raises(UntrainedScorerError, match="trained-scorer factory"):
+        build_scorers()
+
+
+def test_sweep_rejects_injected_fixture_scorers_without_the_flag(tmp_path, task_bundle, budget):
+    """Injecting fixture scorers by hand does not bypass the interlock either - the sweep
+    checks every scorer's declared training identity."""
+    config = GuidedSearchConfig(budget=budget, seeds=(20260726,))
+    with pytest.raises(UntrainedScorerError, match="training_data_policy"):
+        run_sweep(
+            tasks=[task_bundle.task],
+            observation_sets=[
+                task_bundle.fit_observations,
+                task_bundle.evaluation_observations,
+            ],
+            config=config,
+            output_root=tmp_path,
+            scorers=build_scorers(allow_fixture=True),
+        )
+
+
+def test_resume_rejects_preexisting_fixture_scorer_cells(tmp_path, task_bundle, budget):
+    """A resumed production sweep must not silently reload cells the fixture scorer wrote."""
+
+    class _TrainedStubScorer(ErrorPriorityScorer):
+        def descriptor(self) -> ScorerDescriptor:
+            return ScorerDescriptor(
+                scorer_id=f"trained-stub:{self._representation.value}",
+                representation=self._representation,
+                training_data_policy="trained_excluding_benchmark_test",
+            )
+
+    arguments = {
+        "tasks": [task_bundle.task],
+        "observation_sets": [
+            task_bundle.fit_observations,
+            task_bundle.evaluation_observations,
+        ],
+        "output_root": tmp_path,
+    }
+    run_sweep(
+        **arguments,
+        config=GuidedSearchConfig(budget=budget, seeds=(20260726,), allow_fixture_scorers=True),
+    )
+    with pytest.raises(UntrainedScorerError, match="fixture scorer ids"):
+        run_sweep(
+            **arguments,
+            config=GuidedSearchConfig(budget=budget, seeds=(20260726,)),
+            scorers={
+                representation: _TrainedStubScorer(representation)
+                for _method, representation in CONTROLLED_ARMS
+            },
+        )
+
+
 def test_sweep_writes_one_atomic_cell_per_task_method_seed(tmp_path, task_bundle, budget):
-    config = GuidedSearchConfig(budget=budget, seeds=(20260726, 20260727))
+    config = GuidedSearchConfig(
+        budget=budget, seeds=(20260726, 20260727), allow_fixture_scorers=True
+    )
     results, counters = run_sweep(
         tasks=[task_bundle.task],
         observation_sets=[
@@ -548,7 +609,7 @@ def test_sweep_writes_one_atomic_cell_per_task_method_seed(tmp_path, task_bundle
         ],
         config=config,
         output_root=tmp_path,
-        scorers=build_scorers(),
+        scorers=build_scorers(allow_fixture=True),
     )
     assert counters["planned"] == len(CONTROLLED_ARMS) * 2
     assert counters["completed"] == counters["planned"]
@@ -561,7 +622,7 @@ def test_sweep_writes_one_atomic_cell_per_task_method_seed(tmp_path, task_bundle
 
 
 def test_resume_reloads_completed_cells_without_recomputing(tmp_path, task_bundle, budget):
-    config = GuidedSearchConfig(budget=budget, seeds=(20260726,))
+    config = GuidedSearchConfig(budget=budget, seeds=(20260726,), allow_fixture_scorers=True)
     arguments = {
         "tasks": [task_bundle.task],
         "observation_sets": [

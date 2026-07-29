@@ -240,25 +240,41 @@ expression is then put through the same grammar gate as everything else.
 exclusion row, so `tasks + exclusions == 100` is an invariant
 (`test_feynman_curation_records_every_inspected_formula_exactly_once`).
 
-**Observed denominators at the pinned base commit** (recomputed by the generator, not
-hard-coded):
+**Observed denominators.** This table is regenerated from the manifest the generator
+actually writes — never edited by hand. It was last regenerated from the output of exactly
+this command, run from the repository root at the current commit:
+
+```
+python -m geml.data.sr.benchmark \
+  --config configs/goal9_benchmark.yaml \
+  --task-set feynman_restricted --split-role benchmark_test \
+  --output-dir outputs/final/goal9/benchmark/feynman_restricted
+```
+
+The counts below are the manifest's `inspected_count`, `exclusions` grouped by reason,
+`eligible_count`, `task_count`, and `verifier_supported_count`:
 
 | Population | Count |
 |---|---:|
 | Inspected | 100 |
 | Excluded — `unsupported_constant` (all `pi`) | 31 |
 | Excluded — `unsupported_operator` (`arcsin`) | 2 |
-| Grammar-eligible | 67 |
+| Excluded — `verifier_gap` | 13 |
+| Eligible (in grammar and inside the frozen verifier fragment) | 54 |
 | Selected by the frozen quota | 32 |
-| Deferred as `not_selected_by_frozen_quota` | 35 |
-| Of the 32 selected, inside the Goal 4 e-graph operator fragment | 27 |
+| Deferred as `not_selected_by_frozen_quota` | 22 |
+| Of the 32 selected, inside the Goal 4 e-graph operator fragment | 32 |
 
-**Selection.** The eligible pool (67) is larger than the "approximately 32" the issue asks
+Every selected task is inside the e-graph fragment by construction: `verifier_gap` is now
+applied at curation time under `verifier_scope: egraph_fragment_v1`, so in-grammar formulas
+outside the fragment are retained as exclusions instead of entering the selection pool.
+
+**Selection.** The eligible pool (54) is larger than the "approximately 32" the issue asks
 for, so the reduction is an explicit, predeclared, deterministic step rather than a hidden
 filter: eligible tasks are bucketed by variable count, sorted by `task_id`, and taken
 round-robin until `selection_target` is reached. The order is a pure function of task
 identity, is fixed before any method runs, and cannot be adjusted after seeing results. The
-35 deferred formulas remain in the exclusion ledger so the honest denominator stays visible;
+22 deferred formulas remain in the exclusion ledger so the honest denominator stays visible;
 they are **not** quietly resampled from another population.
 
 **Open freeze decision.** `selection_target = 32` is the predeclared quota, not yet the
