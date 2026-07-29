@@ -333,6 +333,11 @@ class ScorerDescriptor(BaseModel):
     notes: str = ""
 
 
+#: Every fixture scorer id carries this prefix so downstream guards can recognise rows
+#: that were never produced by a trained model.
+FIXTURE_SCORER_ID_PREFIX = "fixture-"
+
+
 class ErrorPriorityScorer:
     """Deterministic fixture scorer used by Phase-A smokes.
 
@@ -349,7 +354,7 @@ class ErrorPriorityScorer:
         """Return the fixture scorer identity."""
 
         return ScorerDescriptor(
-            scorer_id=f"fixture-error-priority:{self._representation.value}",
+            scorer_id=f"{FIXTURE_SCORER_ID_PREFIX}error-priority:{self._representation.value}",
             representation=self._representation,
             training_data_policy="not_trained",
             notes="Phase-A fixture scorer; replaced by the shared compact model after merge",

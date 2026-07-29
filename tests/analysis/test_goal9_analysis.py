@@ -493,6 +493,37 @@ def test_gate_is_insufficient_evidence_for_a_fixture_only_report(complete_rows):
     assert summary.gate.state is GateState.INSUFFICIENT_EVIDENCE
 
 
+def test_fixture_scorer_rows_force_fixture_only_without_the_flag(complete_rows):
+    """A forgotten --fixture-only flag must never turn a fixture sweep into a production
+    report: the rows themselves carry the fixture scorer id and force the classification."""
+    rows = [
+        row.model_copy(update={"scorer_id": "fixture-error-priority:pure_eml"})
+        for row in complete_rows
+    ]
+    summary = summarize(manifests=[_manifest()], results=rows, fixture_only=False)
+    assert summary.completeness is ReportCompleteness.FIXTURE_ONLY
+    assert summary.gate.state is GateState.INSUFFICIENT_EVIDENCE
+    assert any(issue.code == "fixture_scorer_rows" for issue in summary.validation_issues)
+
+
+def test_fixture_proposal_candidates_also_force_fixture_only(complete_rows):
+    """The guard reads candidate provenance too - a trained top-level id cannot launder
+    candidates that a fixture scorer proposed."""
+    row = complete_rows[0]
+    tainted = row.model_copy(
+        update={
+            "candidates": tuple(
+                candidate.model_copy(update={"proposal_scorer_id": "fixture-error-priority:ast"})
+                for candidate in row.candidates
+            )
+        }
+    )
+    summary = summarize(
+        manifests=[_manifest()], results=[tainted, *complete_rows[1:]], fixture_only=False
+    )
+    assert summary.completeness is ReportCompleteness.FIXTURE_ONLY
+
+
 def test_gate_is_insufficient_evidence_with_no_reference_method():
     rows = [
         _result(

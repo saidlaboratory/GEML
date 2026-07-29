@@ -36,6 +36,7 @@ from geml.data.sr.benchmark import (
     ManifestStatus,
 )
 from geml.learning.sr.guided_search import (
+    FIXTURE_SCORER_ID_PREFIX,
     SR_METHOD_RESULT_SCHEMA_VERSION,
     CandidateStatus,
     RunStatus,
@@ -259,10 +260,25 @@ class Goal9Summary(BaseModel):
 # --------------------------------------------------------------------------------------
 
 
+def is_fixture_row(result: SRMethodResult) -> bool:
+    """Return whether a row was produced by a fixture scorer rather than a trained model."""
+
+    if result.scorer_id.startswith(FIXTURE_SCORER_ID_PREFIX):
+        return True
+    return any(
+        candidate.proposal_scorer_id.startswith(FIXTURE_SCORER_ID_PREFIX)
+        for candidate in result.candidates
+    )
+
+
 def validate_inputs(
     manifests: Sequence[BenchmarkManifest], results: Sequence[SRMethodResult]
 ) -> tuple[ValidationIssue, ...]:
-    """Validate manifests and result rows before any aggregation happens."""
+    """Validate manifests and result rows before any aggregation happens.
+
+    Fixture-scorer rows are detected here, from the rows themselves: the fixture-only rule
+    never rests on a CLI flag alone.
+    """
 
     issues: list[ValidationIssue] = []
     if not manifests:
@@ -316,6 +332,25 @@ def validate_inputs(
             )
         if result.method in {GATE_TREATMENT_METHOD, GATE_CONTROL_METHOD}:
             seen_budget_digests.add(result.budget_digest)
+
+    fixture_rows = [result for result in results if is_fixture_row(result)]
+    if fixture_rows:
+        first = fixture_rows[0]
+        example = first.scorer_id or next(
+            candidate.proposal_scorer_id
+            for candidate in first.candidates
+            if candidate.proposal_scorer_id.startswith(FIXTURE_SCORER_ID_PREFIX)
+        )
+        issues.append(
+            ValidationIssue(
+                code="fixture_scorer_rows",
+                detail=(
+                    f"{len(fixture_rows)} of {len(results)} rows carry a fixture scorer id "
+                    f"(for example {example!r}); fixture rows can only feed a fixture-only "
+                    "report, never a production verdict"
+                ),
+            )
+        )
 
     if len(seen_budget_digests) > 1:
         issues.append(
@@ -740,6 +775,10 @@ def summarize(
     ``external_reference_rows`` counts issue 11-3 LLM rows that were ingested purely as
     external context. They are counted and labelled; they never enter a summary, a contrast,
     or the gate.
+
+    ``fixture_only`` can only widen the fixture-only classification: rows produced by a
+    fixture scorer force it regardless of the flag, so forgetting the flag can never turn a
+    fixture sweep into a production report.
     """
 
     issues = validate_inputs(manifests, results)
@@ -747,7 +786,7 @@ def summarize(
     task_sets = tuple(sorted({result.task_set for result in controlled}))
     methods = tuple(sorted({result.method for result in controlled}, key=lambda item: item.value))
 
-    if fixture_only:
+    if fixture_only or any(issue.code == "fixture_scorer_rows" for issue in issues):
         completeness = ReportCompleteness.FIXTURE_ONLY
     elif issues:
         completeness = ReportCompleteness.INCOMPLETE
