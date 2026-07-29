@@ -127,8 +127,8 @@ def test_cli_refuses_closed_end_to_end():
     assert "Traceback" not in completed.stderr
 
 
-def test_cli_with_manifest_stops_at_the_unwired_build_loop(tmp_path):
-    """Past the provider check, the missing shard build loop is the named refusal."""
+def test_cli_invalid_corpus_manifest_is_a_typed_refusal(tmp_path):
+    """Past the provider check, a corpus that fails contract validation is refused."""
     manifest = tmp_path / "1-8_source_expression_corpus_250k" / "corpus_manifest.json"
     manifest.parent.mkdir(parents=True)
     manifest.write_text("{}", encoding="utf-8")
@@ -144,8 +144,8 @@ def test_cli_with_manifest_stops_at_the_unwired_build_loop(tmp_path):
     )
     assert completed.returncode == 2
     assert "refusing to build" in completed.stderr
-    assert "providers are bound" in completed.stderr
-    assert "build loop" in completed.stderr
+    assert "corpus manifest" in completed.stderr
+    assert "invalid" in completed.stderr
     assert "Traceback" not in completed.stderr
 
 
