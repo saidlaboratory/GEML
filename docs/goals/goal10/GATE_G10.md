@@ -25,6 +25,15 @@ evaluation. A missing or fixture-only audit with no demonstrated violation
 would be `insufficient_evidence`; observed required-case failures are not
 downgraded to insufficient evidence.
 
+**Published verdict.** The final-tier audit was executed and published on
+2026-07-29 (lead decision): Gate G10 = `fail`, 74 retained rows, zero
+integrity/coverage/v1 failures, exactly the eight preregistered `asin`/`acos`
+endpoint cells failing as `nonfinite_result`. Full provenance hashes are
+recorded in `GOAL10_SUMMARY.md`; the immutable machine-rendered artifacts live
+under `outputs/final/goal10/audit/`. No criteria revision is pre-authorized:
+any later revision would require a new explicitly recorded decision as a
+separate step and would produce a new, separately-versioned verdict.
+
 Gate G10 concerns compiler conformance only. It does not authorize claims
 about corpus v2, alpha, DAGs, motifs, compression, Goal 6/7 models, or other
 learned effects.
