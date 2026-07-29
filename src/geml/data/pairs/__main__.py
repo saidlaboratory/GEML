@@ -9,11 +9,11 @@ synthetic data for an absent production input: the fixture path is
 
 The concrete rule-engine action providers and the transition verifier are
 bound from the merged Goal 4 engine and the replay-verifier adapter by
-``geml.data.pairs.providers``. Everything downstream of the providers — the
-frozen corpus shards and the shard build loop — has not been delivered, so the
-driver still stops with ``MissingProductionDependencyError`` naming exactly
-that missing piece, the same fail-closed convention the Goal 7 grid runner
-uses for its null identity hashes.
+``geml.data.pairs.providers``. Once the config, the providers, and the corpus
+manifest all resolve, ``geml.data.pairs.build`` runs the shard build loop.
+Base counts stay targets: a corpus that cannot reach them finishes with an
+explicit ``complete_short`` status naming the per-split shortfall instead of
+inventing records or failing silently.
 """
 
 import argparse
@@ -23,6 +23,7 @@ from pathlib import Path
 
 import yaml
 
+from geml.data.pairs.build import PairBuildError, run_production_build
 from geml.data.pairs.generate import canonical_json_bytes, sha256_digest
 from geml.data.pairs.providers import ProductionProviders, bind_production_providers
 
@@ -142,18 +143,28 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
     arguments = parser.parse_args(argv)
 
     try:
-        _config, config_digest = load_production_config(arguments.config)
+        config, config_digest = load_production_config(arguments.config)
         providers = require_production_providers()
         manifest = resolve_corpus_manifest(arguments.corpus_manifest)
-        raise MissingProductionDependencyError(
-            f"corpus manifest {manifest} resolved and the production providers are bound "
-            f"(verifier {providers.verifier_version}), but the shard build loop over the "
-            f"delivered 1-8 corpus has not landed; config {config_digest} refuses to "
-            "fabricate pair records"
+        summary = run_production_build(
+            config=config,
+            config_digest=config_digest,
+            corpus_manifest_path=manifest,
+            providers=providers,
         )
-    except PairProductionError as error:
+    except (PairProductionError, PairBuildError) as error:
         parser.exit(2, f"refusing to build: {error}\n")
-    return 2  # unreachable: parser.exit raises SystemExit
+    print(f"pair build {summary['status']} (config {config_digest})")
+    for split, entry in summary["splits"].items():
+        line = (
+            f"  {split}: accepted {entry['accepted']}/{entry['target']}"
+            f" ({entry['accepted_positive']} positive, {entry['accepted_negative']} negative),"
+            f" rejected {entry['rejected']}, failed {entry['failed']}"
+        )
+        if entry["shortfall"]:
+            line += f", shortfall {entry['shortfall']}"
+        print(line)
+    return 0
 
 
 if __name__ == "__main__":  # pragma: no cover - module executable entry point
