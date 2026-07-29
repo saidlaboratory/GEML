@@ -44,8 +44,13 @@ def load_production_config(path: str | Path) -> tuple[dict, str]:
     config_path = Path(path)
     if not config_path.is_file():
         raise PairProductionError(f"pair-build config does not exist: {config_path}")
-    payload = config_path.read_bytes()
-    loaded = yaml.safe_load(payload)
+    try:
+        payload = config_path.read_bytes()
+        loaded = yaml.safe_load(payload)
+    except (OSError, yaml.YAMLError) as error:
+        raise PairProductionError(
+            f"cannot load pair-build config {config_path}: {error}"
+        ) from error
     if not isinstance(loaded, dict):
         raise PairProductionError(f"pair-build config is not a mapping: {config_path}")
     if loaded.get("schema_version") != _CONFIG_SCHEMA_VERSION:
@@ -129,7 +134,6 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
     )
     parser.add_argument("--config", required=True)
     parser.add_argument("--corpus-manifest", default=_DEFAULT_CORPUS_MANIFEST)
-    parser.add_argument("--output-root", default=None)
     arguments = parser.parse_args(argv)
 
     try:

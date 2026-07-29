@@ -114,6 +114,21 @@ def test_cli_refuses_closed_end_to_end():
     assert "Traceback" not in completed.stderr
 
 
+def test_cli_malformed_yaml_is_a_typed_refusal(tmp_path):
+    """Broken YAML gets the same "refusing to build" exit as any other bad config."""
+    bad = tmp_path / "broken.yaml"
+    bad.write_text("schema_version: [unclosed\n", encoding="utf-8")
+    completed = subprocess.run(
+        [sys.executable, "-m", "geml.data.pairs", "--config", str(bad)],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": "src"},
+    )
+    assert completed.returncode == 2
+    assert "refusing to build" in completed.stderr
+    assert "Traceback" not in completed.stderr
+
+
 def test_cli_help_documents_the_command():
     completed = subprocess.run(
         [sys.executable, "-m", "geml.data.pairs", "--help"],
