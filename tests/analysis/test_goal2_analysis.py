@@ -627,6 +627,39 @@ def test_analysis_and_plots_use_only_tiny_saved_tables(tmp_path: Path) -> None:
         validate_plot_manifest(bad_plot_path)
 
 
+def test_null_group_keys_and_numpy_scalar_key_json_survive_analysis(tmp_path: Path) -> None:
+    # Regression, pandas 2.2/numpy 2.x: list() over groupby(dropna=False) rejected the
+    # NaN ast_node_count group in _scaling_table, and int64 group keys broke key_json.
+    pilot, final = _frames()
+    assert final["ast_node_count"].isna().any()
+    config_path = _write_config(
+        tmp_path / "goal2.yaml",
+        pilot_count=len(pilot),
+        final_count=len(final),
+        pilot_label="pilot",
+        final_label="final",
+    )
+    config_hash = load_goal2_config(config_path).config_hash
+    pilot_path = _write_metrics(
+        tmp_path / "pilot", pilot, stage="pilot", config_hash=config_hash, source_label="pilot"
+    )
+    final_path = _write_metrics(
+        tmp_path / "final", final, stage="final", config_hash=config_hash, source_label="final"
+    )
+    analysis_path = run_analysis(
+        metrics_manifest=final_path,
+        pilot_manifest=pilot_path,
+        config_path=config_path,
+        output_dir=tmp_path / "analysis",
+    )
+    tables = validate_analysis_manifest(analysis_path)["tables"]
+    scaling = pd.read_parquet(analysis_path.parent / tables["scaling"]["path"])
+    nodes = scaling.loc[scaling["relationship"].eq("eml_nodes_vs_ast_nodes")]
+    assert "<null>" in set(nodes["x_value"])
+    stratified = pd.read_parquet(analysis_path.parent / tables["stratified"]["path"])
+    assert '{"variable_count":1}' in set(stratified["key_json"])
+
+
 def test_incompatible_metric_configs_and_missing_plot_source_are_rejected(
     tmp_path: Path,
 ) -> None:
