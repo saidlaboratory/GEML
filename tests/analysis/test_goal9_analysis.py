@@ -524,6 +524,38 @@ def test_fixture_proposal_candidates_also_force_fixture_only(complete_rows):
     assert summary.completeness is ReportCompleteness.FIXTURE_ONLY
 
 
+def test_not_trained_policy_rows_force_fixture_only(complete_rows):
+    """A persisted training_data_policy of 'not_trained' forces the fixture-only
+    classification even when no scorer id carries the fixture prefix."""
+    rows = [
+        row.model_copy(
+            update={"scorer_id": "trained-stub:ast", "training_data_policy": "not_trained"}
+        )
+        for row in complete_rows
+    ]
+    summary = summarize(manifests=[_manifest()], results=rows, fixture_only=False)
+    assert summary.completeness is ReportCompleteness.FIXTURE_ONLY
+    assert summary.gate.state is GateState.INSUFFICIENT_EVIDENCE
+    assert any(issue.code == "fixture_scorer_rows" for issue in summary.validation_issues)
+
+
+def test_not_trained_proposal_candidates_also_force_fixture_only(complete_rows):
+    """Candidate-level policy provenance cannot be laundered by a trained top-level row."""
+    row = complete_rows[0]
+    tainted = row.model_copy(
+        update={
+            "candidates": tuple(
+                candidate.model_copy(update={"training_data_policy": "not_trained"})
+                for candidate in row.candidates
+            )
+        }
+    )
+    summary = summarize(
+        manifests=[_manifest()], results=[tainted, *complete_rows[1:]], fixture_only=False
+    )
+    assert summary.completeness is ReportCompleteness.FIXTURE_ONLY
+
+
 def test_gate_is_insufficient_evidence_with_no_reference_method():
     rows = [
         _result(
