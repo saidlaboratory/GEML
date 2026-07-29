@@ -9,8 +9,8 @@ either paper or of the PyTorch Geometric implementation, and it must never be de
 The deviations are enumerated in :data:`ENCODER_DEVIATIONS` and are asserted by the tests.
 
 The encoder deliberately depends only on ``torch``.  The repository's declared optional ``[ml]``
-extra (owned by issue 6-0/#54) currently pins ``torch`` alone, so importing ``torch_geometric``
-here would make this module unsatisfiable in the environment the project actually declares.
+extra (owned by issue 6-0/#54) pins both ``torch`` and ``torch-geometric``, but this module keeps
+to plain ``torch`` so a torch-only environment can still run it.
 Message scattering is therefore implemented with ``Tensor.index_add_``.
 
 Representation neutrality
