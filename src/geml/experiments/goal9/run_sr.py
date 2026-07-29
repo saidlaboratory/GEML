@@ -256,10 +256,31 @@ def run_sweep(
                 counters["planned"] += 1
                 target = Path(output_root) / method.value / f"{task.task_id}.seed{seed}.json"
                 if config.resume and target.exists():
-                    counters["resumed"] += 1
-                    results.append(
-                        SRMethodResult.model_validate_json(target.read_text(encoding="utf-8"))
+                    reloaded = SRMethodResult.model_validate_json(
+                        target.read_text(encoding="utf-8")
                     )
+                    if not config.allow_fixture_scorers:
+                        # The persisted row carries no training_data_policy, so the fixture
+                        # id prefix is the signal that the cell was never scored by a
+                        # trained model.
+                        fixture_ids = sorted(
+                            {
+                                scorer_id
+                                for scorer_id in (
+                                    reloaded.scorer_id,
+                                    *(row.proposal_scorer_id for row in reloaded.candidates),
+                                )
+                                if scorer_id.startswith(FIXTURE_SCORER_ID_PREFIX)
+                            }
+                        )
+                        if fixture_ids:
+                            raise UntrainedScorerError(
+                                f"resumed cell {target} carries fixture scorer ids "
+                                f"{fixture_ids}; a sweep without allow_fixture_scorers "
+                                "refuses to reload fixture-scored evidence"
+                            )
+                    counters["resumed"] += 1
+                    results.append(reloaded)
                     continue
                 result = run_guided_search(
                     task=task,

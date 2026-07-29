@@ -563,6 +563,40 @@ def test_sweep_rejects_injected_fixture_scorers_without_the_flag(tmp_path, task_
         )
 
 
+def test_resume_rejects_preexisting_fixture_scorer_cells(tmp_path, task_bundle, budget):
+    """A resumed production sweep must not silently reload cells the fixture scorer wrote."""
+
+    class _TrainedStubScorer(ErrorPriorityScorer):
+        def descriptor(self) -> ScorerDescriptor:
+            return ScorerDescriptor(
+                scorer_id=f"trained-stub:{self._representation.value}",
+                representation=self._representation,
+                training_data_policy="trained_excluding_benchmark_test",
+            )
+
+    arguments = {
+        "tasks": [task_bundle.task],
+        "observation_sets": [
+            task_bundle.fit_observations,
+            task_bundle.evaluation_observations,
+        ],
+        "output_root": tmp_path,
+    }
+    run_sweep(
+        **arguments,
+        config=GuidedSearchConfig(budget=budget, seeds=(20260726,), allow_fixture_scorers=True),
+    )
+    with pytest.raises(UntrainedScorerError, match="fixture scorer ids"):
+        run_sweep(
+            **arguments,
+            config=GuidedSearchConfig(budget=budget, seeds=(20260726,)),
+            scorers={
+                representation: _TrainedStubScorer(representation)
+                for _method, representation in CONTROLLED_ARMS
+            },
+        )
+
+
 def test_sweep_writes_one_atomic_cell_per_task_method_seed(tmp_path, task_bundle, budget):
     config = GuidedSearchConfig(
         budget=budget, seeds=(20260726, 20260727), allow_fixture_scorers=True
