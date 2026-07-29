@@ -8,10 +8,12 @@ synthetic data for an absent production input: the fixture path is
 ``write_fixture_pairs`` and stays test-only.
 
 The concrete rule-engine action providers and the transition verifier are
-injected integration points frozen by issues 4-3/4-5 and 2-6. Until the
-production wiring binds them, this driver validates everything ahead of them
-and then stops with ``MissingProductionDependencyError`` — the same fail-closed
-convention the Goal 7 grid runner uses for its null identity hashes.
+bound from the merged Goal 4 engine and the replay-verifier adapter by
+``geml.data.pairs.providers``. Everything downstream of the providers — the
+frozen corpus shards and the shard build loop — has not been delivered, so the
+driver still stops with ``MissingProductionDependencyError`` naming exactly
+that missing piece, the same fail-closed convention the Goal 7 grid runner
+uses for its null identity hashes.
 """
 
 import argparse
@@ -22,6 +24,7 @@ from pathlib import Path
 import yaml
 
 from geml.data.pairs.generate import canonical_json_bytes, sha256_digest
+from geml.data.pairs.providers import ProductionProviders, bind_production_providers
 
 _CONFIG_SCHEMA_VERSION = "geml-goal6-pairs-config-v1"
 _ARTIFACTS_ROOT_PLACEHOLDER = "${GEML_ARTIFACTS_ROOT}"
@@ -109,23 +112,25 @@ def resolve_corpus_manifest(configured_path: str) -> Path:
     return manifest
 
 
-def require_production_providers() -> None:
-    """Refuse to build until the concrete engine and verifier wiring is bound.
+def require_production_providers() -> ProductionProviders:
+    """Bind the concrete engine and replay-verifier providers, failing closed on any gap.
 
     ``generate_concrete_trajectory_attempts`` and ``replay_trace`` take the
     action enumerator/applier and the transition verifier as injected
-    callables. The production binding of those callables to the merged Goal 4
-    rule engine and the 2-6 verifier is integration work that has not landed;
-    running with anything else would produce records that look real and are
-    not, so the driver stops here instead.
+    callables. The production binding adapts the merged Goal 4 rule engine and
+    the replay verifier; if that construction fails or a required capability
+    is missing, the build refuses with a typed error rather than running with
+    anything else.
     """
 
-    raise MissingProductionDependencyError(
-        "production action providers are not bound: the pair build requires the "
-        "concrete rule-engine enumerator/applier (issues 4-3/4-5) and the "
-        "transition verifier (issue 2-6) wired as injected providers; fixture "
-        "providers are test-only and are never substituted here"
-    )
+    try:
+        return bind_production_providers()
+    except Exception as error:
+        raise MissingProductionDependencyError(
+            "production action providers are not bound: "
+            f"{type(error).__name__}: {error}; fixture providers are test-only "
+            "and are never substituted here"
+        ) from error
 
 
 def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin CLI shell
@@ -138,13 +143,17 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
 
     try:
         _config, config_digest = load_production_config(arguments.config)
+        providers = require_production_providers()
         manifest = resolve_corpus_manifest(arguments.corpus_manifest)
-        require_production_providers()
+        raise MissingProductionDependencyError(
+            f"corpus manifest {manifest} resolved and the production providers are bound "
+            f"(verifier {providers.verifier_version}), but the shard build loop over the "
+            f"delivered 1-8 corpus has not landed; config {config_digest} refuses to "
+            "fabricate pair records"
+        )
     except PairProductionError as error:
         parser.exit(2, f"refusing to build: {error}\n")
-    raise AssertionError(  # pragma: no cover - unreachable until providers bind
-        f"provider binding must extend main(); config {config_digest} manifest {manifest}"
-    )
+    return 2  # unreachable: parser.exit raises SystemExit
 
 
 if __name__ == "__main__":  # pragma: no cover - module executable entry point
