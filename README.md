@@ -50,7 +50,7 @@ The original proposal ("EML-Native Foundation Models for Universal Mathematical 
 
 | Original claim | Revised claim | Why |
 |---|---|---|
-| Shrinking the math vocabulary to one operator reduces model size | **Hypothesis under test:** raw EML trees are ~11–12× *larger* than ASTs. Compression (DAG + motifs) makes EML *trainable*; whether homogeneity then *generalizes better* is the open question | Goal 2: mean α ≈ 10.6, median ≈ 11.4, essentially never below the theoretical threshold (~1.56) |
+| Shrinking the math vocabulary to one operator reduces model size | **Hypothesis under test:** raw EML trees are far *larger* than ASTs — production median α = 40.66 (mean 952.1, heavy right tail). Compression (DAG + motifs) narrows but never closes the gap; whether homogeneity then *generalizes better* is the open question | Goal 2 production run (250k): median α 40.6602, mean 952.1371; 0/250,000 below the preregistered per-family thresholds (1.29–1.50) |
 | "GPT-4-level mathematical competency at a fraction of the parameters" | **Competitive accuracy with fewer parameters on a bounded algebraic domain** | Unfalsifiable as stated; parameter-efficiency is now an explicit experiment (Goal 11.2) |
 | Universal / zero-shot automated theorem proving | **Verified equational rewrite-proofs on a bounded domain** | GEML operates on a bounded algebraic fragment; proofs are verifier-gated rewrite paths (Goal 8) |
 | "Equivalence as graph isomorphism" | **Equivalence is semantic, not structural.** Learned from e-graph-generated equivalence pairs with rule-sequence provenance, always behind a verifier | Two equivalent expressions are generally *not* isomorphic graphs |
@@ -64,9 +64,20 @@ Let `α = |T_EML| / |T_AST|` be the expansion factor when an AST is rewritten in
 α < 1 + log_{4L}(K)
 ```
 
-where `K` = number of operator types and `L` = number of leaf symbols. For the current grammar the threshold is **≈ 1.56** (with e.g. K = 20, L = 3 it would be ≈ 2.21). Raw EML sits at **α ≈ 11.4** — an order of magnitude over. The entire compression program (Goals 3–5) exists to close that gap honestly, and the learning program (Goals 6–11) tests whether what remains is worth it.
+where `K` = number of operator types and `L` = number of leaf symbols. For the current grammar the threshold is **≈ 1.56** (with e.g. K = 20, L = 3 it would be ≈ 2.21). The v0 prototype estimated raw EML at α ≈ 11.4; the production 250k run measured **median α = 40.66** (mean 952.1) — more than an order of magnitude over, and ~4× worse than the prototype suggested. The entire compression program (Goals 3–5) exists to close that gap honestly, and the learning program (Goals 6–11) tests whether what remains is worth it.
 
-## 4. Evidence so far — v0 prototype (Goals 1–5, 10k-sample corpus)
+## 4. Production results (Goals 1–5, 250k corpus — the numbers that count)
+
+| Goal | Headline (production, `docs/goals/goalN/`) |
+|---|---|
+| 1 | 250,000 unique expressions, splits exactly 175k/25k/25k/25k, QA-gated |
+| 2 | Median α **40.6602**, mean 952.1371, p99 10,448.6; 0/250k below the preregistered thresholds |
+| 3 | DAG sharing compresses EML 39.375× on average, yet the EML DAG beats the AST tree on **0/250,000** expressions (best remaining ratio 8/7) |
+| 4 | E-graph rewriting improves 23.9% (safe_real) / 27.6% (positive_real_formal) of costed rows, mean savings 2.4–2.8%, on 60.7% vocabulary coverage |
+| 5 | Learned motif vocabulary **loses** to equal-budget frequent vocabulary (MDL 324,485,346 vs 317,678,264 bits); neural ranker loses to the structural heuristic |
+| 10 | Gate G10 published: **fail** on exactly the 8 preregistered asin/acos endpoint cells |
+
+## 4b. Historical evidence — v0 prototype (Goals 1–5, 10k-sample corpus; superseded by the table above)
 
 | Goal | Deliverable | Status | Headline result |
 |---|---|---|---|
