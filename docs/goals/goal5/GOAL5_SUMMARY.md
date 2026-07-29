@@ -146,8 +146,8 @@ python -m geml.experiments.goal5.motif_sweeps --config configs/goal5_motif_sweep
 python -m geml.experiments.goal5.learned_motifs --config configs/goal5_learned_motifs.yaml --frequent-sweep-run-dir outputs/final/goal5/motif_sweeps/final/a9a271583707-77fce5779b3d-28618ea156fd
 ```
 ```text
-python -m geml.experiments.goal5.neural_ranker --config configs/goal5_neural_ranker.yaml --rows-path 'C:\Users\gensa\Documents\GEML-goal4-review\outputs\final\goal4\final\final.rows.jsonl' --run-manifest-path 'C:\Users\gensa\Documents\GEML-goal4-review\outputs\final\goal4\final\final.run.json' --corpus-manifest-path 'C:\Users\gensa\Documents\GEML\outputs\final\goal1\final\run\manifests\corpus.manifest.json'
+python -m geml.experiments.goal5.neural_ranker --config configs/goal5_neural_ranker.yaml --rows-path outputs/final/goal4/final/final.rows.jsonl --run-manifest-path outputs/final/goal4/final/final.run.json --corpus-manifest-path outputs/final/goal1/final/run/manifests/corpus.manifest.json
 ```
 ```text
-python -m geml.experiments.goal5.export --config configs/goal5_export.yaml --frequent-run-dir C:\Users\gensa\Documents\GEML\outputs\final\goal5\motif_sweeps\final\a9a271583707-77fce5779b3d-28618ea156fd --learned-run-dir C:\Users\gensa\Documents\GEML\outputs\final\goal5\learned_motifs\2521e53bc741-882ceb5185be-5842901d3d15
+python -m geml.experiments.goal5.export --config configs/goal5_export.yaml --frequent-run-dir outputs/final/goal5/motif_sweeps/final/a9a271583707-77fce5779b3d-28618ea156fd --learned-run-dir outputs/final/goal5/learned_motifs/2521e53bc741-882ceb5185be-5842901d3d15
 ```
