@@ -1,0 +1,57 @@
+schema_version: geml-goal11-fixed-scale-run-config-v1
+artifact_root: null
+manifest_path: null
+manifest_audit_path: null
+observations_path: null
+result_path: outputs/final/goal11/fixed_scale_efficiency/result.json
+markdown_path: outputs/final/goal11/fixed_scale_efficiency/FIXED_SCALE_EFFICIENCY.md
+plot_dir: outputs/final/goal11/fixed_scale_efficiency/plots
+analysis:
+  schema_version: geml-goal11-fixed-scale-config-v1
+  expected_seeds:
+    - 20260726
+    - 20260727
+    - 20260728
+  bootstrap_seed: 20260726
+  bootstrap_replicates: 2000
+  comparisons:
+    - panel_id: equivalence_accuracy_vs_compute
+      track: equivalence
+      task_view: frozen_test_views
+      quality_metric_id: balanced_accuracy
+      resource_metric_ids:
+        - parameter_count
+        - flops
+        - wall_time_seconds
+        - gpu_hours
+        - peak_host_memory_bytes
+        - peak_gpu_memory_bytes
+      require_same_hardware: true
+      require_same_precision: true
+    - panel_id: rewrite_successor_vs_compute
+      track: rewrite_policy
+      task_view: frozen_test_views
+      quality_metric_id: exact_successor_top1
+      resource_metric_ids:
+        - parameter_count
+        - flops
+        - wall_time_seconds
+        - gpu_hours
+        - peak_host_memory_bytes
+        - peak_gpu_memory_bytes
+      require_same_hardware: true
+      require_same_precision: true
+    - panel_id: proof_success_vs_resources
+      track: proof
+      task_view: frozen_256
+      quality_metric_id: verified_exact_target_rate
+      resource_metric_ids: [wall_time_seconds, peak_host_memory_bytes]
+      require_same_hardware: true
+      require_same_precision: true
+    - panel_id: symbolic_recovery_vs_resources
+      track: symbolic_regression
+      task_view: frozen_benchmark
+      quality_metric_id: exact_recovery_rate
+      resource_metric_ids: [wall_time_seconds, peak_host_memory_bytes]
+      require_same_hardware: true
+      require_same_precision: true

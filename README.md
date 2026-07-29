@@ -210,3 +210,7 @@ Can a GNN learn `E₁ ≡ E₂`, and under which representation?
 
 - Odrzywołek, A. (2026). *The EML function* — reduction of elementary functions to `exp(x) − ln(y)`. (Official EML compiler used for all pure-EML conversions — no abbreviations, no hidden derived leaves.)
 - v0 prototype and per-goal summaries: [geml_experiments](https://github.com/sahilsinghthefirst/geml_experiments) (`docs/goal1/`–`docs/goal5/`).
+
+## 10. License
+
+GEML is released under the [MIT License](LICENSE), Copyright (c) 2026 GEML contributors.

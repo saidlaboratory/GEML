@@ -96,8 +96,16 @@ _INPUT_COLUMNS = (
 )
 
 
+def _json_default(value: object) -> object:
+    if isinstance(value, np.generic):
+        return value.item()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def _json_text(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=_json_default
+    )
 
 
 def _is_sha256(value: object) -> bool:
@@ -147,7 +155,10 @@ def _atomic_bytes(path: Path, payload: bytes) -> None:
 
 
 def _atomic_json(path: Path, value: object) -> None:
-    payload = (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
+    payload = (
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True, default=_json_default)
+        + "\n"
+    ).encode()
     _atomic_bytes(path, payload)
 
 
@@ -682,7 +693,13 @@ def _scaling_table(frame: pd.DataFrame, *, quantile_method: str) -> pd.DataFrame
     )
     rows: list[dict[str, object]] = []
     for relationship, x_name, y_name in specs:
-        groups = list(frame.groupby(x_name, dropna=False, sort=False))
+        # list() preallocates via GroupBy.__len__, which builds .groups through
+        # Categorical.from_codes and rejects null categories under dropna=False
+        # on pandas 2.2/numpy 2.x; plain iteration never touches that path.
+        # sorted(grouped, key=...) preallocates through the same __len__ length
+        # hint and crashes identically, hence the comprehension + in-place sort.
+        grouped = frame.groupby(x_name, dropna=False, sort=False)
+        groups = [(x_value, group) for x_value, group in grouped]
         groups.sort(key=lambda item: _natural_category_key(item[0]))
         for x_order, (x_value, group) in enumerate(groups):
             summary = _numeric_summary(group[y_name], quantile_method=quantile_method)

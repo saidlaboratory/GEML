@@ -11,6 +11,7 @@ from enum import StrEnum
 from pydantic import JsonValue
 
 from geml.graph.schema import (
+    AST_FAMILY,
     EML_FAMILY,
     MACRO_FAMILY,
     strict_json_snapshot,
@@ -18,12 +19,13 @@ from geml.graph.schema import (
 
 MOTIF_SIGNATURE_VERSION = "geml-motif-v1"
 MOTIF_VOCABULARY_VERSION = "geml-motif-vocabulary-v1"
-_MOTIF_FAMILIES = frozenset({EML_FAMILY, MACRO_FAMILY})
+_MOTIF_FAMILIES = frozenset({AST_FAMILY, EML_FAMILY, MACRO_FAMILY})
 
 
 class MotifPool(StrEnum):
     """Graph families admitted to one mining run."""
 
+    AST = "ast"
     PURE_EML = "pure_eml"
     MACRO = "macro"
     MIXED = "mixed"
@@ -433,6 +435,8 @@ class MotifVocabulary:
                 raise ValueError("motif template lies below vocabulary support threshold")
             if template.support_count > self.training_transaction_count:
                 raise ValueError("motif support_count cannot exceed training_transaction_count")
+            if self.pool is MotifPool.AST and template.source_family != AST_FAMILY:
+                raise ValueError("AST vocabulary contains a non-AST motif")
             if self.pool is MotifPool.PURE_EML and template.source_family != EML_FAMILY:
                 raise ValueError("pure-EML vocabulary contains a non-EML motif")
             if self.pool is MotifPool.MACRO and template.source_family != MACRO_FAMILY:

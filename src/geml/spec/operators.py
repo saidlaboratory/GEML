@@ -6,11 +6,11 @@ source structure and generation gates consumed by later issues.
 
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StringConstraints
 
-from geml.spec.domains import DOMAIN_REGISTRY
+from geml.spec.domains import DOMAIN_REGISTRY, GrammarVersion
 
 StableText = Annotated[str, StringConstraints(min_length=1)]
 Arity = Annotated[StrictInt, Field(ge=0, le=2)]
@@ -45,6 +45,26 @@ class OperatorRecord(BaseModel):
     eml_construction_status: EMLConstructionStatus
     source_ids: tuple[StableText, ...]
     encoding_notes: StableText
+
+
+class GrammarV2OperatorRecord(OperatorRecord):
+    """Explicitly labeled v2 construction approved for conformance only.
+
+    Formula approval does not authorize source-corpus generation. Keeping the
+    generation flag false prevents this opt-in overlay from being mistaken for
+    a request to regenerate the immutable Goals 1--5 corpus.
+    """
+
+    grammar_version: Literal[GrammarVersion.V2] = GrammarVersion.V2
+    compiler_modes: tuple[Literal["official_v4", "clean_negation"], ...] = (
+        "official_v4",
+        "clean_negation",
+    )
+    enabled_for_generation: Literal[False] = False
+    conformance_approved: Literal[True] = True
+    approval_scope: Literal["bounded_compiler_conformance_only"] = (
+        "bounded_compiler_conformance_only"
+    )
 
 
 SOURCE_LEDGER_IDS: tuple[str, ...] = (
@@ -349,6 +369,90 @@ OPERATORS: tuple[OperatorRecord, ...] = (
 OPERATOR_REGISTRY = MappingProxyType({operator.name: operator for operator in OPERATORS})
 
 
+def _v2_source_constant(name: str, *, notes: str) -> GrammarV2OperatorRecord:
+    """Return a conformance-approved v2 copy without mutating the frozen v1 record."""
+
+    v1_record = OPERATOR_REGISTRY[name]
+    return GrammarV2OperatorRecord(
+        name=v1_record.name,
+        arity=v1_record.arity,
+        sympy_encoding=v1_record.sympy_encoding,
+        operator_family=v1_record.operator_family,
+        domain_modes=v1_record.domain_modes,
+        enabled_for_generation=False,
+        eml_construction_status=EMLConstructionStatus.APPROVED,
+        source_ids=v1_record.source_ids,
+        encoding_notes=notes,
+    )
+
+
+GRAMMAR_V2_OPERATOR_EXTENSIONS: tuple[GrammarV2OperatorRecord, ...] = (
+    GrammarV2OperatorRecord(
+        name="asin",
+        arity=1,
+        sympy_encoding="asin(argument, evaluate=False)",
+        operator_family="trigonometric",
+        domain_modes=_REAL_MODES,
+        enabled_for_generation=False,
+        eml_construction_status=EMLConstructionStatus.APPROVED,
+        source_ids=_ALL_STRUCTURAL_SOURCES,
+        encoding_notes=(
+            "Grammar-v2 only. The public real principal branch requires an argument in "
+            "[-1, 1]; the exact endpoints traverse the documented extended-value square-root "
+            "boundary in the lowered EML construction."
+        ),
+    ),
+    GrammarV2OperatorRecord(
+        name="acos",
+        arity=1,
+        sympy_encoding="acos(argument, evaluate=False)",
+        operator_family="trigonometric",
+        domain_modes=_REAL_MODES,
+        enabled_for_generation=False,
+        eml_construction_status=EMLConstructionStatus.APPROVED,
+        source_ids=_ALL_STRUCTURAL_SOURCES,
+        encoding_notes=(
+            "Grammar-v2 only. The public real principal branch requires an argument in "
+            "[-1, 1]; the exact endpoints traverse the documented extended-value square-root "
+            "boundary in the lowered EML construction."
+        ),
+    ),
+    GrammarV2OperatorRecord(
+        name="atan",
+        arity=1,
+        sympy_encoding="atan(argument, evaluate=False)",
+        operator_family="trigonometric",
+        domain_modes=_REAL_MODES,
+        enabled_for_generation=False,
+        eml_construction_status=EMLConstructionStatus.APPROVED,
+        source_ids=_ALL_STRUCTURAL_SOURCES,
+        encoding_notes=(
+            "Grammar-v2 only. The public principal branch accepts finite real arguments and "
+            "returns values in (-pi/2, pi/2); exact zero follows the documented extended-value "
+            "path of the lowered multiplication macro."
+        ),
+    ),
+    _v2_source_constant(
+        "pi",
+        notes=(
+            "Grammar-v2-only positive real source constant compiled from the sourced pure-EML "
+            "pi construction; it does not expose an imaginary source leaf."
+        ),
+    ),
+    _v2_source_constant(
+        "e",
+        notes=("Grammar-v2-only positive real source constant compiled exactly as exp(1)."),
+    ),
+)
+GRAMMAR_V2_OPERATOR_OVERRIDES = MappingProxyType(
+    {operator.name: operator for operator in GRAMMAR_V2_OPERATOR_EXTENSIONS}
+)
+GRAMMAR_V2_OPERATOR_REGISTRY_VERSION = GrammarVersion.V2
+GRAMMAR_V2_OPERATOR_REGISTRY = MappingProxyType(
+    {**OPERATOR_REGISTRY, **GRAMMAR_V2_OPERATOR_OVERRIDES}
+)
+
+
 def validate_operator_registry() -> None:
     """Raise ``ValueError`` when static operator metadata violates a registry invariant."""
 
@@ -378,10 +482,58 @@ def validate_operator_registry() -> None:
             raise ValueError(f"enabled operator {operator.name!r} does not have approved status")
 
 
+def validate_grammar_v2_operator_registry() -> None:
+    """Raise when the explicit v2 overlay mutates or weakens the v1 boundary."""
+
+    expected_extensions = ("asin", "acos", "atan", "pi", "e")
+    if tuple(GRAMMAR_V2_OPERATOR_OVERRIDES) != expected_extensions:
+        raise ValueError("grammar-v2 operator extensions have an unexpected order")
+    if set(GRAMMAR_V2_OPERATOR_REGISTRY) != set(OPERATOR_REGISTRY) | {
+        "asin",
+        "acos",
+        "atan",
+    }:
+        raise ValueError("grammar-v2 operator registry has an unexpected key set")
+    for name, record in OPERATOR_REGISTRY.items():
+        if name not in GRAMMAR_V2_OPERATOR_OVERRIDES and (
+            GRAMMAR_V2_OPERATOR_REGISTRY[name] is not record
+        ):
+            raise ValueError(f"grammar-v2 overlay replaced frozen v1 operator {name!r}")
+    for name in expected_extensions:
+        record = GRAMMAR_V2_OPERATOR_REGISTRY[name]
+        if (
+            not isinstance(record, GrammarV2OperatorRecord)
+            or record.grammar_version is not GrammarVersion.V2
+            or record.compiler_modes != ("official_v4", "clean_negation")
+            or record.enabled_for_generation
+            or not record.conformance_approved
+            or record.approval_scope != "bounded_compiler_conformance_only"
+            or record.eml_construction_status is not EMLConstructionStatus.APPROVED
+            or "complex" in record.domain_modes
+        ):
+            raise ValueError(f"grammar-v2 operator {name!r} violates its real approval gate")
+    for name in ("e", "pi"):
+        if (
+            OPERATOR_REGISTRY[name].enabled_for_generation
+            or OPERATOR_REGISTRY[name].eml_construction_status
+            is not EMLConstructionStatus.PENDING_VERIFICATION
+        ):
+            raise ValueError(f"grammar-v2 overlay mutated v1 source constant {name!r}")
+    if GRAMMAR_V2_OPERATOR_REGISTRY["imaginary_unit"] is not OPERATOR_REGISTRY["imaginary_unit"]:
+        raise ValueError("grammar-v2 must not replace or enable the reserved imaginary unit")
+
+
 def get_operator(name: str) -> OperatorRecord:
     """Return registered operator metadata, preserving ``KeyError`` for unknown names."""
 
     return OPERATOR_REGISTRY[name]
 
 
+def get_grammar_v2_operator(name: str) -> OperatorRecord:
+    """Return an operator from the explicit v2 overlay, preserving ``KeyError``."""
+
+    return GRAMMAR_V2_OPERATOR_REGISTRY[name]
+
+
 validate_operator_registry()
+validate_grammar_v2_operator_registry()

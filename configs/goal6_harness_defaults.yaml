@@ -1,0 +1,67 @@
+# Issue 6-4: frozen harness defaults shared by every Goals 6-9 training cell.
+#
+# These defaults are deliberately task-neutral and representation-neutral. No arm may override the
+# optimizer, epoch budget, early-stopping criterion, or compute-matching tolerances; doing so would
+# turn a controlled comparison into a per-channel tuning exercise.
+#
+# Seeds are preregistered in src/geml/learning/harness/seeds.py and are not configurable here.
+# A technical rerun reuses the same seed and records the failure cause, never a fresh seed.
+
+schema_version: geml-goal6-harness-config-v1
+
+run_name: goal6-harness-default
+output_root: outputs/final/goal6/harness
+
+# One of the three preregistered production seeds: 20260726, 20260727, 20260728.
+seed: 20260726
+
+# Issue 6-4 caps training at approximately 30 epochs. Exceeding this requires an explicit
+# max_epochs_exception_reason recorded in the configuration itself.
+max_epochs: 30
+max_epochs_exception_reason: null
+
+# bfloat16 is the intended H100 production precision; the harness falls back to float32 on devices
+# that do not support it and records which precision was actually used.
+precision: float32
+device: cpu
+
+deterministic: true
+require_production_seed: true
+
+batch_budget:
+  # Dynamic batching is bounded by node and edge counts rather than example count, because
+  # pure-EML graphs are much larger than AST or macro graphs for the same expression. A fixed
+  # example-count batch would silently give the channels different compute per optimizer step.
+  max_nodes_per_batch: 4096
+  max_edges_per_batch: 8192
+  max_examples_per_batch: 64
+  gradient_accumulation_steps: 1
+
+early_stopping:
+  # One preregistered criterion, frozen before training. Model selection uses validation data only;
+  # test and OOD views are evaluated exactly once after the configuration is frozen.
+  criterion: validation_loss
+  mode: min
+  patience: 5
+  min_delta: 0.0
+
+optimizer:
+  # Identical across all six arms. This is not a per-channel tuning surface.
+  name: adamw
+  learning_rate: 0.001
+  weight_decay: 0.01
+  gradient_clip_norm: 1.0
+
+compute_match:
+  # Equal parameter count is not equal compute. Matching is enforced on measured FLOPs under one
+  # frozen reference workload in addition to parameter count.
+  reference_workload: goal6-equivalence-reference-batch-v1
+  parameter_tolerance: 0.15
+  flop_tolerance: 0.25
+  comparison_unit: per_optimizer_step
+  total_optimizer_steps: 20000
+  # Channel label vocabularies differ, which changes embedding-table size. Those parameters are
+  # counted toward the match and measured, never treated as free.
+  vocabulary_embeddings_count_toward_match: true
+
+metadata: {}

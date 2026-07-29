@@ -15,6 +15,7 @@ from geml.compression.motif.boundary import (
 )
 from geml.compression.motif.vocabulary import MotifPool, MotifVocabulary
 from geml.graph.schema import (
+    AST_FAMILY,
     EML_FAMILY,
     MACRO_FAMILY,
     MOTIF_FAMILY,
@@ -328,6 +329,7 @@ def _validated_source_metadata(
         raise ValueError("invalid graph: " + "; ".join(validation.errors))
     source_family, source_mode = _family_and_mode(graph)
     accepted_families = {
+        MotifPool.AST: frozenset({AST_FAMILY}),
         MotifPool.PURE_EML: frozenset({EML_FAMILY}),
         MotifPool.MACRO: frozenset({MACRO_FAMILY}),
         MotifPool.MIXED: frozenset({EML_FAMILY, MACRO_FAMILY}),
