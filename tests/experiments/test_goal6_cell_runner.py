@@ -215,7 +215,7 @@ def test_missing_provider_is_an_explicit_failed_row(tmp_path: Path) -> None:
     assert row.commit == "b" * 40
 
 
-def test_unknown_view_and_missing_validation_fail_closed(tmp_path: Path) -> None:
+def test_unknown_empty_and_missing_views_fail_closed(tmp_path: Path) -> None:
     bad_view = ProductionCellRunner(
         {
             TRIVIAL_ARM.arm_id: lambda arm: {
@@ -230,6 +230,23 @@ def test_unknown_view_and_missing_validation_fail_closed(tmp_path: Path) -> None
     row = bad_view.run_cell(TRIVIAL_ARM, PRODUCTION_SEEDS[0], cell_config(tmp_path / "a"))
     assert row.status is CellStatus.FAILED
     assert "weird_split" in (row.failure_reason or "")
+
+    empty_view = ProductionCellRunner(
+        {
+            TRIVIAL_ARM.arm_id: lambda arm: {
+                "train": trivial_pairs(4),
+                "validation": trivial_pairs(2),
+                "test_iid": (),
+            }
+        },
+        encoder_config=EncoderConfig(),
+        commit="b" * 40,
+    )
+    row = empty_view.run_cell(TRIVIAL_ARM, PRODUCTION_SEEDS[0], cell_config(tmp_path / "c"))
+    assert row.status is CellStatus.FAILED
+    assert "empty" in (row.failure_reason or "")
+    assert "test_iid" in (row.failure_reason or "")
+    assert row.parameters is None, "an empty view must fail the cell before any training"
 
     no_validation = ProductionCellRunner(
         {TRIVIAL_ARM.arm_id: lambda arm: {"train": trivial_pairs(4)}},

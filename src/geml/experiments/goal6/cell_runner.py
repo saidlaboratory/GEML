@@ -401,6 +401,12 @@ def _validate_dataset(arm: ArmSpec, dataset: Mapping[str, Sequence[PairExample]]
             f"arm {arm.arm_id!r} provided unknown evaluation views {unknown}; views must use the "
             f"declared names {sorted(KNOWN_VIEWS)}"
         )
+    empty = sorted(view for view, examples in dataset.items() if not examples)
+    if empty:
+        raise CellRunnerError(
+            f"arm {arm.arm_id!r} provided empty evaluation views {empty}; a zero-example view "
+            "can never be evaluated, so the cell fails before training instead of after it"
+        )
     for view in REQUIRED_VIEWS:
         if not dataset.get(view):
             raise CellRunnerError(
@@ -438,8 +444,9 @@ class ProductionCellRunner:
         """Run one cell to a COMPLETE or explicit FAILED row; exceptions never escape."""
 
         started = time.monotonic()
-        config_hash = config_digest(config)
+        config_hash = ""  # replaced inside the try; empty only if hashing itself failed
         try:
+            config_hash = config_digest(config)
             provider = self.providers.get(arm.arm_id)
             if provider is None:
                 missing = (
