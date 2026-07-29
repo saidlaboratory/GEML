@@ -696,6 +696,8 @@ def _scaling_table(frame: pd.DataFrame, *, quantile_method: str) -> pd.DataFrame
         # list() preallocates via GroupBy.__len__, which builds .groups through
         # Categorical.from_codes and rejects null categories under dropna=False
         # on pandas 2.2/numpy 2.x; plain iteration never touches that path.
+        # sorted(grouped, key=...) preallocates through the same __len__ length
+        # hint and crashes identically, hence the comprehension + in-place sort.
         grouped = frame.groupby(x_name, dropna=False, sort=False)
         groups = [(x_value, group) for x_value, group in grouped]
         groups.sort(key=lambda item: _natural_category_key(item[0]))
