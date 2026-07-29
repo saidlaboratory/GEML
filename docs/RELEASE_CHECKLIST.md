@@ -6,10 +6,11 @@ Status: Phase-A checklist. Unchecked items are blockers, not implied completions
 
 - [x] Issue 6-0/#54 selected `requirements-lock.txt` as the single core/development lock;
       preproduction SHA-256:
-      `1ec81a07d64f969a58abb7ce205107e8e23b360258e330d134be1ccedae87c51`.
+      `55127abe427da5971ec0b0c36950093dbff60d57c18d76d2db2e79450d86b8ff`.
       The originally frozen value (`8ffe1353…`) never matched the committed lock file; it
       was re-frozen to the measured digest of the committed content on 2026-07-29 by lead
-      decision.
+      decision. The lock was regenerated from a full `pip freeze` on 2026-07-29 so every
+      transitive dependency is pinned; the freeze added no packages beyond the existing set.
 - [ ] Issue 12-0 final report is complete, checksum-authenticated, and refuses unsupported
       claims.
 - [ ] Issue 12-1 fresh-clone verification has run after all workstreams merge.

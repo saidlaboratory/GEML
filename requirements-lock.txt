@@ -1,7 +1,5 @@
 # Exact packages from the validated Python 3.12 development environment.
 # Install with: python -m pip install -r requirements-lock.txt
-PyYAML==6.0.3
-Pygments==2.20.0
 annotated-types==0.8.0
 contourpy==1.3.3
 cycler==0.12.1
@@ -19,9 +17,11 @@ psutil==7.2.2
 pyarrow==25.0.0
 pydantic==2.13.4
 pydantic_core==2.46.4
+Pygments==2.20.0
 pyparsing==3.3.2
 pytest==9.1.1
 python-dateutil==2.9.0.post0
+PyYAML==6.0.3
 ruff==0.16.0
 six==1.17.0
 sympy==1.14.0
