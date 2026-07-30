@@ -28,3 +28,6 @@ Thumbs.db
 /checkpoints/
 /data/corpus/
 /data/generated/
+
+# Internal working drafts and strategy docs — not part of the public repo
+/paper/

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GEML — one operator, tested honestly</title>
-<meta name="description" content="GEML is a controlled representation study: does collapsing every math operator into eml(x,y) = exp(x) − ln(y) help graph neural networks learn symbolic reasoning?">
+<title>GEML — one operator, measured honestly</title>
+<meta name="description" content="GEML is a controlled representation study: does collapsing every math operator into eml(x,y) = exp(x) − ln(y) help graph neural networks learn symbolic reasoning? The 250k-expression measurement is done, including the nulls and one published gate FAIL.">
 <style>
   :root{
     --paper:#f7f9f8;
@@ -86,6 +86,17 @@
   .hero p.dek{font-size:1.15rem;color:var(--ink-soft);max-width:38rem;margin:0}
   .hero p.dek strong{color:var(--ink)}
 
+  /* ---------- status strip ---------- */
+  .status{display:flex;flex-wrap:wrap;gap:.55rem;margin:1.7rem 0 0}
+  .status span{
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.03em;
+    border:1px solid var(--rule);border-radius:2px;padding:.28rem .55rem;
+    color:var(--ink-soft);background:var(--card);
+  }
+  .status span b{color:var(--ink);font-weight:600}
+  .status .fail b{color:var(--red)}
+  .status .done b{color:var(--green)}
+
   /* ---------- sections ---------- */
   section{padding:2.6rem 0 1rem}
   h2{font-size:1.65rem;font-weight:600;letter-spacing:-.005em;margin:0 0 1rem;line-height:1.2}
@@ -122,7 +133,7 @@
   .svg-ink{stroke:var(--ink)} .svg-ink-f{fill:var(--ink)}
   .svg-soft{fill:var(--ink-soft)} .svg-soft-s{stroke:var(--ink-soft)}
   .svg-red{stroke:var(--red)} .svg-red-f{fill:var(--red)}
-  .svg-green-f{fill:var(--green)}
+  .svg-green{stroke:var(--green)} .svg-green-f{fill:var(--green)}
   .svg-card{fill:var(--card)}
 
   /* ---------- tables ---------- */
@@ -148,11 +159,13 @@
     background:var(--paper);border:2px solid var(--blue);
   }
   .timeline li.done::before{background:var(--green);border-color:var(--green)}
+  .timeline li.fail::before{background:var(--red);border-color:var(--red)}
   .timeline .g{
     font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;
     text-transform:uppercase;color:var(--blue);
   }
   .timeline li.done .g{color:var(--green)}
+  .timeline li.fail .g{color:var(--red)}
   .timeline h3{margin:.15rem 0 .35rem;font-size:1.15rem}
   .timeline p{margin:.3rem 0;font-size:.97rem;color:var(--ink-soft)}
   /* gate set like a theorem statement */
@@ -175,6 +188,12 @@
   @media (max-width:38rem){.twocol{grid-template-columns:1fr}}
   ul.plain{padding-left:1.1rem;margin:.6rem 0}
   ul.plain li{margin:.4rem 0}
+
+  .callout{
+    background:var(--red-soft);border:1px solid var(--red);border-radius:2px;
+    padding:.85rem 1.1rem;margin:1.6rem 0;font-size:.97rem;
+  }
+  .callout b{color:var(--red)}
 
   footer{
     margin-top:3.5rem;border-top:1px solid var(--rule);
@@ -205,9 +224,17 @@
   <p class="dek">
     Odrzywołek (2026) proved that all elementary functions, and the constants π, e, and i, can be
     built from the constant 1 and this single operator. GEML tests whether that uniformity helps a
-    graph neural network learn symbolic reasoning, <strong>knowing that it makes the trees ~11× bigger.</strong>
-    This page is the plan, with the claims corrected to match the evidence.
+    graph neural network learn symbolic reasoning, <strong>knowing that it makes the trees far
+    bigger: production median α = 40.66.</strong> The representation study (Goals 1–5) is done on a
+    250,000-expression corpus; the learning study (Goals 6–12) is next. Every claim here is corrected
+    to match what was actually measured.
   </p>
+  <div class="status" aria-label="Project status at a glance">
+    <span class="done">Goals 1–5 · <b>complete (250k)</b></span>
+    <span>Goals 6–9, 11–12 · <b>planned, gated</b></span>
+    <span class="fail">Gate G10 · <b>published FAIL</b></span>
+    <span>learning models · <b>none trained yet</b></span>
+  </div>
 </div>
 
 <main class="wrap">
@@ -222,7 +249,7 @@
     neural network reading that tree never has to learn <em>what</em> an operator is, only
     <em>where things connect</em>: purely topological routing, three token types
     (<span class="mono">eml</span>, <span class="mono">1</span>, variables) instead of an open
-    vocabulary.
+    vocabulary. Whether that homogeneity actually helps is the hypothesis, not a result yet.
   </p>
   <figure aria-label="Diagram comparing a token sequence to a homogeneous EML tree">
     <svg viewBox="0 0 640 190" role="img">
@@ -268,15 +295,17 @@
   <h2><span class="no">§2</span>What the original proposal got wrong</h2>
   <p>
     The first proposal pitched “EML-native foundation models for universal mathematical
-    reasoning.” A 10k-expression prototype (<a href="https://github.com/sahilsinghthefirst/geml_experiments">Goals 1–5, complete</a>)
-    measured the premises. Where the data disagreed, the claim was rewritten in red, with the
-    evidence attached. GEML is now a <strong>controlled representation study</strong>, not a moonshot.
+    reasoning.” We measured its premises, first on a 10k prototype
+    (<a href="https://github.com/sahilsinghthefirst/geml_experiments">v0, Goals 1–5</a>), then for real
+    on the production 250,000-expression corpus in this repository. Where the data disagreed, the
+    claim was rewritten in red with the evidence attached. GEML is now a
+    <strong>controlled representation study</strong>, not a moonshot.
   </p>
   <ol class="corrections">
     <li>
       <span class="was"><del>Shrinking the vocabulary to one operator shrinks the math.</del></span>
-      <span class="now">Raw EML trees are ~11–12× larger than ASTs. Compression makes EML trainable; whether homogeneity then generalizes better is the hypothesis under test.</span>
-      <span class="why">evidence: mean α ≈ 10.6, median ≈ 11.4, vs threshold ≈ 1.56 (Goal 2)</span>
+      <span class="now">Raw EML trees are far larger than ASTs. Compression makes EML trainable; whether homogeneity then generalizes better is the hypothesis still under test.</span>
+      <span class="why">evidence: production median α = 40.66, mean 952.1; 0/250,000 below the per-family thresholds 1.29–1.50 (Goal 2)</span>
     </li>
     <li>
       <span class="was"><del>GPT-4-level mathematical competency at a fraction of the parameters.</del></span>
@@ -302,7 +331,7 @@
 </section>
 
 <section id="evidence" class="reveal">
-  <h2><span class="no">§3</span>The α threshold, and the race to get under it</h2>
+  <h2><span class="no">§3</span>The α threshold, and how far raw EML overshoots it</h2>
   <p>
     Let <span class="mono">α = |T<sub>EML</sub>| / |T<sub>AST</sub>|</span>, the factor by which the
     tree grows when rewritten in pure EML. Counting representable expressions
@@ -311,94 +340,113 @@
   </p>
   <p class="eqn">α &lt; 1 + log<sub>4<i>L</i></sub>(<i>K</i>) ≈ 1.56&ensp;<span style="font-size:.6em;color:var(--ink-soft)">(current grammar)</span></p>
   <p>
-    Raw EML misses that by an order of magnitude. Three families of compression (exact DAG
-    sharing, semantic e-graph rewriting, and motif dictionaries) close the gap. All figures below
-    are measured on the v1 corpus (10k expressions), converted with the official EML compiler, no
-    abbreviations, no hidden leaves.
+    Raw EML misses that by well over an order of magnitude. On the production corpus (250,000
+    expressions, compiled with the official-v4 EML compiler, no abbreviations, no hidden leaves)
+    the median α is 40.66 and the mean is 952.1, a heavy right tail rather than a typical 952× blow-up.
+    Under the six preregistered per-family thresholds (1.29–1.50), <strong>0 of 250,000
+    expressions</strong> fall below the line. The whole compression program exists to narrow that
+    gap honestly; the learning program tests whether what remains is worth it.
   </p>
 
-  <figure aria-label="Number line showing measured alpha values against the 1.56 threshold">
-    <svg viewBox="0 0 640 178" role="img">
-      <!-- log-ish scale axis: alpha 0.5 .. 12 -->
-      <line x1="30" y1="120" x2="610" y2="120" class="svg-ink" stroke-width="1.2"/>
-      <!-- ticks: positions hand-placed on log scale: 0.5→30, 1→155, 2→280, 4→405, 8→530, 12→603 -->
+  <figure aria-label="Log-scale number line of production alpha statistics against the break-even threshold, showing zero of 250,000 expressions passing the preregistered per-family thresholds">
+    <svg viewBox="0 0 640 180" role="img">
+      <!-- break-even zone: alpha in [1, 1.56) -->
+      <rect x="70" y="44" width="26" height="80" fill="var(--green)" opacity=".12"/>
+      <!-- axis -->
+      <line x1="60" y1="124" x2="616" y2="124" class="svg-ink" stroke-width="1.2"/>
+      <!-- decade ticks: x(v) = 70 + 135*log10(v) -->
       <g class="svg-soft" font-family="monospace" font-size="11" text-anchor="middle">
-        <line x1="30"  y1="120" x2="30"  y2="127" class="svg-soft-s"/><text x="30"  y="142">0.5</text>
-        <line x1="155" y1="120" x2="155" y2="127" class="svg-soft-s"/><text x="155" y="142">1</text>
-        <line x1="280" y1="120" x2="280" y2="127" class="svg-soft-s"/><text x="280" y="142">2</text>
-        <line x1="405" y1="120" x2="405" y2="127" class="svg-soft-s"/><text x="405" y="142">4</text>
-        <line x1="530" y1="120" x2="530" y2="127" class="svg-soft-s"/><text x="530" y="142">8</text>
-        <line x1="603" y1="120" x2="603" y2="127" class="svg-soft-s"/><text x="603" y="142">12</text>
-        <text x="320" y="166">α (log scale), smaller is better</text>
+        <line x1="70"  y1="124" x2="70"  y2="131" class="svg-soft-s"/><text x="70"  y="146">1</text>
+        <line x1="205" y1="124" x2="205" y2="131" class="svg-soft-s"/><text x="205" y="146">10</text>
+        <line x1="340" y1="124" x2="340" y2="131" class="svg-soft-s"/><text x="340" y="146">100</text>
+        <line x1="475" y1="124" x2="475" y2="131" class="svg-soft-s"/><text x="475" y="146">1,000</text>
+        <line x1="610" y1="124" x2="610" y2="131" class="svg-soft-s"/><text x="610" y="146">10,000</text>
+        <text x="336" y="170">raw pure-EML α (log scale), smaller is better</text>
       </g>
-      <!-- threshold at 1.56 → x = 155 + 125*log2(1.56)=155+125*0.641≈235 -->
-      <line x1="235" y1="28" x2="235" y2="120" class="svg-red" stroke-width="1.4" stroke-dasharray="5 4"/>
-      <text x="235" y="18" text-anchor="middle" class="svg-red-f" font-family="monospace" font-size="11">threshold 1.56</text>
-      <!-- points: raw 11.4 → 155+125*log2(11.4)=155+125*3.511≈594 -->
+      <!-- threshold at alpha 1.56 -> x = 70 + 135*log10(1.56) = 96 -->
+      <line x1="96" y1="34" x2="96" y2="124" class="svg-red" stroke-width="1.4" stroke-dasharray="5 4"/>
+      <text x="120" y="26" text-anchor="start" class="svg-red-f" font-family="monospace" font-size="11">break-even ≈ 1.56</text>
+      <!-- 0/250k callout on the win zone -->
+      <text x="120" y="42" text-anchor="start" class="svg-red-f" font-family="monospace" font-size="11" font-weight="bold">0 / 250,000 pass</text>
+      <path d="M118 38 C 108 40, 100 44, 92 52" fill="none" class="svg-red" stroke-width="1.1"/>
+      <!-- markers -->
       <g font-family="monospace" font-size="11">
-        <circle cx="594" cy="120" r="5" class="svg-red-f"/>
-        <text x="594" y="100" text-anchor="middle" class="svg-ink-f">raw EML</text>
-        <text x="594" y="86"  text-anchor="middle" class="svg-soft">11.4</text>
-        <!-- DAG 3.5 → 155+125*1.807≈381 -->
-        <circle cx="381" cy="120" r="5" class="svg-ink-f"/>
-        <text x="381" y="100" text-anchor="middle" class="svg-ink-f">EML-DAG</text>
-        <text x="381" y="86"  text-anchor="middle" class="svg-soft">3.5</text>
-        <!-- e-graph 3.36 → 155+125*1.748≈373; nudge label lower to avoid overlap -->
-        <circle cx="373" cy="120" r="3" class="svg-soft" opacity=".9"/>
-        <text x="352" y="62" text-anchor="middle" class="svg-soft">+e-graph 3.36</text>
-        <!-- macro 0.78 → 155+125*log2(0.78)=155-44.8≈110 -->
-        <circle cx="110" cy="120" r="5" class="svg-green-f"/>
-        <text x="110" y="100" text-anchor="middle" class="svg-ink-f">macro graph</text>
-        <text x="110" y="86"  text-anchor="middle" class="svg-soft">0.78</text>
+        <!-- median 40.66 -> x = 70 + 135*log10(40.66) = 287 -->
+        <line x1="287" y1="124" x2="287" y2="100" class="svg-ink" stroke-width="1"/>
+        <circle cx="287" cy="124" r="5" class="svg-red-f"/>
+        <text x="287" y="94" text-anchor="middle" class="svg-soft">median</text>
+        <text x="287" y="80" text-anchor="middle" class="svg-ink-f" font-weight="bold">α = 40.66</text>
+        <!-- p90 385 -> x = 419 -->
+        <line x1="419" y1="124" x2="419" y2="108" class="svg-ink" stroke-width="1"/>
+        <circle cx="419" cy="124" r="4" class="svg-ink-f"/>
+        <text x="419" y="102" text-anchor="middle" class="svg-soft">p90 385</text>
+        <!-- p99 10,449 -> x clamped near right edge -->
+        <line x1="608" y1="124" x2="608" y2="108" class="svg-ink" stroke-width="1"/>
+        <circle cx="608" cy="124" r="4" class="svg-ink-f"/>
+        <text x="608" y="102" text-anchor="end" class="svg-soft">p99 10,449</text>
       </g>
-      <!-- sweep arrow -->
-      <path d="M586 50 C 480 -6, 220 -6, 118 74" fill="none" stroke="var(--green)" stroke-width="1.2" stroke-dasharray="3 4" opacity=".8"/>
-      <path d="M118 74 l9 -7 -3 11 z" class="svg-green-f"/>
     </svg>
     <figcaption>
-      Median α on the v1 corpus. Exact DAG sharing brings 11.4 → 3.5; e-graph rewriting (positive-real rules)
-      reaches ≈ 3.36 but pushes only ~5% of expressions below threshold; frequent-motif compression is the
-      strongest step, 7.4× smaller than the EML-DAG baseline. Macro graphs (shown) reach α ≈ 0.78 but are
-      structurally close to an AST-DAG, so they double as the interpretable control.
+      Raw pure-EML expansion on the production 250k corpus (Goal 2). Median α 40.66, mean 952.1,
+      p90 385.1, p99 10,448.6, max 6.48M. The green sliver marks the grammar-wide break-even
+      (≈1.56); 0 of 250,000 expressions clear the stricter preregistered per-family thresholds
+      (1.29–1.50), the smallest expansion in the corpus being α = 1.5.
     </figcaption>
   </figure>
 
+  <h3>Compression narrows the gap, but never closes it</h3>
+  <p>
+    Three families of compression were run over the same 250k corpus. Each stage is lossless or
+    verifier-gated, and each result traces to an authenticated artifact. The honest headline:
+    exact sharing shrinks EML dramatically, yet pure EML never becomes structurally competitive
+    with the source AST.
+  </p>
   <div class="tblwrap"><table>
-    <thead><tr><th>Method</th><th>What it does</th><th>Median gain vs EML-DAG</th><th>Verdict</th></tr></thead>
+    <thead><tr><th>Stage</th><th>What it does</th><th>Production result</th><th>Verdict</th></tr></thead>
     <tbody>
-      <tr><td>Pure EML-DAG</td><td>exact subtree sharing</td><td class="num">1.0× (baseline)</td><td>lossless control; every claim traces to it</td></tr>
-      <tr><td>E-graph (positive-real)</td><td>semantic rewrites + extract</td><td class="num">~1.2×</td><td>optional pre-pass; needs positivity assumptions</td></tr>
-      <tr><td>Macro graph</td><td>relabeled compact AST-DAG</td><td class="num">5.25×</td><td>validated; ≈ AST-DAG structurally</td></tr>
-      <tr><td>Frequent motif</td><td>dictionary of common subgraphs</td><td class="num win">7.40×</td><td class="win">best simple compressor, reconstruction-verified</td></tr>
-      <tr><td>Learned motif</td><td>scored dictionary</td><td class="num">7.11×</td><td class="null">null result, no edge over frequency; dropped</td></tr>
-      <tr><td>Neural e-graph ranker</td><td>fast candidate selection</td><td class="num">~1.0×</td><td class="null">109× scoring speedup only; not a compression win</td></tr>
+      <tr><td>Raw pure EML-DAG</td><td>expand every op into <span class="mono">eml</span></td><td class="num">median α 40.66 · mean 952.1</td><td>0/250k below threshold (Goal 2)</td></tr>
+      <tr><td>EML-DAG (exact sharing)</td><td>exact subtree sharing</td><td class="num">39.4× mean EML shrink</td><td>lossless control; EML-DAG/AST-tree mean 8.33 (Goal 3)</td></tr>
+      <tr><td>vs source AST</td><td>the fairness question</td><td class="num">0 / 250,000</td><td class="null">EML-DAG never beats the AST tree; best remaining ratio 8/7 (Goal 3)</td></tr>
+      <tr><td>E-graph, positive-real</td><td>semantic rewrites + extract</td><td class="num">23.9% / 27.6% of costed rows</td><td>improves a minority; mean 2.4–2.8% smaller; needs positivity (Goal 4)</td></tr>
+      <tr><td>Frequent motif</td><td>dictionary of common subgraphs</td><td class="num win">strongest simple</td><td class="win">the practical lossless channel, reconstruction-verified (Goal 5)</td></tr>
+      <tr><td>Learned motif</td><td>scored dictionary</td><td class="num null">324.5M vs 317.7M bits</td><td class="null">null result: loses to equal-budget frequency, dropped (Goal 5)</td></tr>
+      <tr><td>Neural e-graph ranker</td><td>fast candidate scoring</td><td class="num null">loses to heuristic</td><td class="null">null result: a scoring-speed baseline, not a compression win (Goal 5)</td></tr>
     </tbody>
   </table></div>
   <p class="note">
-    Null results are recorded with the same prominence as wins: the learned methods that didn’t pay off
-    are documented and off the critical path. 262/262 tests green on a fresh clone of the prototype.
+    Null results are recorded with the same prominence as wins: the two learned methods that didn’t
+    pay off (learned-motif selection, neural ranker) are documented, ordered ahead of the positive
+    findings, and off the critical path. Every number above is verified against the per-goal
+    summaries in <span class="mono">docs/goals/</span>.
   </p>
 
-  <h3>Three channels carry forward into every experiment</h3>
+  <h3>Three channels carry forward into every learning experiment</h3>
   <div class="channels">
-    <div><b>pure EML-DAG</b><p>The canonical, assumption-free control. Non-negotiable.</p></div>
-    <div><b>motif-EML-DAG</b><p>The practical channel: 7.4× smaller, lossless, cheap to compute.</p></div>
-    <div><b>AST-DAG</b><p>The fairness baseline: separates “graphs help” from “EML helps.”</p></div>
+    <div><b>pure EML-DAG</b><p>The canonical, assumption-free control. Non-negotiable; every EML claim traces back to it.</p></div>
+    <div><b>motif-EML-DAG</b><p>The practical channel: the strongest simple lossless compressor, cheap to compute.</p></div>
+    <div><b>AST-DAG</b><p>The fairness baseline: separates “graph sharing helps” from “EML helps.”</p></div>
   </div>
 </section>
 
 <section id="plan" class="reveal">
   <h2><span class="no">§4</span>Goals 6–12, each behind a gate</h2>
   <p>
-    Goals 1–5 (data, expansion study, DAG, e-graph, ML compression) are done in the prototype and will be
-    <strong>rebuilt from scratch at scale</strong> in this repository, not copied. Every learning goal ends at a
-    gate: an explicit pass/fail criterion that decides whether the next goal proceeds, proceeds narrowed, or stops.
+    Goals 1–5 (data, expansion study, DAG, e-graph, ML-facing compression) are complete on the
+    production corpus. The learning goals come next, and every one ends at a <strong>gate</strong>:
+    an explicit pass/fail criterion that decides whether the next goal proceeds, proceeds narrowed,
+    or stops.
   </p>
+  <div class="callout">
+    <b>No learning model has been trained yet.</b> There are no equivalence, proof, or
+    symbolic-regression results on this page, and there will be none until the experiments below
+    actually run. When they do, the outcomes, positive <em>or</em> null, get published with equal
+    prominence, the same way Goals 1–5 were.
+  </div>
   <ol class="timeline">
     <li class="done">
-      <span class="g">Goals 1–5 · complete (prototype)</span>
+      <span class="g">Goals 1–5 · complete (250k corpus)</span>
       <h3>Representation &amp; compression pipeline</h3>
-      <p>Generator, AST/EML converters, expansion study, DAG, e-graphs, motifs; to be re-implemented at 10–100× scale with full review.</p>
+      <p>Deterministic 250,000-expression corpus (175k/25k/25k/25k, QA-gated), exact expansion study, exact AST/EML DAG sharing, verifier-gated e-graph optimization, and lossless macro/motif compression with a 1.25M-graph five-representation export. All clean-room, artifact-backed, 0 retained failures.</p>
     </li>
     <li>
       <span class="g">Goal 6</span>
@@ -424,11 +472,11 @@
       <p>EML’s predicted native home: recover f(x) from samples. EML-space vs AST-space search, against PySR/GP and transformer-SR baselines.</p>
       <span class="gate"><b>Gate G9.</b> Exact recovery above the GP baseline at matched budget, or a documented negative.</span>
     </li>
-    <li>
-      <span class="g">Goal 10</span>
-      <h3>Domain expansion: trig</h3>
-      <p>Rescoped to opt-in grammar-v2 compiler conformance only: an explicitly selected trig surface (asin, acos, atan, π, e) beside the untouched v1 default, audited on exact fingerprints, strict purity, and high-precision numerics. No corpus rebuild, no α re-measurement, no grid re-runs under this gate.</p>
-      <span class="gate"><b>Gate G10.</b> Opt-in grammar-v2 compiler conformance only. Final-tier verdict published 2026-07-29: <b>fail</b>, on exactly the eight preregistered asin/acos endpoint cells; no corpus or α claims.</span>
+    <li class="fail">
+      <span class="g">Goal 10 · gate published</span>
+      <h3>Domain expansion: trig grammar-v2</h3>
+      <p>Scoped to opt-in grammar-v2 compiler conformance only: an explicitly selected surface (asin, acos, atan, π, e) beside the untouched v1 default, audited on exact fingerprints, strict purity, and 100-digit numerics. No corpus rebuild, no α re-measurement, no grid re-runs under this gate.</p>
+      <span class="gate"><b>Gate G10.</b> Final-tier verdict published 2026-07-29 (lead decision): <b>fail</b>. 74 retained rows, zero integrity/coverage/v1-drift failures, and exactly the eight preregistered asin/acos endpoint cells nonfinite in high-precision raw-tree evaluation. Published honest rather than revised into a pass.</span>
     </li>
     <li>
       <span class="g">Goal 11</span>
@@ -444,6 +492,7 @@
   </ol>
 
   <h3>Predictions on record</h3>
+  <p class="note">Falsifiable, made before the learning runs, kept here so they can be checked against results, not quietly revised after.</p>
   <div class="tblwrap"><table>
     <thead><tr><th>Task</th><th>Prediction (falsifiable)</th></tr></thead>
     <tbody>
@@ -459,8 +508,8 @@
   <h2><span class="no">§5</span>Who does what</h2>
   <div class="twocol">
     <div>
-      <b class="tag">Group A · pipeline rebuild</b>
-      <p>Re-implements Goals 1–5 from scratch at large scale: bigger corpus, agent-assisted development with thorough human + agent review. Compute: H100 hours if available, RTX 5090 over SSH otherwise.</p>
+      <b class="tag">Group A · pipeline</b>
+      <p>Owns Goals 1–5 at production scale: corpus generation, converters, DAG/e-graph/motif compression, agent-assisted with thorough human + agent review. Compute: H100 hours if available, RTX 5090 over SSH otherwise.</p>
     </div>
     <div>
       <b class="tag">Group B · architecture &amp; learning</b>
@@ -472,7 +521,7 @@
     <li><strong>Documentation is continuous:</strong> every member documents their work as it lands, with no end-of-project crunch. This is what makes the paper writable.</li>
     <li><strong>Paper:</strong> 5–7 days before the deadline, two members start writing; the rest become reviewers once code is frozen.</li>
     <li><strong>Open decision:</strong> which constants to implement. π and e are candidates; <em>i</em> is likely out (it would change the pipeline fundamentally).</li>
-    <li><strong>Agent policy:</strong> the prototype repo is for understanding, not for templating; agents rebuild here from specs, never copy its structure.</li>
+    <li><strong>Clean-room policy:</strong> the v0 prototype is for understanding, not for templating; this repo is rebuilt from specs, never by copying its structure.</li>
   </ul>
 </section>
 
@@ -486,7 +535,7 @@
       <a href="https://github.com/sahilsinghthefirst/geml_experiments">v0 prototype (Goals 1–5)</a> ·
       <a href="https://sites.google.com/view/mathnlp2026">MathNLP 2026</a>
     </p>
-    <p>eml(x, y) = exp(x) − ln(y). Odrzywołek, 2026. Claims corrected July 2026.</p>
+    <p>eml(x, y) = exp(x) − ln(y). Odrzywołek, 2026. Numbers verified against docs/goals/. Claims corrected July 2026.</p>
   </div>
 </footer>
 
