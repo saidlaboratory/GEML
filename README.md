@@ -65,7 +65,7 @@ Let `α = |T_EML| / |T_AST|` be the expansion factor when an AST is rewritten in
 α < 1 + log_{4L}(K)
 ```
 
-where `K` = number of operator types and `L` = number of leaf symbols. Across the six preregistered family grammars the threshold runs from **1.29 to 1.50** ([Goal 2](docs/goals/goal2/GOAL2_SUMMARY.md)) — even the most generous bar is ~1.5. The v0 prototype estimated raw EML at α ≈ 11.4; the production 250k run measured **median α = 40.66** (mean 952.1) — more than an order of magnitude over the highest threshold, and ~4× worse than the prototype suggested. The entire compression program (Goals 3–5) exists to close that gap honestly, and the learning program (Goals 6–11) tests whether what remains is worth it.
+where `K` = number of operator types and `L` = number of leaf symbols. For the full grammar this counting break-even is ≈ **1.56**; across the six preregistered family grammars the operative thresholds run from **1.29 to 1.50** ([Goal 2](docs/goals/goal2/GOAL2_SUMMARY.md)) — even the most generous bar is ~1.5. The v0 prototype estimated raw EML at α ≈ 11.4; the production 250k run measured **median α = 40.66** (mean 952.1) — more than an order of magnitude over the highest threshold, and ~4× worse than the prototype suggested. The entire compression program (Goals 3–5) exists to close that gap honestly, and the learning program (Goals 6–11) tests whether what remains is worth it.
 
 ## 4. Production results (Goals 1–5, 250k corpus — the numbers that count)
 
