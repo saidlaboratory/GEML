@@ -1,0 +1,41 @@
+# Issue 6-3 width-freeze preflight: measurement inputs for the pending width/virtual-node freeze.
+#
+# configs/goal6_grid.yaml records arms.graph.hidden_width and use_virtual_node as
+# pending_preflight_freeze. Run
+#
+#   python -m geml.learning.preflight --config configs/goal6_preflight.yaml
+#
+# to measure every candidate against the compute-matched prefix-transformer control. The tool
+# emits a JSON + markdown proposal; the freeze itself stays a human/lead edit of the grid config.
+
+schema_version: geml-goal6-width-preflight-v1
+
+output_root: outputs/preflight/goal6_width
+
+candidates:
+  # Must stay inside the single permitted issue 6-3 comparison.
+  hidden_widths: [64, 96]
+  virtual_node: [false, true]
+
+transformer_control:
+  # The control search space: d_model x num_layers. Heads and the feed-forward multiple stay at
+  # the frozen prefix-transformer defaults (4 heads, 2x feed-forward).
+  d_model: [64, 96, 128]
+  num_layers: [2, 3, 4]
+  num_heads: 4
+  feedforward_multiple: 2
+  max_length: 512
+  vocabulary_size: 256
+
+matching:
+  # The proposal gate. FLOP tolerance is reported with a flag but does not gate, because
+  # attention is quadratic in sequence length while message passing is linear in edges.
+  parameter_relative_tolerance: 0.10
+  flop_relative_tolerance: 0.50
+
+batch:
+  # Point shard_paths at materialized issue 6-2 channel shards for a real training batch on the
+  # H100 node. Null falls back to the documented synthetic stand-in and the report labels it.
+  shard_paths: null
+  channel: null
+  graph_limit: 32
