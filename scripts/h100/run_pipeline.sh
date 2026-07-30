@@ -26,7 +26,7 @@ steps, in execution order:
   corpus-pilot       regen fallback only: Goal 1 pilot stage (10k rows, 2 deterministic runs)
   corpus-final       regen fallback only: Goal 1 final stage (250k rows, ~28 GB RAM)
   pairs              production pair build (65k pairs from the frozen corpus)
-  channels           materialize the four channel shard sets       [BLOCKED: no driver]
+  channels           materialize the four channel shard sets (needs GEML_MACRO_VOCABULARY)
   width-preflight    goal6 encoder width freeze                    [BLOCKED: sibling branch]
   goal6-pilot        30-60 min 2-GPU throughput pilot (required before 4-GPU use)
   goal6-grid         six-arm x three-seed grid across 4 GPUs
@@ -88,8 +88,17 @@ pairs)
 
 channels)
     note "materialize ast_dag / pure_eml_dag / frequent_macro_motif_dag / motif_ast_fair_control shards"
-    blocked "no production materialization driver exists; geml.learning.datasets.materialize \
-exposes materialize_graph/write_channel_shard as APIs only (runbook PREREQUISITES item 4)"
+    budget "measured pilot: ast_dag+pure_eml_dag over the 9,039-accepted-pair pilot build in"
+    budget "822 s wall / 4.01 GB peak RSS on the M1 dev CPU (single process, /usr/bin/time -l);"
+    budget "motif channels and 65k scale: pending."
+    budget "CPU only. GEML_MACRO_VOCABULARY must point at the Goal 5 frequent macro-motif"
+    budget "vocabulary artifact (selected_frequent.vocabulary.json,"
+    budget "schema geml-goal5-motif-vocabulary-artifact-v1) from the delivered artifacts;"
+    budget "without it the two motif channels are recorded unavailable and the driver exits 3."
+    python3 -m geml.learning.datasets.materialize \
+        --config configs/goal6_channels.yaml \
+        --pairs-root outputs/final/goal6/pairs \
+        --macro-vocabulary "${GEML_MACRO_VOCABULARY:?set GEML_MACRO_VOCABULARY to the Goal 5 selected_frequent.vocabulary.json}"
     ;;
 
 width-preflight)
@@ -101,21 +110,30 @@ after it lands, freeze hidden_width/use_virtual_node in configs/goal6_grid.yaml,
 goal6-pilot)
     note "mandatory 30-60 min throughput pilot on 2 GPUs (ML_REPRODUCIBILITY: 4 GPUs are"
     note "conditional on this recorded pilot; record GPU-hours and wall time separately)"
-    budget "30-60 min wall by definition; per-cell throughput is the measurement output"
-    blocked "no per-cell goal6 production entry point exists yet to hand to schedule_cells.py \
-(runbook PREREQUISITES item 4); once it lands: \
-python3 scripts/h100/schedule_cells.py --manifest outputs/final/goal6/grid/grid.manifest.json \
---gpus 0,1 --cmd '<per-cell command> --arm {arm_id} --seed {seed}'"
+    budget "30-60 min wall by definition; per-cell throughput is the measurement output."
+    budget "run_cell refuses (exit 2, no row) while configs/goal6_grid.yaml still has"
+    budget "hidden_width/use_virtual_node pending the width preflight (runbook prereq 5)."
+    [ -f outputs/final/goal6/grid/grid.manifest.json ] || \
+        python3 -m geml.experiments.goal6.run_cell --write-manifest
+    python3 scripts/h100/schedule_cells.py \
+        --manifest outputs/final/goal6/grid/grid.manifest.json \
+        --gpus 0,1 --cell-timeout 3600 \
+        --cmd 'PYTHONPATH=src python3 -m geml.experiments.goal6.run_cell --cell-id {cell_id}'
     ;;
 
 goal6-grid)
     note "goal6 six-arm x three-seed grid (18 cells) across 4 GPUs"
     budget "per-cell wall: pending the goal6-pilot measurement; caps: 30 epochs / 20k optimizer"
-    budget "steps / patience 5 per cell (configs/goal6_harness_defaults.yaml)"
-    blocked "same per-cell entry point gap as goal6-pilot, and 4-GPU use is not authorized \
-until the pilot is recorded; once both hold: \
-python3 scripts/h100/schedule_cells.py --manifest outputs/final/goal6/grid/grid.manifest.json \
---gpus 0,1,2,3 --cmd '<per-cell command> --arm {arm_id} --seed {seed}'"
+    budget "steps / patience 5 per cell (configs/goal6_harness_defaults.yaml)."
+    budget "4-GPU use is authorized only after the recorded goal6-pilot (runbook prereq 6);"
+    budget "prefix_transformer/trivial_floor cells record explicit FAILED rows until their"
+    budget "production dataset providers land (runbook prereq 4)."
+    [ -f outputs/final/goal6/grid/grid.manifest.json ] || \
+        python3 -m geml.experiments.goal6.run_cell --write-manifest
+    python3 scripts/h100/schedule_cells.py \
+        --manifest outputs/final/goal6/grid/grid.manifest.json \
+        --gpus 0,1,2,3 \
+        --cmd 'PYTHONPATH=src python3 -m geml.experiments.goal6.run_cell --cell-id {cell_id}'
     ;;
 
 goal7-validate)

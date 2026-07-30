@@ -54,18 +54,34 @@ exists). Nothing here was measured on an H100; this repo has never run on one.
    `run_grid` CLI currently implements `--validate-only` plus injected
    executors only.
 
-4. **Missing production entry points (implementation gaps, not config gaps):**
-   - a channel-materialization driver: pair shards → four
-     `GraphTensorV1` channel shard sets.
-     `geml.learning.datasets.materialize` has the full API
-     (`materialize_graph`, `mine_motif_ast_control_vocabulary`,
-     `compress_motif_ast_control`, `write_channel_shard`) but no CLI;
-   - a production `ChannelRegistry` implementation for
-     `geml.experiments.goal6.run_grid.build_manifest` (today only the Protocol
-     and test fixtures exist), which also writes `grid.manifest.json`;
-   - a per-cell goal6 production entry point binding `ShardChannelProvider` +
-     `ProductionCellRunner` + `GridRunner` for one `(arm, seed)` — this is the
-     command `schedule_cells.py` needs in `--cmd`.
+4. **Production entry points — RESOLVED on this branch, with two honest
+   remainders.** The three gaps this item used to name now exist and are
+   CPU-tested end to end
+   (`tests/learning/test_materialize_channels.py`,
+   `tests/learning/test_goal6_channel_chain.py`):
+   - `python -m geml.learning.datasets.materialize` materializes the four
+     channel shard sets from the built pair shards (driver:
+     `geml.learning.datasets.materialize_channels`, reusing the frozen
+     `materialize_graph`/`write_channel_shard` API);
+   - `geml.experiments.goal6.registry.ProductionChannelRegistry` satisfies the
+     `run_grid.ChannelRegistry` protocol over the materialized, checksum-verified
+     shards, and `python -m geml.experiments.goal6.run_cell --write-manifest`
+     freezes `grid.manifest.json` through `build_manifest`;
+   - `python -m geml.experiments.goal6.run_cell --cell-id {cell_id}` runs one
+     `(arm, seed)` cell (registry → `ShardChannelProvider` →
+     `ProductionCellRunner`) and writes `cells/<cell_id>.json` exactly where
+     `GridRunner.existing_row` and `schedule_cells.py` read it: exit 0 on a
+     COMPLETE row, exit 1 with the FAILED row still written, exit 2 with no row
+     when the cell cannot honestly be attempted (missing manifest, pending
+     width freeze, commit mismatch).
+   Remainders: (a) the two motif channels need the Goal 5 frequent macro-motif
+   vocabulary artifact (`selected_frequent.vocabulary.json`, schema
+   `geml-goal5-motif-vocabulary-artifact-v1`, via `GEML_MACRO_VOCABULARY`);
+   without it the driver records them per-channel `unavailable` and exits 3 —
+   it never substitutes or silently skips. (b) the `prefix_transformer` and
+   `trivial_floor` arms still have no production dataset providers; their
+   cells record explicit FAILED rows naming the missing input until that
+   binding lands.
 
 5. **Goal 6 width freeze.** `configs/goal6_grid.yaml` has
    `hidden_width: pending_preflight_freeze` and
@@ -147,10 +163,10 @@ unmet.
 | a3 | `corpus-pilot` (fallback) | `--stage pilot` (two deterministic runs) | ? | ? | pending |
 | a4 | `corpus-final` (fallback) | `--stage final` (250k rows) | ? | **~28 GB** | RAM measured (memory-gated on the 16 GB M1 laptop; fits the 256 GB+ node); wall pending |
 | b | `pairs` | `python -m geml.data.pairs --config configs/goal6_pairs.yaml` | ~3.7 h at the measured M1 rate; **2–4 h estimate** on server CPU | < 8 GB estimate | measured pilot: **34 min / 10k rows, M1 CPU, single process**; 65k-row scale-up is an estimate |
-| c | `channels` | BLOCKED (prereq 4) — four channel shard sets from pair shards | ? | ? | pending |
+| c | `channels` | `geml.learning.datasets.materialize --config configs/goal6_channels.yaml` | **822 s measured** (pilot, ast_dag+pure_eml_dag, M1 CPU); 65k scale pending | **4.01 GB peak RSS measured** at pilot scale | measured pilot (see step c); motif channels pending the Goal 5 vocabulary artifact |
 | d | `width-preflight` | BLOCKED (prereq 5) — sibling branch `h100/width-preflight` | ? | ? | pending |
-| e1 | `goal6-pilot` | `schedule_cells.py --gpus 0,1` on 2 cells | 30–60 min | ? | wall fixed by policy; throughput is the output |
-| e2 | `goal6-grid` | `schedule_cells.py --gpus 0,1,2,3`, 18 cells | pending pilot; caps: 30 epochs / 20k steps / patience 5 per cell | ? | pending |
+| e1 | `goal6-pilot` | `schedule_cells.py --gpus 0,1 --cmd '… goal6.run_cell --cell-id {cell_id}'` | 30–60 min | ? | wall fixed by policy; throughput is the output; gated on the width freeze (prereq 5) |
+| e2 | `goal6-grid` | `schedule_cells.py --gpus 0,1,2,3`, same `--cmd`, 18 cells | pending pilot; caps: 30 epochs / 20k steps / patience 5 per cell | ? | pending |
 | e3 | `goal7-validate` | `goal7.run_grid --validate-only` | seconds | small | measured today on M1 (prints 15 blockers) |
 | e4 | `goal7-grid` | BLOCKED (prereq 3); 18 cells | ≤ 2 h/cell → **≤ 36 GPU-h hard cap** (`wall_time_seconds: 7200`) | ? | cap by construction, not an estimate |
 | f | `analysis` | goal6/goal7 summaries + gates + final report | minutes | small | estimate |
@@ -181,13 +197,29 @@ Linear scaling to 65k rows gives ~3.7 h; treat 2–4 h on the node's server CPU
 as an **estimate** — the build is sequential, so more cores do not help
 without further work.
 
-**(c) Channel materialization.** Blocked on the driver (prerequisite 4). Once
-it exists: materialize all four channels (`ast_dag`, `pure_eml_dag`,
+**(c) Channel materialization.** Real, landed on this branch:
+
+```bash
+GEML_MACRO_VOCABULARY=/abs/path/selected_frequent.vocabulary.json \
+PYTHONPATH=src python3 -m geml.learning.datasets.materialize \
+  --config configs/goal6_channels.yaml \
+  --pairs-root outputs/final/goal6/pairs
+```
+
+Materializes all four channels (`ast_dag`, `pure_eml_dag`,
 `frequent_macro_motif_dag`, `motif_ast_fair_control` — the last one mines its
-train-only vocabulary under the frozen macro dictionary/MDL budget), write
-checksum-manifested shards under `outputs/final/goal6/channels/`, and keep
-the failure ledger: `ShardChannelProvider` fails an arm closed if any failure
-rows remain.
+train-only vocabulary under the frozen macro dictionary/MDL budget), writes
+checksum-manifested, byte-exact-resumable shards plus
+`materialize.run.manifest.json` under `outputs/final/goal6/channels/`, and
+keeps the failure ledger: `ShardChannelProvider` fails an arm closed if any
+failure rows remain. Without `--macro-vocabulary` the two motif channels are
+recorded per-channel `unavailable` and the driver exits 3 (prereq 4
+remainder a). Measured pilot (M1 dev CPU, single process,
+`/usr/bin/time -l` over the real 9,039-accepted-pair pilot build from
+step b): ast_dag + pure_eml_dag materialized 18,078 tensors each with zero
+failure rows in 822 s (13.7 min) wall at 4.01 GB peak RSS, writing 272 MB
+of ast_dag and 2.6 GB of pure_eml_dag shards; the motif channels and the
+65k-row scale have never been timed.
 
 **(d) Width preflight.** Reference only — built on `h100/width-preflight`,
 not here. It must freeze `hidden_width` ∈ {64, 96} and `use_virtual_node` in
@@ -198,11 +230,12 @@ real channel vocabularies, before any grid cell runs.
 throughput, then decide 4-GPU use — prerequisite 6). Then:
 
 ```bash
-# goal6: 6 arms x 3 seeds = 18 cells
+# goal6: freeze the manifest once, then 6 arms x 3 seeds = 18 cells
+PYTHONPATH=src python3 -m geml.experiments.goal6.run_cell --write-manifest
 python3 scripts/h100/schedule_cells.py \
   --manifest outputs/final/goal6/grid/grid.manifest.json \
   --gpus 0,1,2,3 \
-  --cmd '<per-cell entry point> --arm {arm_id} --seed {seed}'
+  --cmd 'PYTHONPATH=src python3 -m geml.experiments.goal6.run_cell --cell-id {cell_id}'
 
 # goal7: after prerequisite 3 resolves; the plan's per-cell
 # reproduction_command is the source of truth for --cmd
