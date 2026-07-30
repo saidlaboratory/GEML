@@ -24,8 +24,9 @@ from pathlib import Path
 import yaml
 
 from geml.data.pairs.build import PairBuildError, run_production_build
-from geml.data.pairs.generate import canonical_json_bytes, sha256_digest
+from geml.data.pairs.generate import PairContractError, canonical_json_bytes, sha256_digest
 from geml.data.pairs.providers import ProductionProviders, bind_production_providers
+from geml.data.pairs.splits import PairSplitError
 
 _CONFIG_SCHEMA_VERSION = "geml-goal6-pairs-config-v1"
 _ARTIFACTS_ROOT_PLACEHOLDER = "${GEML_ARTIFACTS_ROOT}"
@@ -152,7 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin C
             corpus_manifest_path=manifest,
             providers=providers,
         )
-    except (PairProductionError, PairBuildError) as error:
+    except (PairProductionError, PairBuildError, PairContractError, PairSplitError) as error:
         parser.exit(2, f"refusing to build: {error}\n")
     print(f"pair build {summary['status']} (config {config_digest})")
     for split, entry in summary["splits"].items():

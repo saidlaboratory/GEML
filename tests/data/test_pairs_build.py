@@ -13,7 +13,7 @@ import pyarrow.parquet as pq
 import pytest
 import yaml
 
-from geml.data.pairs.__main__ import load_production_config
+from geml.data.pairs.__main__ import load_production_config, main
 from geml.data.pairs.build import PairBuildError, load_corpus_manifest, run_production_build
 from geml.data.pairs.generate import PairContractError, PairRecordV1
 from geml.data.pairs.providers import bind_production_providers
@@ -229,6 +229,37 @@ def test_invalid_corpus_manifest_is_a_typed_refusal(tmp_path) -> None:
         load_corpus_manifest(path)
 
 
+def test_seed_derivation_schema_and_output_are_pinned(tmp_path) -> None:
+    config, digest = load_production_config(_CONFIG)
+    config["output_root"] = str(tmp_path / "out")
+    providers = bind_production_providers()
+    for key in ("schema_version", "output"):
+        broken = {**config, "seed_derivation": {**config["seed_derivation"], key: "wrong"}}
+        with pytest.raises(PairBuildError, match=f"seed_derivation {key}"):
+            run_production_build(
+                config=broken,
+                config_digest=digest,
+                corpus_manifest_path=tmp_path / "corpus_manifest.json",
+                providers=providers,
+            )
+
+
+def test_missing_corpus_column_is_named_in_the_refusal(tmp_path) -> None:
+    _write_corpus(tmp_path)
+    shard = tmp_path / "data" / "train" / "train-00000.parquet"
+    pq.write_table(pq.read_table(shard).drop_columns(["operator_family"]), shard)
+    manifest_path = tmp_path / "corpus_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for entry in manifest["splits"]:
+        if entry["split"] == "train":
+            entry["shards"][0]["checksum"]["digest"] = hashlib.sha256(
+                shard.read_bytes()
+            ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(PairBuildError, match="missing expected columns: operator_family"):
+        _run(tmp_path)
+
+
 def test_shard_checksum_mismatch_refuses(tmp_path) -> None:
     _write_corpus(tmp_path)
     shard = tmp_path / "data" / "train" / "train-00000.parquet"
@@ -270,3 +301,47 @@ def test_cli_builds_real_pair_shards_end_to_end(tmp_path) -> None:
     for entry in summary["splits"].values():
         records = _shard_records(tmp_path / "out" / entry["shard_path"])
         assert len(records) == entry["accepted"] + entry["rejected"] + entry["failed"]
+
+
+def _cli_argv(tmp_path: Path, rows_by_split=None) -> list[str]:
+    root = tmp_path / "artifacts"
+    (root / "corpus").mkdir(parents=True)
+    _write_corpus(root / "corpus", rows_by_split)
+    config = yaml.safe_load(_CONFIG.read_text(encoding="utf-8"))
+    config["output_root"] = str(tmp_path / "out")
+    config_path = tmp_path / "pairs.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    return [
+        "--config",
+        str(config_path),
+        "--corpus-manifest",
+        "${GEML_ARTIFACTS_ROOT}/corpus/corpus_manifest.json",
+    ]
+
+
+def test_cli_contract_error_is_a_typed_refusal(tmp_path, monkeypatch, capsys) -> None:
+    """A tampered output on rerun exits with the typed refusal, not a raw traceback."""
+    argv = _cli_argv(tmp_path)
+    monkeypatch.setenv("GEML_ARTIFACTS_ROOT", str(tmp_path / "artifacts"))
+    assert main(argv) == 0
+    shard = tmp_path / "out" / "pairs-train-00000.jsonl"
+    shard.write_bytes(shard.read_bytes() + b"tampered\n")
+    with pytest.raises(SystemExit) as info:
+        main(argv)
+    assert info.value.code == 2
+    err = capsys.readouterr().err
+    assert "refusing to build" in err
+    assert "differs" in err
+
+
+def test_cli_group_leakage_is_a_typed_refusal(tmp_path, monkeypatch, capsys) -> None:
+    rows = dict(_ROWS)
+    rows["validation"] = [_ROWS["train"][0]]  # t1 leaks across partitions
+    argv = _cli_argv(tmp_path, rows)
+    monkeypatch.setenv("GEML_ARTIFACTS_ROOT", str(tmp_path / "artifacts"))
+    with pytest.raises(SystemExit) as info:
+        main(argv)
+    assert info.value.code == 2
+    err = capsys.readouterr().err
+    assert "refusing to build" in err
+    assert "group leakage" in err
