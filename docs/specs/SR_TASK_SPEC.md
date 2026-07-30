@@ -277,9 +277,23 @@ identity, is fixed before any method runs, and cannot be adjusted after seeing r
 22 deferred formulas remain in the exclusion ledger so the honest denominator stays visible;
 they are **not** quietly resampled from another population.
 
-**Open freeze decision.** `selection_target = 32` is the predeclared quota, not yet the
-frozen accepted count. The coordinator must freeze one exact accepted count together with
-the manifest checksum, at the same time as the verification-scope decision in section 7.
+**Frozen (2026-07-30, coordinator decision).** The accepted Feynman count is exactly
+**32**, and the benchmark manifests are frozen at these canonical checksums, produced at
+the governed `outputs/final/goal9/benchmark/` paths by the three documented commands and
+reproduced identically across three independent executions (two prior double-run passes
+plus the governed-path build):
+
+| Set | Tasks | `tasks_checksum` | `observations_checksum` |
+|---|---:|---|---|
+| `synthetic` (benchmark_test) | 256 | `af8ed254335aa7efdff742986901ff97c1c0029e8660ca4eaf82b68f6a16152d` | `ac65f0a41d8bb17544f078ac659dffb4fed37d7162206e31d31645c8d618ac84` |
+| `synthetic_development` | 32 | `d1e25c2828e4b9a42eb6ca95f42079b1e7794a3f6cf14271df76649beb21e8cf` | `daa47252a366558bc2bd109ef6d4ca5d20381677caeb1219b4eeaef18e5eeb07` |
+| `feynman_restricted` (benchmark_test) | 32 | `45d4af7b68c940715be5719b34b413616895af85e92c2984388b46ed180701c1` | `447fb8dd50b5d5b406e806cf6567bbb980467dfde727a3c95a8b86fe3600bb20` |
+
+The verification scope was already frozen to `egraph_fragment_v1` (section 7 /
+`PRE_PHASE_B_DECISIONS.md`). Any change to these sets after this point is a new,
+separately versioned benchmark. Canonical checksums are the domain-separated
+manifest-embedded digests, which are byte-stable across reruns (the raw manifest file
+hash is not, because `created_at`/`reproduction_command` vary per run).
 
 ---
 
