@@ -901,3 +901,11 @@ def write_fixture_channel(
         pair_count=len(pair_ids),
         production_ready=(channel_state(channel) is ChannelState.AVAILABLE and not failure_rows),
     )
+
+
+if __name__ == "__main__":  # pragma: no cover - thin dispatch to the production CLI driver
+    import sys
+
+    from geml.learning.datasets.materialize_channels import main
+
+    sys.exit(main())
