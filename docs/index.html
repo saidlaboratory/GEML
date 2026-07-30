@@ -222,12 +222,12 @@
   <h1>Every operation in mathematics, replaced by one. <em>Does that help a neural network?</em></h1>
   <p class="eqn">eml(<i>x</i>, <i>y</i>) = exp(<i>x</i>) − ln(<i>y</i>)</p>
   <p class="dek">
-    Odrzywołek (2026) proved that all elementary functions, and the constants π, e, and i, can be
-    built from the constant 1 and this single operator. GEML tests whether that uniformity helps a
-    graph neural network learn symbolic reasoning, <strong>knowing that it makes the trees far
-    bigger: production median α = 40.66.</strong> The representation study (Goals 1–5) is done on a
-    250,000-expression corpus; the learning study (Goals 6–12) is next. Every claim here is corrected
-    to match what was actually measured.
+    Odrzywołek (2026) proved that every elementary function, and the constants π, e, and i, can be
+    built from the constant 1 and this single operator. GEML is a controlled study of whether that
+    uniformity helps a graph neural network learn symbolic reasoning. <strong>The 250,000-expression
+    measurement is done: production median α = 40.66, exact sharing never makes pure EML beat the
+    ordinary AST, and two learned methods lost to their simple baselines.</strong> The learning
+    models come next; the framework and every measured number are below.
   </p>
   <div class="status" aria-label="Project status at a glance">
     <span class="done">Goals 1–5 · <b>complete (250k)</b></span>
@@ -291,47 +291,8 @@
   </figure>
 </section>
 
-<section id="corrections" class="reveal">
-  <h2><span class="no">§2</span>What the original proposal got wrong</h2>
-  <p>
-    The first proposal pitched “EML-native foundation models for universal mathematical
-    reasoning.” We measured its premises, first on a 10k prototype
-    (<a href="https://github.com/sahilsinghthefirst/geml_experiments">v0, Goals 1–5</a>), then for real
-    on the production 250,000-expression corpus in this repository. Where the data disagreed, the
-    claim was rewritten in red with the evidence attached. GEML is now a
-    <strong>controlled representation study</strong>, not a moonshot.
-  </p>
-  <ol class="corrections">
-    <li>
-      <span class="was"><del>Shrinking the vocabulary to one operator shrinks the math.</del></span>
-      <span class="now">Raw EML trees are far larger than ASTs. Compression makes EML trainable; whether homogeneity then generalizes better is the hypothesis still under test.</span>
-      <span class="why">evidence: production median α = 40.66, mean 952.1; 0/250,000 below the per-family thresholds 1.29–1.50 (Goal 2)</span>
-    </li>
-    <li>
-      <span class="was"><del>GPT-4-level mathematical competency at a fraction of the parameters.</del></span>
-      <span class="now">Competitive accuracy with fewer parameters, on a bounded algebraic domain.</span>
-      <span class="why">unfalsifiable as stated → explicit parameter-efficiency experiment (Goal 11.2)</span>
-    </li>
-    <li>
-      <span class="was"><del>A leap toward universal, zero-shot automated theorem proving.</del></span>
-      <span class="now">Verified equational rewrite-proofs on a bounded domain, with a verifier gating every step.</span>
-      <span class="why">GEML operates on a bounded algebraic fragment (Goal 8)</span>
-    </li>
-    <li>
-      <span class="was"><del>Equivalence as graph isomorphism.</del></span>
-      <span class="now">Equivalence is semantic, not structural: learned from e-graph-generated pairs with rule provenance, never assumed from shape.</span>
-      <span class="why">equivalent expressions are generally not isomorphic graphs (Goal 6.1)</span>
-    </li>
-    <li>
-      <span class="was"><del>EML as the universal “machine code” all AIs use to think about mathematics.</del></span>
-      <span class="now">Removed from claims. At most a speculative closing remark for future work.</span>
-      <span class="why">claim discipline, agreed for the release (Goal 12.2)</span>
-    </li>
-  </ol>
-</section>
-
 <section id="evidence" class="reveal">
-  <h2><span class="no">§3</span>The α threshold, and how far raw EML overshoots it</h2>
+  <h2><span class="no">§2</span>The α threshold, and how far raw EML overshoots it</h2>
   <p>
     Let <span class="mono">α = |T<sub>EML</sub>| / |T<sub>AST</sub>|</span>, the factor by which the
     tree grows when rewritten in pure EML. Counting representable expressions
@@ -429,25 +390,21 @@
 </section>
 
 <section id="plan" class="reveal">
-  <h2><span class="no">§4</span>Goals 6–12, each behind a gate</h2>
+  <h2><span class="no">§3</span>The experimental program, one gate per track</h2>
   <p>
-    Goals 1–5 (data, expansion study, DAG, e-graph, ML-facing compression) are complete on the
-    production corpus. The learning goals come next, and every one ends at a <strong>gate</strong>:
-    an explicit pass/fail criterion that decides whether the next goal proceeds, proceeds narrowed,
-    or stops.
+    Each learning claim GEML intends to make is isolated in its own track, and every track ends at a
+    <strong>gate</strong>: an explicit, preregistered pass/fail criterion that decides whether the
+    track proceeds, proceeds narrowed, or stops. This is the methodology, not a schedule. Positive
+    and null outcomes are published with equal prominence, the discipline the structural results
+    above already followed.
   </p>
   <div class="callout">
-    <b>No learning model has been trained yet.</b> There are no equivalence, proof, or
-    symbolic-regression results on this page, and there will be none until the experiments below
-    actually run. When they do, the outcomes, positive <em>or</em> null, get published with equal
-    prominence, the same way Goals 1–5 were.
+    <b>No learning model has been trained yet.</b> Every equivalence, rewrite-step, proof, and
+    symbolic-regression track below is <em>ongoing / insufficient_evidence</em>: the design and its
+    gate are on record, but there is no result to report until the run happens. The one gate that
+    has resolved is the domain-expansion gate, G10, and it resolved to a published <b>fail</b>.
   </div>
   <ol class="timeline">
-    <li class="done">
-      <span class="g">Goals 1–5 · complete (250k corpus)</span>
-      <h3>Representation &amp; compression pipeline</h3>
-      <p>Deterministic 250,000-expression corpus (175k/25k/25k/25k, QA-gated), exact expansion study, exact AST/EML DAG sharing, verifier-gated e-graph optimization, and lossless macro/motif compression with a 1.25M-graph five-representation export. All clean-room, artifact-backed, 0 retained failures.</p>
-    </li>
     <li>
       <span class="g">Goal 6</span>
       <h3>Equivalence learning grid</h3>
@@ -504,38 +461,17 @@
   </table></div>
 </section>
 
-<section id="team" class="reveal">
-  <h2><span class="no">§5</span>Who does what</h2>
-  <div class="twocol">
-    <div>
-      <b class="tag">Group A · pipeline</b>
-      <p>Owns Goals 1–5 at production scale: corpus generation, converters, DAG/e-graph/motif compression, agent-assisted with thorough human + agent review. Compute: H100 hours if available, RTX 5090 over SSH otherwise.</p>
-    </div>
-    <div>
-      <b class="tag">Group B · architecture &amp; learning</b>
-      <p>GNN/ML-experienced members build the model zoo (Siamese GIN is a candidate) and drive Goals 6–12, the compute-heavy half.</p>
-    </div>
-  </div>
-  <ul class="plain">
-    <li><strong>2–3 people bridge both groups</strong> as supervisors with end-to-end visibility.</li>
-    <li><strong>Documentation is continuous:</strong> every member documents their work as it lands, with no end-of-project crunch. This is what makes the paper writable.</li>
-    <li><strong>Paper:</strong> 5–7 days before the deadline, two members start writing; the rest become reviewers once code is frozen.</li>
-    <li><strong>Open decision:</strong> which constants to implement. π and e are candidates; <em>i</em> is likely out (it would change the pipeline fundamentally).</li>
-    <li><strong>Clean-room policy:</strong> the v0 prototype is for understanding, not for templating; this repo is rebuilt from specs, never by copying its structure.</li>
-  </ul>
-</section>
-
 </main>
 
 <footer>
   <div class="wrap">
     <p>GEML · saidlaboratory · lead: Quang Bui (duckyquang) · Muhammad Rayyan (Mray229) · Sibi Gokul (Sisigoks) · Daksh Jain (Daksh-QE) · Sahil Singh (gensahilsingh)</p>
     <p>
-      <a href="https://github.com/saidlaboratory/GEML">production repo</a> ·
-      <a href="https://github.com/sahilsinghthefirst/geml_experiments">v0 prototype (Goals 1–5)</a> ·
+      <a href="https://github.com/saidlaboratory/GEML">repository</a> ·
       <a href="https://sites.google.com/view/mathnlp2026">MathNLP 2026</a>
     </p>
-    <p>eml(x, y) = exp(x) − ln(y). Odrzywołek, 2026. Numbers verified against docs/goals/. Claims corrected July 2026.</p>
+    <p>Contributors: this repo is clean-room. Read <a href="https://github.com/saidlaboratory/GEML/blob/main/AGENTS.md">AGENTS.md</a> and <a href="https://github.com/saidlaboratory/GEML/blob/main/docs/CLEANROOM_RULES.md">docs/CLEANROOM_RULES.md</a> before contributing.</p>
+    <p>eml(x, y) = exp(x) − ln(y). Odrzywołek, 2026. Every number verified against docs/goals/.</p>
   </div>
 </footer>
 
