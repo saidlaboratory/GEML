@@ -1,6 +1,11 @@
 # GEML — Graph Learning over a Single-Operator Representation of Mathematics
 
-> **A controlled representation study:** does collapsing every elementary math operator into the single primitive `eml(x, y) = exp(x) − ln(y)` help graph neural networks learn symbolic reasoning — given that it *inflates* tree size?
+[![CI](https://github.com/saidlaboratory/GEML/actions/workflows/ci.yml/badge.svg)](https://github.com/saidlaboratory/GEML/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)
+![tests](https://img.shields.io/badge/tests-2805%20passing-brightgreen)
+
+> **A controlled representation study.** GEML collapses every elementary math operator into one primitive — `eml(x, y) = exp(x) − ln(y)` — so any expression becomes a graph where every internal node is the same operation. That homogeneity is not free: the single-operator form is **~40× larger than the AST at the median**. The whole project measures one thing — whether that cost buys a graph neural network anything on symbolic reasoning — and publishes the answer either way, nulls included.
 
 **Target venue:** [MathNLP 2026](https://sites.google.com/view/mathnlp2026) ·
 **Project site:** [`docs/`](docs/index.html) ·
@@ -25,24 +30,20 @@ This repository hosts the clean-room production rebuild of Goals 1–5. The v0 p
 
 > ⚠️ **Clean-room warning for contributors and coding agents:** the prototype is historical context only. Do not inspect or reuse its code, tests, schemas, helpers, architecture, or history. Implement from the current repository specifications, assigned issues, and authoritative public sources. See [`AGENTS.md`](AGENTS.md) and [`docs/CLEANROOM_RULES.md`](docs/CLEANROOM_RULES.md).
 
-### Development setup
+### Quickstart
 
-GEML is a Python 3.12 package using a `src/` layout. Runtime code lives under
-`src/geml/`, while unit tests use only small local or temporary fixtures.
-
-Install the package and development tools:
+GEML is a Python 3.12 package with a `src/` layout; runtime code lives under `src/geml/`.
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev]"   # install package + dev tools
+python -m pytest                     # run the suite (2,805 tests)
+python -m ruff check . && python -m ruff format . --check
 ```
 
-Run the standard validation suite:
-
-```bash
-python -m pytest
-python -m ruff check .
-python -m ruff format . --check
-```
+Where to look: per-goal results are under [`docs/goals/`](docs/goals/), the frozen contracts
+under [`docs/specs/`](docs/specs/), and the rendered overview in
+[`docs/index.html`](docs/index.html). For the full dev guide — environment, clean-room rules,
+contribution workflow — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## 2. What changed since the original proposal
 
@@ -64,18 +65,18 @@ Let `α = |T_EML| / |T_AST|` be the expansion factor when an AST is rewritten in
 α < 1 + log_{4L}(K)
 ```
 
-where `K` = number of operator types and `L` = number of leaf symbols. For the current grammar the threshold is **≈ 1.56** (with e.g. K = 20, L = 3 it would be ≈ 2.21). The v0 prototype estimated raw EML at α ≈ 11.4; the production 250k run measured **median α = 40.66** (mean 952.1) — more than an order of magnitude over, and ~4× worse than the prototype suggested. The entire compression program (Goals 3–5) exists to close that gap honestly, and the learning program (Goals 6–11) tests whether what remains is worth it.
+where `K` = number of operator types and `L` = number of leaf symbols. Across the six preregistered family grammars the threshold runs from **1.29 to 1.50** ([Goal 2](docs/goals/goal2/GOAL2_SUMMARY.md)) — even the most generous bar is ~1.5. The v0 prototype estimated raw EML at α ≈ 11.4; the production 250k run measured **median α = 40.66** (mean 952.1) — more than an order of magnitude over the highest threshold, and ~4× worse than the prototype suggested. The entire compression program (Goals 3–5) exists to close that gap honestly, and the learning program (Goals 6–11) tests whether what remains is worth it.
 
 ## 4. Production results (Goals 1–5, 250k corpus — the numbers that count)
 
-| Goal | Headline (production, `docs/goals/goalN/`) |
+| Goal | Headline (production — the goal number links to the full summary) |
 |---|---|
-| 1 | 250,000 unique expressions, splits exactly 175k/25k/25k/25k, QA-gated |
-| 2 | Median α **40.6602**, mean 952.1371, p99 10,448.6; 0/250k below the preregistered thresholds |
-| 3 | DAG sharing compresses EML 39.375× on average, yet the EML DAG beats the AST tree on **0/250,000** expressions (best remaining ratio 8/7) |
-| 4 | E-graph rewriting improves 23.9% (safe_real) / 27.6% (positive_real_formal) of costed rows, mean savings 2.4–2.8%, on 60.7% vocabulary coverage |
-| 5 | Learned motif vocabulary **loses** to equal-budget frequent vocabulary (MDL 324,485,346 vs 317,678,264 bits); neural ranker loses to the structural heuristic |
-| 10 | Gate G10 published: **fail** on exactly the 8 preregistered asin/acos endpoint cells |
+| [1](docs/goals/goal1/GOAL1_SUMMARY.md) | 250,000 unique expressions, splits exactly 175k/25k/25k/25k, QA-gated |
+| [2](docs/goals/goal2/GOAL2_SUMMARY.md) | Median α **40.6602**, mean 952.1371, p99 10,448.6; 0/250k below the preregistered thresholds |
+| [3](docs/goals/goal3/GOAL3_SUMMARY.md) | DAG sharing compresses EML 39.375× on average, yet the EML DAG beats the AST tree on **0/250,000** expressions (best remaining ratio 8/7) |
+| [4](docs/goals/goal4/GOAL4_SUMMARY.md) | E-graph rewriting improves 23.9% (safe_real) / 27.6% (positive_real_formal) of costed rows, mean savings 2.4–2.8%, on 60.7% vocabulary coverage |
+| [5](docs/goals/goal5/GOAL5_SUMMARY.md) | Learned motif vocabulary **loses** to equal-budget frequent vocabulary (MDL 324,485,346 vs 317,678,264 bits); neural ranker loses to the structural heuristic |
+| [10](docs/goals/goal10/GOAL10_SUMMARY.md) | Gate G10 published: **fail** on exactly the 8 preregistered asin/acos endpoint cells |
 
 ## 4b. Historical evidence — v0 prototype (Goals 1–5, 10k-sample corpus; superseded by the table above)
 

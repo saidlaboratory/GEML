@@ -8,7 +8,30 @@ version = "0.1.0"
 description = "Graph learning over a single-operator representation of mathematics"
 readme = "README.md"
 license = "MIT"
+authors = [
+    {name = "Quang Bui"},
+    {name = "Muhammad Rayyan"},
+    {name = "Sibi Gokul"},
+    {name = "Daksh Jain"},
+    {name = "Sahil Singh"},
+]
 requires-python = ">=3.12"
+keywords = [
+    "graph-neural-networks",
+    "symbolic-mathematics",
+    "symbolic-regression",
+    "e-graphs",
+    "mathnlp",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
 dependencies = [
     "matplotlib>=3.9",
     "mpmath==1.3.0",
@@ -32,7 +55,10 @@ ml = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/saidlaboratory/GEML"
 Repository = "https://github.com/saidlaboratory/GEML"
+Documentation = "https://github.com/saidlaboratory/GEML/tree/main/docs"
+Issues = "https://github.com/saidlaboratory/GEML/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
