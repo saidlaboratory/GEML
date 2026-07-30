@@ -8,8 +8,7 @@
 > **A controlled representation study.** GEML collapses every elementary math operator into one primitive — `eml(x, y) = exp(x) − ln(y)` — so any expression becomes a graph where every internal node is the same operation. That homogeneity is not free: the single-operator form is **~40× larger than the AST at the median**. The whole project measures one thing — whether that cost buys a graph neural network anything on symbolic reasoning — and publishes the answer either way, nulls included.
 
 **Target venue:** [MathNLP 2026](https://sites.google.com/view/mathnlp2026) ·
-**Project site:** [`docs/`](docs/index.html) ·
-**v0 prototype (Goals 1–5, complete):** [sahilsinghthefirst/geml_experiments](https://github.com/sahilsinghthefirst/geml_experiments)
+**Project site:** [`docs/`](docs/index.html)
 
 **Lead:** Quang Bui ([@duckyquang](https://github.com/duckyquang)) ·
 **Members:** Muhammad Rayyan ([@Mray229](https://github.com/Mray229)), Sibi Gokul ([@Sisigoks](https://github.com/Sisigoks)), Daksh Jain ([@Daksh-QE](https://github.com/Daksh-QE)), Sahil Singh ([@gensahilsingh](https://github.com/gensahilsingh))
@@ -18,17 +17,24 @@
 
 ## 1. What GEML is
 
-Odrzywołek (2026) showed that the standard elementary functions and constants (π, e, i) can be constructed from the constant **1** and a single binary operator:
+Odrzywołek (2026) showed that the standard elementary functions and constants (π, e, i) can be
+built from the constant **1** and a single binary operator:
 
 ```
 eml(x, y) = exp(x) − ln(y)
 ```
 
-Any continuous mathematical expression therefore maps to a strict binary tree in which **every internal node is the same operation**. GEML asks whether that homogeneity is *useful for machine learning*: instead of feeding math to a model as a token sequence (`[sin, (, x, +, 1, )]`), we feed the structural topology of the EML tree to a graph neural network that only has to learn *where things connect*, never *what the operator is*.
+Any continuous mathematical expression therefore maps to a strict binary tree in which **every
+internal node is the same operation**. GEML asks whether that homogeneity is *useful for machine
+learning*. Instead of feeding math to a model as a token sequence (`[sin, (, x, +, 1, )]`), it
+feeds the structural topology of the EML tree to a graph neural network that only has to learn
+*where things connect*, never *what the operator is*. The one quantitative question the project
+measures is whether that representation — far larger than an ordinary AST — earns its keep on
+symbolic reasoning, and it commits to publishing the answer whichever way it lands.
 
-This repository hosts the clean-room production rebuild of Goals 1–5. The v0 prototype (data generation, expansion study, and three families of compression) lives in [geml_experiments](https://github.com/sahilsinghthefirst/geml_experiments) and is **complete through Goal 5R** with 262/262 tests green.
-
-> ⚠️ **Clean-room warning for contributors and coding agents:** the prototype is historical context only. Do not inspect or reuse its code, tests, schemas, helpers, architecture, or history. Implement from the current repository specifications, assigned issues, and authoritative public sources. See [`AGENTS.md`](AGENTS.md) and [`docs/CLEANROOM_RULES.md`](docs/CLEANROOM_RULES.md).
+> **Contributors / coding agents:** a v0 prototype exists but is off-limits. Build clean-room from
+> the current repository specs and issues, never from the prototype's code, tests, schemas, or
+> history. See [`AGENTS.md`](AGENTS.md) and [`docs/CLEANROOM_RULES.md`](docs/CLEANROOM_RULES.md).
 
 ### Quickstart
 
@@ -40,189 +46,142 @@ python -m pytest                     # run the suite (2,805 tests)
 python -m ruff check . && python -m ruff format . --check
 ```
 
-Where to look: per-goal results are under [`docs/goals/`](docs/goals/), the frozen contracts
-under [`docs/specs/`](docs/specs/), and the rendered overview in
-[`docs/index.html`](docs/index.html). For the full dev guide — environment, clean-room rules,
-contribution workflow — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Where to look: per-goal results are under [`docs/goals/`](docs/goals/), the frozen contracts under
+[`docs/specs/`](docs/specs/), and the rendered overview in [`docs/index.html`](docs/index.html).
+For the full dev guide — environment, clean-room rules, contribution workflow — see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## 2. What changed since the original proposal
+## 2. Framework
 
-The original proposal ("EML-Native Foundation Models for Universal Mathematical Reasoning") framed EML compression as a premise. The v0 data says otherwise, so the project is **reframed from a universal-reasoning moonshot to a controlled representation study**. Every claim below was revised against measured evidence:
+### Topology, not vocabulary
 
-| Original claim | Revised claim | Why |
-|---|---|---|
-| Shrinking the math vocabulary to one operator reduces model size | **Hypothesis under test:** raw EML trees are far *larger* than ASTs — production median α = 40.66 (mean 952.1, heavy right tail). Compression (DAG + motifs) narrows but never closes the gap; whether homogeneity then *generalizes better* is the open question | Goal 2 production run (250k): median α 40.6602, mean 952.1371; 0/250,000 below the preregistered per-family thresholds (1.29–1.50) |
-| "GPT-4-level mathematical competency at a fraction of the parameters" | **Competitive accuracy with fewer parameters on a bounded algebraic domain** | Unfalsifiable as stated; parameter-efficiency is now an explicit experiment (Goal 11.2) |
-| Universal / zero-shot automated theorem proving | **Verified equational rewrite-proofs on a bounded domain** | GEML operates on a bounded algebraic fragment; proofs are verifier-gated rewrite paths (Goal 8) |
-| "Equivalence as graph isomorphism" | **Equivalence is semantic, not structural.** Learned from e-graph-generated equivalence pairs with rule-sequence provenance, always behind a verifier | Two equivalent expressions are generally *not* isomorphic graphs |
-| EML as a universal "machine code for AI" | Removed from claims (at most a speculative closing remark) | No evidence; claim discipline (Goal 12.2) |
+A conventional model of mathematics has to learn a vocabulary: `sin`, `exp`, `+`, `/`, and dozens
+more, each a distinct token or node type. The EML rewrite erases that vocabulary — one operator
+does everything — so the only thing left to learn is *structure*. A graph neural network over an
+EML tree never sees an operator label; it sees how the graph is wired. GEML's bet is that a model
+freed from operator identity might generalize better across the shape of an expression. The cost of
+that bet is measured, not assumed, and the measurement is the α threshold.
 
-## 3. The central question: the α threshold
+### The α threshold — the central quantitative question
 
-Let `α = |T_EML| / |T_AST|` be the expansion factor when an AST is rewritten in pure EML form. Counting representable expressions of size *x* as `N(x) = C_x · K^x · L^(x+1)` (Catalan shapes × operator labels × leaf symbols) and using `C_x → 4^x / (x^{3/2}√π)`, EML's reduced operator vocabulary wins only if:
+Let `α = |T_EML| / |T_AST|` be the expansion factor when an AST is rewritten in pure EML form.
+Counting the representable expressions of size *x* as `N(x) = C_x · K^x · L^(x+1)` (Catalan tree
+shapes × operator labels × leaf symbols, with `C_x → 4^x / (x^{3/2}√π)`), the reduced EML operator
+vocabulary is only a net win when
 
 ```
-α < 1 + log_{4L}(K)
+α < 1 + ln(K) / ln(4L)
 ```
 
-where `K` = number of operator types and `L` = number of leaf symbols. For the full grammar this counting break-even is ≈ **1.56**; across the six preregistered family grammars the operative thresholds run from **1.29 to 1.50** ([Goal 2](docs/goals/goal2/GOAL2_SUMMARY.md)) — even the most generous bar is ~1.5. The v0 prototype estimated raw EML at α ≈ 11.4; the production 250k run measured **median α = 40.66** (mean 952.1) — more than an order of magnitude over the highest threshold, and ~4× worse than the prototype suggested. The entire compression program (Goals 3–5) exists to close that gap honestly, and the learning program (Goals 6–11) tests whether what remains is worth it.
+where `K` is the number of operator types and `L` the number of leaf symbols. For the full grammar
+this counting break-even is ≈ **1.56**; across the six preregistered per-family grammars the
+operative thresholds run from **1.29 to 1.50** ([Goal 2](docs/goals/goal2/GOAL2_SUMMARY.md)) — even
+the most generous bar sits near 1.5. Whether raw EML clears that bar, and whether compression can
+bring it under, is the quantitative spine of the whole project. (It does not: see
+[Results](#3-results).)
 
-## 4. Production results (Goals 1–5, 250k corpus — the numbers that count)
+### Four representation channels
 
-| Goal | Headline (production — the goal number links to the full summary) |
+Every learning experiment is run over the same four channels so a win can be attributed to the
+right cause — graph sharing vs. the EML rewrite vs. motif compression:
+
+1. **AST-DAG** — the source AST with exact subtree sharing. The fairness baseline that separates
+   "graph sharing helps" from "EML helps."
+2. **Pure EML-DAG** — the canonical single-operator channel, assumption-free. Every EML claim
+   traces back to it.
+3. **Frequent-motif EML-DAG** — a lossless dictionary of common EML subgraphs; the "practical EML"
+   channel (smaller, still reconstructable).
+4. **Motif-AST** — the same motif compression applied to the AST, a train-only fair control so a
+   motif gain is never mistaken for an EML gain.
+
+### Semantic verification — e-graph, verifier-gated
+
+Equivalence in GEML is **semantic, not structural**: two equal expressions are generally not
+isomorphic graphs. Equivalence pairs and rewrite candidates come from equality saturation over an
+e-graph, and every candidate is checked two ways — same-e-class membership (formal evidence
+relative to the enabled rule set and each row's recorded domain assumptions) plus an independent
+domain-aware numeric probe that catches bugs the formal check cannot. Every rewrite, proof, and
+simplification step passes a verifier before it counts. The gate is **sound, not complete**: it
+never accepts an unverified step, but its bounded rule set and bounded search mean it can miss valid
+rewrites rather than emit wrong ones. Pure EML stays canonical throughout; positive-real results are
+labelled as conditional findings, never as universal complex identities.
+
+### The experimental program
+
+The structural layer above (Goals 1–5) feeds a four-track learning program. Each track is
+representation-agnostic and ends at an explicit **gate** — a pass/fail rule that decides whether the
+next track proceeds, proceeds narrowed, or stops. **No model has been trained yet:** the tracks
+below are implemented and fixture-tested, and their gates return an honest *insufficient_evidence*
+until a production run exists. Their code is built so a missing run yields an explicit
+missing-state, never a plausible-looking number.
+
+- **Equivalence learning** ([Goal 6](docs/goals/goal6/GOAL6_SUMMARY.md), *production pending*) — can
+  a GNN learn `E₁ ≡ E₂`, and under which channel? Six arms (four graph channels + a compute-matched
+  prefix transformer + a trivial op-count floor) × three seeds. **Gate G6:** every GNN arm must beat
+  the trivial floor; the EML-vs-AST verdict is recorded either way, and if pure EML loses on OOD the
+  later tracks proceed with the EML claim narrowed.
+- **Rewrite-step prediction** ([Goal 7](docs/goals/goal7/GOAL7_SUMMARY.md), *production pending*) —
+  from a state graph, predict the next `(rule id, application site)`. Scored by top-k
+  *verifier-valid* step accuracy across channels — the sharpest test of whether homogeneous topology
+  helps rule transfer. **Gate G7:** the learned policy beats a uniform valid-step baseline by a wide
+  margin, with no dead rules.
+- **Verified proof paths** ([Goal 8](docs/goals/goal8/GOAL8_SUMMARY.md),
+  *`insufficient_evidence`*) — best-first/beam search over rewrites with the verifier gating every
+  step, plus a simplification mode compared against SymPy on the exact Goal 4/5 cost. **Gate G8:**
+  guided search beats uniform search on nodes-expanded at equal success rate, with **zero invalid
+  steps emitted**.
+- **Symbolic regression** ([Goal 9](docs/goals/goal9/GOAL9_SUMMARY.md), *`insufficient_evidence`*) —
+  recover an in-grammar expression from numeric samples via encoder-guided search, EML-space vs.
+  AST-space, against PySR/GP and transformer-SR references. **Gate G9:** exact-recovery above the GP
+  baseline at matched budget, or a documented negative.
+
+Domain expansion ([Goal 10](docs/goals/goal10/GOAL10_SUMMARY.md)) adds a grammar-v2 surface
+(`asin`, `acos`, `atan`, `π`, `e`) and re-audits the compiler — that audit produced a final
+published result (see below). A scale-up and parameter-efficiency comparison
+([Goal 11](docs/goals/goal11/GOAL11_SUMMARY.md), *production pending*) is the capstone that
+synthesizes the four tracks without retraining.
+
+## 3. Results
+
+These are the final numbers that exist. The structural verdict (Goals 1–5) is complete on the full
+250,000-expression corpus, and it is unfavorable to raw EML — exactly the kind of answer GEML
+commits to reporting rather than burying. The two preregistered **nulls** and the published Gate
+G10 **fail** are results in their own right, not caveats. Every row links to its full,
+machine-generated summary.
+
+| Goal | Result |
 |---|---|
-| [1](docs/goals/goal1/GOAL1_SUMMARY.md) | 250,000 unique expressions, splits exactly 175k/25k/25k/25k, QA-gated |
-| [2](docs/goals/goal2/GOAL2_SUMMARY.md) | Median α **40.6602**, mean 952.1371, p99 10,448.6; 0/250k below the preregistered thresholds |
-| [3](docs/goals/goal3/GOAL3_SUMMARY.md) | DAG sharing compresses EML 39.375× on average, yet the EML DAG beats the AST tree on **0/250,000** expressions (best remaining ratio 8/7) |
-| [4](docs/goals/goal4/GOAL4_SUMMARY.md) | E-graph rewriting improves 23.9% (safe_real) / 27.6% (positive_real_formal) of costed rows, mean savings 2.4–2.8%, on 60.7% vocabulary coverage |
-| [5](docs/goals/goal5/GOAL5_SUMMARY.md) | Learned motif vocabulary **loses** to equal-budget frequent vocabulary (MDL 324,485,346 vs 317,678,264 bits); neural ranker loses to the structural heuristic |
-| [10](docs/goals/goal10/GOAL10_SUMMARY.md) | Gate G10 published: **fail** on exactly the 8 preregistered asin/acos endpoint cells |
+| [1](docs/goals/goal1/GOAL1_SUMMARY.md) | 250,000 unique expressions, QA-gated, split exactly 175k / 25k / 25k / 25k (train / validation / test_iid / test_ood). |
+| [2](docs/goals/goal2/GOAL2_SUMMARY.md) | Raw pure-EML expansion: **median α = 40.6602**, mean 952.1371 (p99 ≈ 10,448.6 — a heavy right tail). **0 / 250,000** expressions fall below the preregistered 1.29–1.50 per-family thresholds. |
+| [3](docs/goals/goal3/GOAL3_SUMMARY.md) | Lossless DAG sharing compresses the expanded EML tree **39.375× on average** — yet the EML DAG still beats the AST tree on **0 / 250,000** expressions (best remaining ratio 8/7). Compressing well and becoming competitive are different claims. |
+| [4](docs/goals/goal4/GOAL4_SUMMARY.md) | Verifier-gated e-graph rewriting improves **23.9%** (`safe_real`) / **27.6%** (`positive_real_formal`) of costed rows at **2.4–2.8%** mean relative savings, on **60.7%** vocabulary coverage. |
+| [5](docs/goals/goal5/GOAL5_SUMMARY.md) | **NULL:** the learned motif vocabulary *loses* to the equal-budget frequent baseline (324,485,346 vs. 317,678,264 MDL bits, test_iid). **NULL:** the neural ranker *loses* to a plain structural heuristic. |
+| [10](docs/goals/goal10/GOAL10_SUMMARY.md) | **Gate G10 published: `fail`** — on exactly the 8 preregistered `asin`/`acos` endpoint cells. Publishing the honest fail rather than revising the criteria was a deliberate decision. |
 
-## 4b. Historical evidence — v0 prototype (Goals 1–5, 10k-sample corpus; superseded by the table above)
+**What the structural numbers say.** The single-operator rewrite is more than an order of magnitude
+over the most generous counting threshold (median α 40.66 vs. a ~1.5 bar), and exact graph sharing —
+though it shrinks the expanded form ~39× — never closes the gap to the ordinary AST. So homogeneity
+is not free structure; if EML pays off it will be on *learning*, which is what the four tracks in
+[the framework](#2-framework) are built to measure. That verdict is still open, and until a model is
+trained it stays open — no learning result is claimed here.
 
-| Goal | Deliverable | Status | Headline result |
-|---|---|---|---|
-| 1 | Expression generator, AST/EML converters, metrics | ✅ | Bi-directional SymPy/LaTeX ↔ binary-tree pipeline; strict no-hidden-leaves accounting |
-| 2 | Expansion study (raw EML vs AST) | ✅ | Raw EML ~11× larger; α essentially never below threshold |
-| 3 | Exact structural DAG compression | ✅ | Median α 11.4 → 3.5 (~3.1× shrink), lossless |
-| 3R | Generator repair → v1 corpus | ✅ | Fixed depth/log/duplicate biases; byte-reproducible |
-| 4 | E-graph (semantic) compression | ✅ | ~73% of expressions improved; still only ~5% below threshold |
-| 5 | ML-facing compression (macro/motif/neural/hierarchical) | ✅ | Motifs strongest; learned selection adds nothing yet |
-| 5R | Repair pass (tests, real reconstruction, honest framing) | ✅ | 262/262 tests green on fresh clone |
-| 6+ | GNN training onward | ⏳ | This repo — see roadmap below |
+**What the nulls say.** Learned selection did not beat frequency-ranked motifs at equal budget, and
+the neural ranker did not beat a hand-coded structural heuristic. Both were preregistered
+comparisons and both are reported at full prominence, ahead of the favorable comparisons in the same
+summary, so a positive result cannot visually displace a null.
 
-**Compression results** (v1 corpus; gains relative to the Goal 3 pure EML-DAG baseline):
+All numbers above come from clean-committed production runs; the exact commands, config hashes, and
+content hashes are in each goal's summary. Gate G10 was executed on Apple M1 Pro (CPU only, Python
+3.12.5) and produced a byte-identical `records.jsonl` across three runs.
 
-| Method | What it does | Median gain | Notes |
-|---|---|---|---|
-| Pure EML-DAG | Exact subtree sharing | 1.0× (baseline) | Lossless, assumption-free — the non-negotiable control |
-| E-graph, positive-real | Semantic rewrites + extract | ~1.2× | Needs positivity assumptions; keep as optional pre-pass |
-| Macro graph | Relabeled compact AST-DAG | 5.25× (α = 0.78) | Structurally ≈ AST-DAG; doubles as interpretable control |
-| **Frequent motif** | Dictionary of common subgraphs | **7.40×** | Best simple compressor, reconstruction-verified |
-| Learned motif | Scored dictionary | 7.11× | ≈ random/frequency — **null result, dropped** |
-| Neural e-graph ranker | Fast candidate selection | ~1.0× | 109× *scoring* speedup only; loses to hand-coded heuristic |
+## References
 
-**Null results are recorded with equal prominence:** learned motif selection does not beat frequency ranking; the neural ranker is a speed baseline, not a compression win.
+- Odrzywołek, A. (2026). *The EML function* — reduction of elementary functions to `exp(x) − ln(y)`.
+  The official EML compiler is used for all pure-EML conversions: no abbreviations, no hidden derived
+  leaves.
+- Per-goal machine-generated summaries and QA evidence: [`docs/goals/`](docs/goals/); frozen
+  contracts: [`docs/specs/`](docs/specs/).
 
-### Representation channels going forward
-
-- **Core (A/B-tested in every learning goal):**
-  1. **Pure EML-DAG** — canonical, assumption-free control; every EML claim traces back to it.
-  2. **Frequent-motif-compressed EML-DAG** — the "practical EML" channel (7.4× smaller, lossless, cheap).
-  3. **AST-DAG** — the fairness baseline that separates "graph sharing helps" from "EML helps."
-- **Auxiliary:** e-graph positive-real as canonicalization pre-pass; neural ranker only if extraction becomes a training-loop bottleneck.
-- **Dropped from critical path:** learned motif selection (revisit only at larger corpus scale).
-
-## 5. Roadmap — Goals 6–12
-
-Each goal ends at a **gate**: an explicit pass/fail criterion that decides whether the next goal proceeds, proceeds narrowed, or stops. Reserved repair passes (6R–11R) follow the prototype's discipline.
-
-### Goal 6 — Equivalence Learning Grid *(the discriminative foundation)*
-Can a GNN learn `E₁ ≡ E₂`, and under which representation?
-
-| Sub | Task |
-|---|---|
-| 6.0 | ML dependency decision (PyTorch + PyG `[ml]` extra), training-reproducibility policy (pinned deps, seeds, metadata) |
-| 6.1 | Trace-rich equivalence-pair dataset: e-graph positives **with rule-sequence provenance + step-distance**, size-matched hard negatives, tiered verification, group splits, depth-OOD + family-OOD sets (≥50k/5k/5k pairs — the Goal 7/8 fuel) |
-| 6.2 | Graph materialization: AST-DAG, pure EML-DAG, motif-EML (train-mined vocab), motif-AST (fair-compression control) as PyG datasets |
-| 6.3 | Reusable backbones: GIN encoder (node-type-as-feature, virtual node), compute-matched prefix transformer, trivial op-count baseline |
-| 6.4 | Training harness: YAML configs, early stopping, 3 seeds/cell, CPU smoke test in CI |
-| 6.5 | Baseline grid: 6 arms × metrics (acc, F1, both OODs, sample efficiency, time, memory, α) |
-| 6.6 | Analysis: accuracy-vs-α curve, graph-benefit vs EML-benefit separation, honest report |
-
-**Gate G6:** trivial baseline beaten by all GNN arms (else stop and fix the dataset); EML-vs-AST verdict recorded either way. If pure EML-DAG loses decisively on OOD, later goals proceed with the EML claim narrowed — the verifier-guided pipeline is representation-agnostic and survives.
-
-### Goal 7 — Rewrite-Step Prediction *(the generative skill)*
-
-| Sub | Task |
-|---|---|
-| 7.0 | Step dataset from 6.1 traces: (state graph) → (rule id, application site); per-rule stratification |
-| 7.1 | Policy head on shared encoders (per-node site scoring + rule classification); transformer step-proposer baseline |
-| 7.2 | Metrics: top-k *verifier-valid* step accuracy, rule coverage, unseen-family generalization |
-| 7.3 | Grid across channels — does homogeneous topology help rule-application transfer? (the sharpest EML test) |
-
-**Gate G7:** learned policy beats uniform-random valid-step baseline by a wide margin; no dead rules.
-
-### Goal 8 — Verified Proof-Path Generation *(simplification + equational ATP)*
-
-| Sub | Task |
-|---|---|
-| 8.0 | Search harness: best-first/beam over rewrites, verifier gate on every step (e-graph/SymPy/numeric tiers), budgets + telemetry |
-| 8.1 | Value head trained on step-distance labels to guide search |
-| 8.2 | Proof benchmark: held-out identity families, length-OOD, difficulty tiers |
-| 8.3 | ATP comparison: guided-GNN vs uniform search vs transformer-proposer, all verifier-gated |
-| 8.4 | Simplification mode: search for minimal form using Goal 4/5 exact-cost machinery; compare vs SymPy `simplify` |
-| 8.5 | Analysis + frontier-LLM *reference* run (LLM as step-proposer through the same verifier — reference ceiling, not controlled baseline) |
-
-**Gate G8:** guided search beats uniform search on nodes-expanded at equal success rate; **zero invalid steps emitted**.
-
-### Goal 9 — Symbolic Regression Track *(EML's native home)*
-
-| Sub | Task |
-|---|---|
-| 9.0 | SR task spec: numeric samples → in-grammar expression; synthetic benchmark + restricted Feynman-style subset |
-| 9.1 | Encoder-guided search: EML-space vs AST-space (the SR version of the representation question) |
-| 9.2 | Baselines: PySR/GP reference, transformer-SR |
-| 9.3 | Metrics: exact-recovery rate, accuracy–complexity Pareto, wall-clock |
-
-**Gate G9:** exact-recovery above GP baseline at matched budget, or a documented negative.
-
-### Goal 10 — Domain Expansion *(add trig)*
-
-| Sub | Task |
-|---|---|
-| 10.0 | Compiler + rule-set extension: sin/cos/tan, negative-domain policy, wider constants; soundness tiers per rule |
-| 10.1 | Corpus v2 with expanded grammar (3R generator discipline) |
-| 10.2 | Re-run α/DAG/motif studies on v2 — **the stress test** (trig may explode EML; measure, don't assume) |
-| 10.3 | Re-run Goal 6/7 grids where the verdict could flip |
-
-**Gate G10:** expanded compiler passes purity + numeric audits; documented α behavior for trig.
-
-### Goal 11 — Scale-Up & Final Comparison
-
-| Sub | Task |
-|---|---|
-| 11.0 | Corpus v3 + pairs at 10–100× |
-| 11.1 | Scaling curves per channel (does the EML/AST gap grow, shrink, or invert?) |
-| 11.2 | Full three-track evaluation at scale; **parameter-efficiency hypothesis tested explicitly** (small GNN vs larger transformer at matched accuracy) |
-| 11.3 | Frontier-LLM reference comparison, verifier-normalized (verified-correct vs claimed-correct rate) |
-
-**Gate G11:** every headline number has both denominators, multi-seed variance, and scaling caveats resolved or stated.
-
-### Goal 12 — Consolidation & Release
-
-- 12.0 Final findings report: the α-story, the representation verdict (positive **or null — published with equal prominence**), verified-soundness result, parameter-efficiency verdict.
-- 12.1 Reproducibility package: one-command re-run per goal, pinned environment, archived artifacts.
-- 12.2 Paper/preprint + repo release under the agreed claim discipline.
-
-## 6. Predictions (falsifiable, to be verified by experiment)
-
-| Task | Prediction |
-|---|---|
-| Direct expression evaluation | **Weak** — nested exp/ln trees explode |
-| Symbolic equivalence classification | Decent at depths 1–6; degrades beyond |
-| Symbolic regression | **Strongest track** — EML's native home per the original paper |
-| Proof generation | Needs different architecture for complex proofs (substitutions, lemmas, case work); especially weak in geometry (construction-based) |
-
-## 7. Team plan & working agreement
-
-- **Group A — pipeline rebuild:** reimplement Goals 1–5 at large scale from scratch (larger dataset; heavy agent-assisted development with thorough human + agent code review). Compute: H100 if hours allow, else a personal RTX 5090 over SSH (sufficient for dataset generation and motif/macro extraction).
-- **Group B — architecture & learning:** GNN/ML-experienced members build the model zoo (a Siamese GIN is a candidate) and drive Goals 6–12. This is the compute-heavy half (H100 needed).
-- **Overlap:** 2–3 people bridge both groups as supervisors.
-- **Open design decision:** which constants to implement — π and e are candidates; **i is likely out** (it would change the pipeline and project fundamentally).
-- **Documentation is continuous:** every member documents their own work as it lands — clean, organized, usable. No end-of-project documentation crunch.
-- **Paper:** ~5–7 days before deadline, 2 members start writing the core paper (codebase need not be 100% complete); remaining members switch to reviewing once code is done.
-
-## 8. Resources
-
-- **Compute:** 1× NVIDIA H100 (preemptible/spot) for ~3 months; RTX 5090 fallback for generation workloads.
-- **Software:** PyTorch + PyTorch Geometric, SymPy, e-graph tooling; Lean 4 under consideration for verification tiers.
-
-## 9. References
-
-- Odrzywołek, A. (2026). *The EML function* — reduction of elementary functions to `exp(x) − ln(y)`. (Official EML compiler used for all pure-EML conversions — no abbreviations, no hidden derived leaves.)
-- v0 prototype and per-goal summaries: [geml_experiments](https://github.com/sahilsinghthefirst/geml_experiments) (`docs/goal1/`–`docs/goal5/`).
-
-## 10. License
+## License
 
 GEML is released under the [MIT License](LICENSE), Copyright (c) 2026 GEML contributors.
