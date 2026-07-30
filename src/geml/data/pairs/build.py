@@ -30,6 +30,7 @@ import pyarrow.parquet as pq
 
 from geml.contracts.corpus import CorpusManifest, CorpusSplit
 from geml.data.pairs.generate import (
+    DERIVED_SEED_SCHEMA_VERSION,
     ExpressionReferenceV1,
     GroupLineageV1,
     NonEquivalenceEvidenceV1,
@@ -66,6 +67,16 @@ PAIR_RUN_SUMMARY_SCHEMA_VERSION = "geml-goal6-pair-run-summary-v1"
 RULE_SET_BUNDLE_SCHEMA_VERSION = "geml-goal6-pair-build-rule-digest-v1"
 _EXACT_POINT_METHOD = "exact-rational-point-v1"
 _TRAJECTORY_COMPONENT = "goal6.pairs.trajectory"
+_SEED_OUTPUT = "first_8_sha256_bytes_unsigned_big_endian"
+_CORPUS_COLUMNS = (
+    "expression_id",
+    "sympy_srepr",
+    "split",
+    "operator_family",
+    "domain_mode",
+    "target_ast_size",
+    "target_depth",
+)
 
 # Corpus rows declare the Goal 1 domain modes; the engine exposes rewrite modes.
 # safe_real rules are sound for every real-valued row, the formal tier is only
@@ -130,18 +141,13 @@ def _split_rows(
             digest = hashlib.sha256(shard_path.read_bytes()).hexdigest()
             if shard.checksum.algorithm != "sha256" or digest != shard.checksum.digest.lower():
                 raise PairBuildError(f"corpus shard checksum mismatch: {shard_path}")
-            table = pq.read_table(
-                shard_path,
-                columns=[
-                    "expression_id",
-                    "sympy_srepr",
-                    "split",
-                    "operator_family",
-                    "domain_mode",
-                    "target_ast_size",
-                    "target_depth",
-                ],
-            )
+            present = set(pq.read_schema(shard_path).names)
+            missing = [name for name in _CORPUS_COLUMNS if name not in present]
+            if missing:
+                raise PairBuildError(
+                    f"corpus shard {shard_path} is missing expected columns: " + ", ".join(missing)
+                )
+            table = pq.read_table(shard_path, columns=list(_CORPUS_COLUMNS))
             if table.num_rows != shard.row_count:
                 raise PairBuildError(f"corpus shard row count mismatch: {shard_path}")
             data = table.to_pydict()
@@ -490,6 +496,12 @@ def run_production_build(
             f"config seed_derivation component must be {_TRAJECTORY_COMPONENT!r}; the frozen "
             "derive_trajectory_seed rule accepts no other component"
         )
+    if derivation.get("schema_version") != DERIVED_SEED_SCHEMA_VERSION:
+        raise PairBuildError(
+            f"config seed_derivation schema_version must be {DERIVED_SEED_SCHEMA_VERSION!r}"
+        )
+    if derivation.get("output") != _SEED_OUTPUT:
+        raise PairBuildError(f"config seed_derivation output must be {_SEED_OUTPUT!r}")
     if type(run_seed) is not int:
         raise PairBuildError("production_seed must be an integer")
     if type(size_tolerance) is not int or size_tolerance < 0:
