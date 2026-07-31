@@ -30,4 +30,12 @@ Thumbs.db
 /data/generated/
 
 # Internal working drafts and strategy docs — not part of the public repo
-/paper/
+# Paper: track the source (.tex/.bib/.sty/.bst/.pdf); ignore LaTeX build artifacts
+/paper/*.aux
+/paper/*.bbl
+/paper/*.blg
+/paper/*.log
+/paper/*.out
+/paper/*.fls
+/paper/*.fdb_latexmk
+/paper/*.synctex.gz
