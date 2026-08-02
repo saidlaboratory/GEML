@@ -16,11 +16,15 @@ package.
   still unrun, stale in the repository release checklist, or scientifically null.
 * `results.json` is the machine-readable ledger.  Missing or unavailable values are
   represented by JSON `null` with a status explaining why; no values are imputed.
+* `DETAILED_RESULTS.md` is the expanded per-goal ledger, including distributions,
+  operator/failure accounting, graph tracks, model configurations, and GPU cells.
+  `detailed_results.json` is its machine-readable counterpart.  Both are compact
+  summaries and intentionally exclude raw rows, checkpoints, and logs.
 * `PROVENANCE.md` maps every headline number to a source path, schema, commit, or
   artifact digest.  The source artifacts remain in the separate artifact store.
 
 The authoritative repository snapshot used for this ledger is
-`origin/main` at commit `5de31bf34945fcdaef5dbe10d9df819fa98b1ca5`.  The GPU package
+`origin/main` at commit `742bfa58efb256ad2b7cdeddeedc0220683a01ea`.  The GPU package
 was produced from runtime source commit
 `53a34d2d37e0912bd17feb01c84c97ad35e4455b` and is not silently substituted for the
 repository's older Phase-A documentation.
