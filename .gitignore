@@ -39,3 +39,5 @@ Thumbs.db
 /paper/*.fls
 /paper/*.fdb_latexmk
 /paper/*.synctex.gz
+/paper/*.png
+/build.out

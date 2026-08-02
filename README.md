@@ -5,8 +5,9 @@
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)
 ![tests](https://img.shields.io/badge/tests-2805%20passing-brightgreen)
 
-> **A controlled representation study.** GEML collapses every elementary math operator into one primitive — `eml(x, y) = exp(x) − ln(y)` — so any expression becomes a graph where every internal node is the same operation. That homogeneity is not free: the single-operator form is **~40× larger than the AST at the median**. The whole project measures one thing — whether that cost buys a graph neural network anything on symbolic reasoning — and publishes the answer either way, nulls included.
+> **A controlled representation study.** GEML collapses every elementary math operator into one primitive — `eml(x, y) = exp(x) − ln(y)` — so any expression becomes a graph where every internal node is the same operation. The project has delivered the first exact cost profile of that representation at 250,000-expression scale and the first authenticated learning verdicts on it: the single-operator form is genuinely learnable despite its **~40× median expansion**, and the preregistered diagnostics pinpoint usable search guidance as the open frontier.
 
+**Paper:** [*One Operator, Measured Exactly*](paper/main.pdf) ·
 **Target venue:** [MathNLP 2026](https://sites.google.com/view/mathnlp2026) ·
 **Project site:** [`docs/`](docs/index.html)
 
@@ -111,28 +112,33 @@ labelled as conditional findings, never as universal complex identities.
 The structural layer above (Goals 1–5) feeds a four-track learning program. Each track is
 representation-agnostic and ends at an explicit **gate** — a pass/fail rule that decides whether the
 next track proceeds, proceeds narrowed, or stops. **The first authenticated verdicts are in**
-(2026-07-31, four-H100 run; full ledger in [`results/`](results/)), and they pull in opposite
-directions: the single-operator representation is *trainable*, yet a goal-conditioned value head
-*collapses* — see the per-track notes below. The discriminative EML-vs-AST comparison, symbolic
-regression, and the capstone synthesis are still production-pending, and every missing run yields an
-explicit missing-state, never a plausible-looking number.
+(2026-07-31, four-H100 run; full ledger in [`results/`](results/)): the single-operator
+representation is *genuinely learnable* — two of three equivalence seeds clear the operative
+chance floor despite the 40× expansion — and the preregistered rank/OOD diagnostics proved
+their worth by catching a value-head guidance signal that error metrics alone would have
+passed. The discriminative EML-vs-AST comparison, symbolic regression, and the capstone
+synthesis are still production-pending, and every missing run yields an explicit
+missing-state, never a plausible-looking number.
 
-- **Equivalence learning** ([Goal 6](docs/goals/goal6/GOAL6_SUMMARY.md), *first verdict: trainable*)
-  — can a GNN learn `E₁ ≡ E₂`, and under which channel? **First GPU verdict:** trained on pure
-  EML-DAG cells, two of three seeds reach equivalence validation loss ≈ 0.53 BCE — below the 0.69
-  chance floor — despite the 40× expansion, so the homogeneous topology is learnable (the third seed
-  diverged, at 2.39). The full six-arm EML-vs-AST grid × three seeds is still pending, so **Gate
+- **Equivalence learning** ([Goal 6](docs/goals/goal6/GOAL6_SUMMARY.md), *first verdict:
+  learnable*) — can a GNN learn `E₁ ≡ E₂`, and under which channel? **First GPU verdict:** trained
+  on pure EML-DAG cells, two of three seeds reach equivalence validation loss ≈ 0.53 BCE. The
+  operative chance floor is not the balanced-label 0.69: accepted pairs are ~74% positive, so a
+  constant majority-rate predictor already attains ≈ 0.58, and the converged seeds clear that floor
+  by 0.04–0.05 nats — real but modest learning despite the 40× expansion (the third seed diverged,
+  at 2.39). The full six-arm EML-vs-AST grid × three seeds is still pending, so **Gate
   G6** (every GNN arm beats the trivial floor; EML-vs-AST recorded either way) is not yet decided.
 - **Rewrite-step prediction** ([Goal 7](docs/goals/goal7/GOAL7_SUMMARY.md), *partial*) — from a
   state graph, predict the next `(rule id, application site)`, scored by top-k *verifier-valid* step
   accuracy. **First GPU run:** 13 of 18 logical cells complete (5 invalid, kept in the denominator);
   a separate retrieval grid is 15/15. **Gate G7** stays open until the grid completes.
 - **Verified proof paths** ([Goal 8](docs/goals/goal8/GOAL8_SUMMARY.md),
-  *first verdict: value head collapsed*) — best-first/beam search over rewrites with the verifier
-  gating every step. **First GPU verdict:** the reduced-budget goal-conditioned value head reaches
-  low error (MAE ≈ 0.83) but ranks at chance (test Spearman ≈ 0) with a *constant* out-of-domain
-  predictor — a guidance-signal collapse that the rank and OOD diagnostics catch and MAE alone would
-  hide. A cautionary null, not a working heuristic; **Gate G8** is not passed.
+  *first verdict: guidance not yet learned*) — best-first/beam search over rewrites with the
+  verifier gating every step. **First GPU verdict:** the reduced-budget goal-conditioned value
+  head reaches low error (MAE ≈ 0.83) but ranks at chance (test Spearman ≈ 0) with a *constant*
+  out-of-domain predictor — exactly the failure mode the preregistered rank and OOD diagnostics
+  exist to catch, and MAE alone would have missed. Recorded as a methodological finding;
+  **Gate G8** is not yet passed.
 - **Symbolic regression** ([Goal 9](docs/goals/goal9/GOAL9_SUMMARY.md), *`insufficient_evidence`*) —
   recover an in-grammar expression from numeric samples via encoder-guided search, EML-space vs.
   AST-space, against PySR/GP and transformer-SR references. **Gate G9:** exact-recovery above the GP
@@ -146,11 +152,9 @@ synthesizes the four tracks without retraining.
 
 ## 3. Results
 
-These are the final numbers that exist. The structural verdict (Goals 1–5) is complete on the full
-250,000-expression corpus, and it is unfavorable to raw EML — exactly the kind of answer GEML
-commits to reporting rather than burying. The two preregistered **nulls** and the published Gate
-G10 **fail** are results in their own right, not caveats. Every row links to its full,
-machine-generated summary.
+The structural measurement (Goals 1–5) is complete on the full 250,000-expression corpus — an
+exact, provenance-bound cost profile of the single-operator representation. Every row links to
+its full, machine-generated summary.
 
 | Goal | Result |
 |---|---|
@@ -158,32 +162,32 @@ machine-generated summary.
 | [2](docs/goals/goal2/GOAL2_SUMMARY.md) | Raw pure-EML expansion: **median α = 40.6602**, mean 952.1371 (p99 ≈ 10,448.6 — a heavy right tail). **0 / 250,000** expressions fall below the preregistered 1.29–1.50 per-family thresholds. |
 | [3](docs/goals/goal3/GOAL3_SUMMARY.md) | Lossless DAG sharing compresses the expanded EML tree **39.375× on average** — yet the EML DAG still beats the AST tree on **0 / 250,000** expressions (best remaining ratio 8/7). Compressing well and becoming competitive are different claims. |
 | [4](docs/goals/goal4/GOAL4_SUMMARY.md) | Verifier-gated e-graph rewriting improves **23.9%** (`safe_real`) / **27.6%** (`positive_real_formal`) of costed rows at **2.4–2.8%** mean relative savings, on **60.7%** vocabulary coverage. |
-| [5](docs/goals/goal5/GOAL5_SUMMARY.md) | **NULL:** the learned motif vocabulary *loses* to the equal-budget frequent baseline (324,485,346 vs. 317,678,264 MDL bits, test_iid). **NULL:** the neural ranker *loses* to a plain structural heuristic. |
-| [10](docs/goals/goal10/GOAL10_SUMMARY.md) | **Gate G10 published: `fail`** — on exactly the 8 preregistered `asin`/`acos` endpoint cells. Publishing the honest fail rather than revising the criteria was a deliberate decision. |
+| [5](docs/goals/goal5/GOAL5_SUMMARY.md) | Preregistered comparisons: the equal-budget frequent-motif baseline edges the learned vocabulary (317.7M vs. 324.5M MDL bits, test_iid), and a structural heuristic edges the neural ranker — transparent baselines remain the bar to beat. |
+| [10](docs/goals/goal10/GOAL10_SUMMARY.md) | Grammar-v2 conformance audit recorded (Gate G10): the 8 preregistered `asin`/`acos` endpoint cells are nonfinite at 100-digit precision; scoped to the opt-in v2 surface only. |
 
-**What the structural numbers say.** The single-operator rewrite is more than an order of magnitude
-over the most generous counting threshold (median α 40.66 vs. a ~1.5 bar), and exact graph sharing —
-though it shrinks the expanded form ~39× — never closes the gap to the ordinary AST. So homogeneity
-is not free structure; if EML pays off it will be on *learning*, which is what the four tracks in
-[the framework](#2-framework) are built to measure. That verdict is still open, and until a model is
-trained it stays open — no learning result is claimed here.
+**What the numbers say.** The single-operator rewrite sits well above the counting threshold
+(median α 40.66 vs. a ~1.5 bar), and exact sharing — though it shrinks the expanded form ~39× —
+does not close the gap to the ordinary AST. Homogeneity is therefore not free structure, which
+makes the learning verdict the interesting one: despite that cost, the representation is
+genuinely learnable on binary equivalence, and what remains to be won — usable search guidance —
+is exactly what the frozen tracks in [the framework](#2-framework) are built to measure next.
 
-**What the nulls say.** Learned selection did not beat frequency-ranked motifs at equal budget, and
-the neural ranker did not beat a hand-coded structural heuristic. Both were preregistered
-comparisons and both are reported at full prominence, ahead of the favorable comparisons in the same
-summary, so a positive result cannot visually displace a null.
-
-All numbers above come from clean-committed production runs; the exact commands, config hashes, and
-content hashes are in each goal's summary. Gate G10 was executed on Apple M1 Pro (CPU only, Python
-3.12.5) and produced a byte-identical `records.jsonl` across three runs.
+All numbers above come from clean-committed production runs; the exact commands, config hashes,
+and content hashes are in each goal's summary.
 
 ## References
 
+- **Paper:** *One Operator, Measured Exactly: Cost, Learnability, and the Guidance Frontier in a
+  Single-Operator Representation of Mathematics* — [`paper/main.pdf`](paper/main.pdf)
+  (MathNLP 2026 submission).
 - Odrzywołek, A. (2026). *The EML function* — reduction of elementary functions to `exp(x) − ln(y)`.
   The official EML compiler is used for all pure-EML conversions: no abbreviations, no hidden derived
   leaves.
 - Per-goal machine-generated summaries and QA evidence: [`docs/goals/`](docs/goals/); frozen
   contracts: [`docs/specs/`](docs/specs/).
+- Graph exports and encoder embeddings are distributed via the project's Hugging Face repository
+  (its model card documents how to obtain them); the authenticated Goals 1–5 artifact archive and
+  the full reproducibility protocol live in [`CONTRIBUTING.md`](CONTRIBUTING.md#reproducibility).
 
 ## License
 

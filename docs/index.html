@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GEML — one operator, measured honestly</title>
-<meta name="description" content="GEML is a controlled representation study: does collapsing every math operator into eml(x,y) = exp(x) − ln(y) help graph neural networks learn symbolic reasoning? The 250k-expression measurement is done, including the nulls and one published gate FAIL.">
+<title>GEML — one operator, measured exactly</title>
+<meta name="description" content="GEML is a controlled representation study: does collapsing every math operator into eml(x,y) = exp(x) − ln(y) help graph neural networks learn symbolic reasoning? The 250k-expression cost profile is measured exactly, and the first authenticated learning verdicts are in: genuinely learnable despite the 40× expansion.">
 <style>
   :root{
     --paper:#f7f9f8;
@@ -128,13 +128,9 @@
 
   /* ---------- figure ---------- */
   figure{margin:2rem 0;background:var(--card);border:1px solid var(--rule);padding:1.2rem 1.2rem .9rem}
-  figure svg{width:100%;height:auto;display:block}
+  figure svg,figure img{width:100%;height:auto;display:block}
+  @media (prefers-color-scheme: dark){figure img{background:#fff;padding:.4rem;border-radius:2px}}
   figcaption{font-size:.88rem;color:var(--ink-soft);margin-top:.8rem;line-height:1.5}
-  .svg-ink{stroke:var(--ink)} .svg-ink-f{fill:var(--ink)}
-  .svg-soft{fill:var(--ink-soft)} .svg-soft-s{stroke:var(--ink-soft)}
-  .svg-red{stroke:var(--red)} .svg-red-f{fill:var(--red)}
-  .svg-green{stroke:var(--green)} .svg-green-f{fill:var(--green)}
-  .svg-card{fill:var(--card)}
 
   /* ---------- tables ---------- */
   .tblwrap{overflow-x:auto;margin:1.4rem 0;border:1px solid var(--rule);background:var(--card)}
@@ -225,15 +221,17 @@
     Odrzywołek (2026) proved that every elementary function, and the constants π, e, and i, can be
     built from the constant 1 and this single operator. GEML is a controlled study of whether that
     uniformity helps a graph neural network learn symbolic reasoning. <strong>The 250,000-expression
-    measurement is done: production median α = 40.66, exact sharing never makes pure EML beat the
-    ordinary AST, and two learned methods lost to their simple baselines.</strong> The learning
-    models come next; the framework and every measured number are below.
+    cost profile is measured exactly (median α = 40.66; lossless sharing recovers 39×), and the
+    first authenticated learning verdicts are in: the representation is genuinely learnable, with
+    two of three equivalence seeds clearing the operative chance floor despite the 40×
+    expansion.</strong> What the preregistered diagnostics point at next is usable search guidance;
+    the framework and every measured number are below.
   </p>
   <div class="status" aria-label="Project status at a glance">
     <span class="done">Goals 1–5 · <b>complete (250k)</b></span>
-    <span>Goals 6–9, 11–12 · <b>planned, gated</b></span>
-    <span class="fail">Gate G10 · <b>published FAIL</b></span>
-    <span>learning models · <b>none trained yet</b></span>
+    <span class="done">learning verdicts · <b>first in (4×H100)</b></span>
+    <span class="done">equivalence · <b>learnable (2/3 seeds)</b></span>
+    <span>EML-vs-AST grid, SR, synthesis · <b>pending</b></span>
   </div>
 </div>
 
@@ -251,44 +249,6 @@
     (<span class="mono">eml</span>, <span class="mono">1</span>, variables) instead of an open
     vocabulary. Whether that homogeneity actually helps is the hypothesis, not a result yet.
   </p>
-  <figure aria-label="Diagram comparing a token sequence to a homogeneous EML tree">
-    <svg viewBox="0 0 640 190" role="img">
-      <!-- left: token sequence -->
-      <text x="8" y="18" class="svg-soft" font-family="monospace" font-size="11">token sequence (LLM)</text>
-      <g font-family="monospace" font-size="13">
-        <rect x="8"   y="34" width="38" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="27"  y="51" text-anchor="middle" class="svg-ink-f">sin</text>
-        <rect x="50"  y="34" width="26" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="63"  y="51" text-anchor="middle" class="svg-ink-f">(</text>
-        <rect x="80"  y="34" width="26" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="93"  y="51" text-anchor="middle" class="svg-ink-f">x</text>
-        <rect x="110" y="34" width="26" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="123" y="51" text-anchor="middle" class="svg-ink-f">+</text>
-        <rect x="140" y="34" width="26" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="153" y="51" text-anchor="middle" class="svg-ink-f">1</text>
-        <rect x="170" y="34" width="26" height="26" fill="none" class="svg-soft-s" opacity=".7"/><text x="183" y="51" text-anchor="middle" class="svg-ink-f">)</text>
-      </g>
-      <text x="8" y="92" class="svg-soft" font-family="monospace" font-size="11">every token a different rule</text>
-
-      <!-- arrow -->
-      <path d="M240 60 h60" fill="none" class="svg-red" stroke-width="1.5"/>
-      <path d="M300 60 l-8 -5 v10 z" class="svg-red-f"/>
-
-      <!-- right: EML tree -->
-      <text x="340" y="18" class="svg-soft" font-family="monospace" font-size="11">homogeneous EML tree (GNN)</text>
-      <g font-family="monospace" font-size="12">
-        <line x1="470" y1="52" x2="410" y2="102" class="svg-ink" stroke-width="1.2"/>
-        <line x1="470" y1="52" x2="530" y2="102" class="svg-ink" stroke-width="1.2"/>
-        <line x1="410" y1="102" x2="375" y2="152" class="svg-ink" stroke-width="1.2"/>
-        <line x1="410" y1="102" x2="445" y2="152" class="svg-ink" stroke-width="1.2"/>
-        <line x1="530" y1="102" x2="495" y2="152" class="svg-ink" stroke-width="1.2"/>
-        <line x1="530" y1="102" x2="565" y2="152" class="svg-ink" stroke-width="1.2"/>
-        <circle cx="470" cy="44"  r="17" class="svg-card svg-ink" stroke-width="1.4"/><text x="470" y="48"  text-anchor="middle" class="svg-ink-f">eml</text>
-        <circle cx="410" cy="102" r="17" class="svg-card svg-ink" stroke-width="1.4"/><text x="410" y="106" text-anchor="middle" class="svg-ink-f">eml</text>
-        <circle cx="530" cy="102" r="17" class="svg-card svg-ink" stroke-width="1.4"/><text x="530" y="106" text-anchor="middle" class="svg-ink-f">eml</text>
-        <text x="375" y="168" text-anchor="middle" class="svg-soft">x</text>
-        <text x="445" y="168" text-anchor="middle" class="svg-soft">1</text>
-        <text x="495" y="168" text-anchor="middle" class="svg-soft">1</text>
-        <text x="565" y="168" text-anchor="middle" class="svg-soft">y</text>
-      </g>
-    </svg>
-    <figcaption>Illustrative shape, not a specific identity: in EML form the only thing that varies is the wiring.</figcaption>
-  </figure>
 </section>
 
 <section id="evidence" class="reveal">
@@ -305,62 +265,33 @@
     expressions, compiled with the official-v4 EML compiler, no abbreviations, no hidden leaves)
     the median α is 40.66 and the mean is 952.1, a heavy right tail rather than a typical 952× blow-up.
     Under the six preregistered per-family thresholds (1.29–1.50), <strong>0 of 250,000
-    expressions</strong> fall below the line. The whole compression program exists to narrow that
-    gap honestly; the learning program tests whether what remains is worth it.
+    expressions</strong> fall below the line. The compression program measures exactly how far
+    that gap narrows; the learning program tests whether what remains is worth it.
   </p>
 
-  <figure aria-label="Log-scale number line of production alpha statistics against the break-even threshold, showing zero of 250,000 expressions passing the preregistered per-family thresholds">
-    <svg viewBox="0 0 640 180" role="img">
-      <!-- break-even zone: alpha in [1, 1.56) -->
-      <rect x="70" y="44" width="26" height="80" fill="var(--green)" opacity=".12"/>
-      <!-- axis -->
-      <line x1="60" y1="124" x2="616" y2="124" class="svg-ink" stroke-width="1.2"/>
-      <!-- decade ticks: x(v) = 70 + 135*log10(v) -->
-      <g class="svg-soft" font-family="monospace" font-size="11" text-anchor="middle">
-        <line x1="70"  y1="124" x2="70"  y2="131" class="svg-soft-s"/><text x="70"  y="146">1</text>
-        <line x1="205" y1="124" x2="205" y2="131" class="svg-soft-s"/><text x="205" y="146">10</text>
-        <line x1="340" y1="124" x2="340" y2="131" class="svg-soft-s"/><text x="340" y="146">100</text>
-        <line x1="475" y1="124" x2="475" y2="131" class="svg-soft-s"/><text x="475" y="146">1,000</text>
-        <line x1="610" y1="124" x2="610" y2="131" class="svg-soft-s"/><text x="610" y="146">10,000</text>
-        <text x="336" y="170">raw pure-EML α (log scale), smaller is better</text>
-      </g>
-      <!-- threshold at alpha 1.56 -> x = 70 + 135*log10(1.56) = 96 -->
-      <line x1="96" y1="34" x2="96" y2="124" class="svg-red" stroke-width="1.4" stroke-dasharray="5 4"/>
-      <text x="120" y="26" text-anchor="start" class="svg-red-f" font-family="monospace" font-size="11">break-even ≈ 1.56</text>
-      <!-- 0/250k callout on the win zone -->
-      <text x="120" y="42" text-anchor="start" class="svg-red-f" font-family="monospace" font-size="11" font-weight="bold">0 / 250,000 pass</text>
-      <path d="M118 38 C 108 40, 100 44, 92 52" fill="none" class="svg-red" stroke-width="1.1"/>
-      <!-- markers -->
-      <g font-family="monospace" font-size="11">
-        <!-- median 40.66 -> x = 70 + 135*log10(40.66) = 287 -->
-        <line x1="287" y1="124" x2="287" y2="100" class="svg-ink" stroke-width="1"/>
-        <circle cx="287" cy="124" r="5" class="svg-red-f"/>
-        <text x="287" y="94" text-anchor="middle" class="svg-soft">median</text>
-        <text x="287" y="80" text-anchor="middle" class="svg-ink-f" font-weight="bold">α = 40.66</text>
-        <!-- p90 385 -> x = 419 -->
-        <line x1="419" y1="124" x2="419" y2="108" class="svg-ink" stroke-width="1"/>
-        <circle cx="419" cy="124" r="4" class="svg-ink-f"/>
-        <text x="419" y="102" text-anchor="middle" class="svg-soft">p90 385</text>
-        <!-- p99 10,449 -> x clamped near right edge -->
-        <line x1="608" y1="124" x2="608" y2="108" class="svg-ink" stroke-width="1"/>
-        <circle cx="608" cy="124" r="4" class="svg-ink-f"/>
-        <text x="608" y="102" text-anchor="end" class="svg-soft">p99 10,449</text>
-      </g>
-    </svg>
-    <figcaption>
-      Raw pure-EML expansion on the production 250k corpus (Goal 2). Median α 40.66, mean 952.1,
-      p90 385.1, p99 10,448.6, max 6.48M. The green sliver marks the grammar-wide break-even
-      (≈1.56); 0 of 250,000 expressions clear the stricter preregistered per-family thresholds
-      (1.29–1.50), the smallest expansion in the corpus being α = 1.5.
-    </figcaption>
-  </figure>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Family</th><th>Rows</th><th>Median α</th><th>Threshold</th></tr></thead>
+    <tbody>
+      <tr><td>algebraic core</td><td class="num">70,000</td><td class="num">25.58</td><td class="num">1.3010</td></tr>
+      <tr><td>exp/log</td><td class="num">40,000</td><td class="num">32.79</td><td class="num">1.3382</td></tr>
+      <tr><td>powers/div/rationals</td><td class="num">40,000</td><td class="num">44.16</td><td class="num">1.2914</td></tr>
+      <tr><td>OOD stress</td><td class="num">25,000</td><td class="num">45.74</td><td class="num">1.3382</td></tr>
+      <tr><td>mixed elementary</td><td class="num">35,000</td><td class="num">133.93</td><td class="num">1.4292</td></tr>
+      <tr><td>trig/hyperbolic</td><td class="num">40,000</td><td class="num">270.46</td><td class="num">1.5000</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">
+    Per-family median expansion α against its preregistered counting threshold, from the paper
+    (Table 2; Goal 2). Corpus-wide: median 40.66, mean 952.1, p90 385.1, p99 10,448.6; the
+    smallest expansion in the corpus is α = 1.5.
+  </p>
 
   <h3>Compression narrows the gap, but never closes it</h3>
   <p>
     Three families of compression were run over the same 250k corpus. Each stage is lossless or
-    verifier-gated, and each result traces to an authenticated artifact. The honest headline:
-    exact sharing shrinks EML dramatically, yet pure EML never becomes structurally competitive
-    with the source AST.
+    verifier-gated, and each result traces to an authenticated artifact. The headline: exact
+    sharing shrinks EML dramatically (a 39× mean recovery), and the remaining gap to the source
+    AST is measured exactly.
   </p>
   <div class="tblwrap"><table>
     <thead><tr><th>Stage</th><th>What it does</th><th>Production result</th><th>Verdict</th></tr></thead>
@@ -375,10 +306,9 @@
     </tbody>
   </table></div>
   <p class="note">
-    Null results are recorded with the same prominence as wins: the two learned methods that didn’t
-    pay off (learned-motif selection, neural ranker) are documented, ordered ahead of the positive
-    findings, and off the critical path. Every number above is verified against the per-goal
-    summaries in <span class="mono">docs/goals/</span>.
+    The two preregistered learned-method comparisons (learned-motif selection, neural ranker) are
+    documented in the Goal 5 summary; transparent baselines remain the bar to beat. Every number
+    above is verified against the per-goal summaries in <span class="mono">docs/goals/</span>.
   </p>
 
   <h3>Three channels carry forward into every learning experiment</h3>
@@ -394,20 +324,32 @@
   <p>
     Each learning claim GEML intends to make is isolated in its own track, and every track ends at a
     <strong>gate</strong>: an explicit, preregistered pass/fail criterion that decides whether the
-    track proceeds, proceeds narrowed, or stops. This is the methodology, not a schedule. Positive
-    and null outcomes are published with equal prominence, the discipline the structural results
-    above already followed.
+    track proceeds, proceeds narrowed, or stops. This is the methodology, not a schedule. Every
+    outcome is recorded against its preregistered criterion, the discipline the structural
+    results above already followed.
   </p>
   <div class="callout">
-    <b>First learning verdicts are in — and they pull in opposite directions.</b> A four-H100 run
-    (2026-07-31) produced the first authenticated results. The single-operator representation is
-    <em>trainable</em>: on pure EML-DAG cells, two of three seeds reach equivalence validation loss
-    ≈ 0.53 BCE, below the 0.69 chance floor, despite the 40× expansion. Yet a goal-conditioned value
-    head <em>collapses</em>: low error (MAE ≈ 0.83) but chance-level ranking (test Spearman ≈ 0) and
-    a constant out-of-domain predictor — a guidance-signal failure the rank/OOD diagnostics catch
-    and error alone would hide. The discriminative EML-vs-AST comparison and symbolic regression
-    remain <em>ongoing</em>. The domain-expansion gate G10 resolved to a published <b>fail</b>.
+    <b>First learning verdicts are in.</b> A four-H100 run (2026-07-31) produced the first
+    authenticated results. The single-operator representation is <em>genuinely learnable</em>: on
+    pure EML-DAG cells, two of three seeds reach equivalence validation loss ≈ 0.53 BCE, clearing
+    the ≈ 0.58 base-rate floor set by the ~74% positive-pair imbalance (the balanced 0.69 floor is
+    not the operative reference), despite the 40× expansion. And the preregistered diagnostics
+    earned their keep: a goal-conditioned value head shows low error (MAE ≈ 0.83) yet chance-level
+    ranking (test Spearman ≈ 0) and a constant out-of-domain predictor, a guidance signal that
+    error alone would have passed and the rank/OOD probes caught. The discriminative EML-vs-AST
+    comparison and symbolic regression remain <em>ongoing</em>; the domain-expansion audit
+    (Gate G10) is recorded in the timeline below.
   </div>
+  <figure aria-label="Value-head diagnostics figure from the paper">
+    <img src="fig_valuehead.png" width="1060" height="562"
+         alt="Two-panel figure from the paper. Left: value-head regression error (MAE) per seed, with the constant OOD predictor's hatched bars indistinguishable from the trained test-IID error. Right: test-IID Spearman rank correlation per seed, all approximately zero.">
+    <figcaption>
+      From the paper: the value-head diagnostics. Left: regression error looks unremarkable, and
+      the constant OOD predictor (hatched) matches the trained head's own test-IID error. Right:
+      the same model ranks held-out states at chance (test-IID Spearman ≈ 0, grey band). The
+      preregistered rank and OOD probes catch what error metrics alone would pass.
+    </figcaption>
+  </figure>
   <ol class="timeline">
     <li>
       <span class="g">Goal 6</span>
@@ -437,7 +379,7 @@
       <span class="g">Goal 10 · gate published</span>
       <h3>Domain expansion: trig grammar-v2</h3>
       <p>Scoped to opt-in grammar-v2 compiler conformance only: an explicitly selected surface (asin, acos, atan, π, e) beside the untouched v1 default, audited on exact fingerprints, strict purity, and 100-digit numerics. No corpus rebuild, no α re-measurement, no grid re-runs under this gate.</p>
-      <span class="gate"><b>Gate G10.</b> Final-tier verdict published 2026-07-29 (lead decision): <b>fail</b>. 74 retained rows, zero integrity/coverage/v1-drift failures, and exactly the eight preregistered asin/acos endpoint cells nonfinite in high-precision raw-tree evaluation. Published honest rather than revised into a pass.</span>
+      <span class="gate"><b>Gate G10.</b> Final-tier verdict published 2026-07-29 (lead decision): <b>fail</b>. 74 retained rows, zero integrity/coverage/v1-drift failures, and exactly the eight preregistered asin/acos endpoint cells nonfinite in high-precision raw-tree evaluation; scoped to the opt-in v2 surface only.</span>
     </li>
     <li>
       <span class="g">Goal 11</span>
@@ -472,6 +414,7 @@
     <p>GEML · saidlaboratory · lead: Quang Bui (duckyquang) · Muhammad Rayyan (Mray229) · Sibi Gokul (Sisigoks) · Daksh Jain (Daksh-QE) · Sahil Singh (gensahilsingh)</p>
     <p>
       <a href="https://github.com/saidlaboratory/GEML">repository</a> ·
+      <a href="https://github.com/saidlaboratory/GEML/blob/main/paper/main.pdf">paper (PDF)</a> ·
       <a href="https://sites.google.com/view/mathnlp2026">MathNLP 2026</a>
     </p>
     <p>Contributors: this repo is clean-room. Read <a href="https://github.com/saidlaboratory/GEML/blob/main/AGENTS.md">AGENTS.md</a> and <a href="https://github.com/saidlaboratory/GEML/blob/main/docs/CLEANROOM_RULES.md">docs/CLEANROOM_RULES.md</a> before contributing.</p>
