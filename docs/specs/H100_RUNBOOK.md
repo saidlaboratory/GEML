@@ -28,8 +28,8 @@ exists). Nothing here was measured on an H100; this repo has never run on one.
      `scripts/repro/ARTIFACT_SOURCES.json`), verify with
      `python -m scripts.repro verify-delivery / preflight-archive /
      verify-tree`, extract (needs ≥ 80 GB free and ≥ 1.3 M free inodes), and
-     set `GEML_ARTIFACTS_ROOT`. `docs/REPRODUCIBILITY.md` states Goals 1–5
-     production artifacts are never regenerated.
+     set `GEML_ARTIFACTS_ROOT`. Per the reproducibility policy in
+     `CONTRIBUTING.md`, Goals 1–5 production artifacts are never regenerated.
    - *Option B (fallback only):* regenerate the corpus with the Goal 1
      dev→pilot→final stages below. A regenerated corpus is a **new corpus
      identity** unless byte-identical to the delivered one: every downstream
@@ -127,10 +127,26 @@ exists). Nothing here was measured on an H100; this repo has never run on one.
    The pin test must PASS on the node (it fails/skips on the dev laptop; that
    is a known local-env condition, not a waiver for the node).
 
-8. **Spend ceiling.** Before renting hours, fill the cost formula in
-   `docs/REPRODUCIBILITY.md` ("Runtime and cost budgeting") with the measured
-   pilot throughput and the actual instance quote, and record the approved
-   ceiling. No number is prefilled here because none has been measured.
+8. **Spend ceiling.** Before renting hours, fill the cost formula below with
+   the measured pilot throughput and the actual instance quote, and record the
+   approved ceiling. No number is prefilled here because none has been
+   measured. The 20% factor is a declared scheduling reserve, not evidence;
+   the wall-time formula adds sequential phases and takes a maximum only
+   across work actually run in parallel.
+
+   ```text
+   expected_cell_hours =
+       ceil(remaining_work_units / measured_work_units_per_hour * 1.20)
+   expected_instance_hours =
+       sequential_setup_and_preprocessing_hours
+       + max(parallel_GPU_critical_path_hours, parallel_CPU_analysis_hours)
+       + sequential_collection_and_validation_hours
+   expected_compute_cost_usd =
+       current_instance_quote_usd_per_hour * expected_instance_hours
+   expected_total_cost_usd =
+       expected_compute_cost_usd
+       + storage_cost_usd + egress_cost_usd + API_cost_usd
+   ```
 
 ## Node bring-up
 

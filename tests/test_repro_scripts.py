@@ -607,7 +607,7 @@ def test_provider_template_contains_names_but_no_secrets() -> None:
 
 
 def test_reproducibility_guide_keeps_smoke_production_and_lock_status_honest() -> None:
-    guide = Path("docs/REPRODUCIBILITY.md").read_text(encoding="utf-8")
+    guide = Path("CONTRIBUTING.md").read_text(encoding="utf-8")
 
     for goal in range(1, 13):
         assert f"smoke --goal {goal} --execute" in guide
@@ -637,7 +637,7 @@ def test_requirements_lock_digest_matches_every_documented_value() -> None:
     measured = _sha256(Path("requirements-lock.txt").read_bytes())
 
     for doc in (
-        "docs/REPRODUCIBILITY.md",
+        "CONTRIBUTING.md",
         "docs/RELEASE_CHECKLIST.md",
         "docs/specs/PRE_PHASE_B_DECISIONS.md",
     ):
