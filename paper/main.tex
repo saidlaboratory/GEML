@@ -7,9 +7,10 @@
 % \usepackage{acl} and replace \author{Anonymous ACL submission} with
 % the real author block. Nothing else changes.
 %
-% RESULTS PENDING markers cover ONLY the learning training numbers
-% (Goals 6,7,8,9,11); every structural result, the apparatus, the
-% nulls, and the Gate G10 fail are real and final.
+% This submission is self-contained: it reports every measured result.
+% The symbolic-regression and Pareto/Gate-G11 tracks were not run and are
+% scoped as future work; every structural result, the apparatus, the nulls,
+% and the Gate G10 fail are real and final.
 % =====================================================================
 \documentclass[11pt]{article}
 \usepackage[review]{acl}
@@ -20,8 +21,6 @@
 \usepackage{microtype}
 
 \newcommand{\eml}{\ensuremath{\mathrm{eml}}}
-% The sole permitted placeholder: learning training results not yet run.
-\newcommand{\pending}[1]{\textbf{[RESULTS PENDING --- 4$\times$H100: #1]}}
 % Provenance footnotes: committed per-goal summaries plus the pre-authentication
 % digest index in docs/goals/FINAL_REPORT.md (labeled there as NOT yet
 % final-report-authenticated). Re-point to camera-ready anchors on acceptance.
@@ -109,7 +108,7 @@ verdicts: EML-DAG equivalence trains below the chance floor (C5), a
 goal-conditioned value head collapses to a non-ranking, constant-OOD predictor
 under bounded compute (C7), and the rewrite-step track is partially complete (C6),
 while symbolic regression (C8) and the fixed-scale Pareto/Gate-G11 synthesis
-(C10--C11) remain the only pending numbers.
+(C10--C11) were not run and are scoped as future work.
 
 \section{Representations, immutable data, and hypotheses}
 \label{sec:data}
@@ -562,9 +561,10 @@ signal}
 \label{sec:pending}
 The frozen apparatus has now produced its first authenticated verdicts on real
 GPUs; Table~\ref{tab:learning} states each. Two of the five tracks are measured,
-one is partial, and only symbolic regression and the Pareto/Gate-G11 synthesis
-remain placeholders. The two measured tracks pull in opposite directions, and that
-tension is the finding.
+one is partial, and the symbolic-regression and Pareto/Gate-G11 tracks were not
+run---this submission reports what was measured and scopes the rest as future
+work. The two measured tracks pull in opposite directions, and that tension is
+the finding.
 
 The equivalence track is a viability result. Trained purely on single-operator
 EML-DAG source cells (three seeds, no AST comparison arm), two of the three seeds
@@ -612,17 +612,19 @@ $-0.014$/$0.002$/$-0.009$ (${\approx}0$) and a constant OOD predictor (Spearman
 undefined).
 \texttt{null\_or\_\allowbreak collapsed\_\allowbreak value\_head}. \\[2pt]
 Symbolic regression (C8, Goal 9; 256 + 32) &
-\pending{EML- vs.\ AST-guided verifier-confirmed recovery} \\[2pt]
+\emph{Future work.} Apparatus frozen ($256{+}32$ tasks, verifier-gated); not run
+in this submission. \\[2pt]
 Pareto / synthesis (C10--C11, Goal 11) &
-\pending{fixed-scale quality/compute Pareto; Gate G11 verdict} \\
+\emph{Future work.} Cross-track synthesis awaits a complete grid; not run in this
+submission. \\
 \bottomrule
 \end{tabular}
 \caption{Learning-track verdicts, first authenticated pass. Two tracks are
 measured (equivalence trainable below chance; the value head collapsed to a
-non-ranking, constant-OOD predictor), one is partial (rewrite-step), and only
-symbolic regression and the Pareto/Gate-G11 synthesis stay pending. Every number
-is an exact measured value from the authenticated Phase-B GPU package; the
-non-converged equivalence seed is shown, not dropped.}
+non-ranking, constant-OOD predictor), one is partial (rewrite-step); the
+symbolic-regression and Pareto/Gate-G11 tracks were not run and are scoped as
+future work. Every number is an exact measured value from the authenticated
+Phase-B GPU package; the non-converged equivalence seed is shown, not dropped.}
 \label{tab:learning}
 \end{table}
 
