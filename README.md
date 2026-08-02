@@ -12,7 +12,7 @@
 **Project site:** [`docs/`](docs/index.html)
 
 **Lead:** Quang Bui ([@duckyquang](https://github.com/duckyquang)) ·
-**Members:** Muhammad Rayyan ([@Mray229](https://github.com/Mray229)), Sibi Gokul ([@Sisigoks](https://github.com/Sisigoks)), Daksh Jain ([@Daksh-QE](https://github.com/Daksh-QE)), Sahil Singh ([@gensahilsingh](https://github.com/gensahilsingh))
+**Members:** Muhammad Rayyan ([@Mray229](https://github.com/Mray229)), Sibi Gokul ([@Sisigoks](https://github.com/Sisigoks)), Daksh Jain ([@Daksh-QE](https://github.com/Daksh-QE)), Sahil Singh ([@gensahilsingh](https://github.com/gensahilsingh)), Charvik Morampudi ([@CharvikM45](https://github.com/CharvikM45))
 
 ---
 

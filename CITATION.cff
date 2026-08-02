@@ -36,6 +36,9 @@ authors:
   - given-names: Sahil
     family-names: Singh
     alias: gensahilsingh
+  - given-names: Charvik
+    family-names: Morampudi
+    alias: CharvikM45
 references:
   - type: article
     title: "All elementary functions from a single operator"
