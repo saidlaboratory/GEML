@@ -218,8 +218,6 @@ the final run envelope.
 Public folder:
 <https://drive.google.com/drive/folders/1zK5HhWeaFtVJwtby15dO6LDdybVckbfF>
 
-Graph exports and encoder embeddings are additionally distributed through the project's Hugging Face repository; its model card documents how to obtain and verify them.
-
 The link-readable folder contains exactly five published files:
 
 | File | Bytes | Drive ID | SHA-256 |

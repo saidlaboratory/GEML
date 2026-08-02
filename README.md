@@ -185,9 +185,8 @@ and content hashes are in each goal's summary.
   leaves.
 - Per-goal machine-generated summaries and QA evidence: [`docs/goals/`](docs/goals/); frozen
   contracts: [`docs/specs/`](docs/specs/).
-- Graph exports and encoder embeddings are distributed via the project's Hugging Face repository
-  (its model card documents how to obtain them); the authenticated Goals 1–5 artifact archive and
-  the full reproducibility protocol live in [`CONTRIBUTING.md`](CONTRIBUTING.md#reproducibility).
+- The authenticated Goals 1–5 artifact archive (including the graph exports) and the full
+  reproducibility protocol live in [`CONTRIBUTING.md`](CONTRIBUTING.md#reproducibility).
 
 ## License
 
