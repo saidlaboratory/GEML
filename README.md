@@ -110,26 +110,29 @@ labelled as conditional findings, never as universal complex identities.
 
 The structural layer above (Goals 1–5) feeds a four-track learning program. Each track is
 representation-agnostic and ends at an explicit **gate** — a pass/fail rule that decides whether the
-next track proceeds, proceeds narrowed, or stops. **No model has been trained yet:** the tracks
-below are implemented and fixture-tested, and their gates return an honest *insufficient_evidence*
-until a production run exists. Their code is built so a missing run yields an explicit
-missing-state, never a plausible-looking number.
+next track proceeds, proceeds narrowed, or stops. **The first authenticated verdicts are in**
+(2026-07-31, four-H100 run; full ledger in [`results/`](results/)), and they pull in opposite
+directions: the single-operator representation is *trainable*, yet a goal-conditioned value head
+*collapses* — see the per-track notes below. The discriminative EML-vs-AST comparison, symbolic
+regression, and the capstone synthesis are still production-pending, and every missing run yields an
+explicit missing-state, never a plausible-looking number.
 
-- **Equivalence learning** ([Goal 6](docs/goals/goal6/GOAL6_SUMMARY.md), *production pending*) — can
-  a GNN learn `E₁ ≡ E₂`, and under which channel? Six arms (four graph channels + a compute-matched
-  prefix transformer + a trivial op-count floor) × three seeds. **Gate G6:** every GNN arm must beat
-  the trivial floor; the EML-vs-AST verdict is recorded either way, and if pure EML loses on OOD the
-  later tracks proceed with the EML claim narrowed.
-- **Rewrite-step prediction** ([Goal 7](docs/goals/goal7/GOAL7_SUMMARY.md), *production pending*) —
-  from a state graph, predict the next `(rule id, application site)`. Scored by top-k
-  *verifier-valid* step accuracy across channels — the sharpest test of whether homogeneous topology
-  helps rule transfer. **Gate G7:** the learned policy beats a uniform valid-step baseline by a wide
-  margin, with no dead rules.
+- **Equivalence learning** ([Goal 6](docs/goals/goal6/GOAL6_SUMMARY.md), *first verdict: trainable*)
+  — can a GNN learn `E₁ ≡ E₂`, and under which channel? **First GPU verdict:** trained on pure
+  EML-DAG cells, two of three seeds reach equivalence validation loss ≈ 0.53 BCE — below the 0.69
+  chance floor — despite the 40× expansion, so the homogeneous topology is learnable (the third seed
+  diverged, at 2.39). The full six-arm EML-vs-AST grid × three seeds is still pending, so **Gate
+  G6** (every GNN arm beats the trivial floor; EML-vs-AST recorded either way) is not yet decided.
+- **Rewrite-step prediction** ([Goal 7](docs/goals/goal7/GOAL7_SUMMARY.md), *partial*) — from a
+  state graph, predict the next `(rule id, application site)`, scored by top-k *verifier-valid* step
+  accuracy. **First GPU run:** 13 of 18 logical cells complete (5 invalid, kept in the denominator);
+  a separate retrieval grid is 15/15. **Gate G7** stays open until the grid completes.
 - **Verified proof paths** ([Goal 8](docs/goals/goal8/GOAL8_SUMMARY.md),
-  *`insufficient_evidence`*) — best-first/beam search over rewrites with the verifier gating every
-  step, plus a simplification mode compared against SymPy on the exact Goal 4/5 cost. **Gate G8:**
-  guided search beats uniform search on nodes-expanded at equal success rate, with **zero invalid
-  steps emitted**.
+  *first verdict: value head collapsed*) — best-first/beam search over rewrites with the verifier
+  gating every step. **First GPU verdict:** the reduced-budget goal-conditioned value head reaches
+  low error (MAE ≈ 0.83) but ranks at chance (test Spearman ≈ 0) with a *constant* out-of-domain
+  predictor — a guidance-signal collapse that the rank and OOD diagnostics catch and MAE alone would
+  hide. A cautionary null, not a working heuristic; **Gate G8** is not passed.
 - **Symbolic regression** ([Goal 9](docs/goals/goal9/GOAL9_SUMMARY.md), *`insufficient_evidence`*) —
   recover an in-grammar expression from numeric samples via encoder-guided search, EML-space vs.
   AST-space, against PySR/GP and transformer-SR references. **Gate G9:** exact-recovery above the GP

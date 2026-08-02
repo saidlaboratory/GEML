@@ -399,10 +399,14 @@
     above already followed.
   </p>
   <div class="callout">
-    <b>No learning model has been trained yet.</b> Every equivalence, rewrite-step, proof, and
-    symbolic-regression track below is <em>ongoing / insufficient_evidence</em>: the design and its
-    gate are on record, but there is no result to report until the run happens. The one gate that
-    has resolved is the domain-expansion gate, G10, and it resolved to a published <b>fail</b>.
+    <b>First learning verdicts are in — and they pull in opposite directions.</b> A four-H100 run
+    (2026-07-31) produced the first authenticated results. The single-operator representation is
+    <em>trainable</em>: on pure EML-DAG cells, two of three seeds reach equivalence validation loss
+    ≈ 0.53 BCE, below the 0.69 chance floor, despite the 40× expansion. Yet a goal-conditioned value
+    head <em>collapses</em>: low error (MAE ≈ 0.83) but chance-level ranking (test Spearman ≈ 0) and
+    a constant out-of-domain predictor — a guidance-signal failure the rank/OOD diagnostics catch
+    and error alone would hide. The discriminative EML-vs-AST comparison and symbolic regression
+    remain <em>ongoing</em>. The domain-expansion gate G10 resolved to a published <b>fail</b>.
   </div>
   <ol class="timeline">
     <li>
