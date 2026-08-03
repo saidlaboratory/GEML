@@ -1,7 +1,8 @@
 # Results provenance
 
-All source paths below are relative to `C:/Users/gensa/Documents/GEML_artifacts`
-unless they begin with `repo:`.  Artifact tree digests are the immutable directory
+All source paths below are relative to the off-repository artifact root (the
+local directory holding the authenticated `GEML_artifacts` handoff) unless they
+begin with `repo:`.  Artifact tree digests are the immutable directory
 identifiers published by `ARTIFACT_INDEX.md`; file digests are SHA-256 values from the
 Phase-B `SHA256SUMS.txt` or the final-validation record.
 

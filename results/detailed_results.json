@@ -5,7 +5,7 @@
   "provenance": {
     "repository_snapshot": "origin/main",
     "repository_commit": "742bfa58efb256ad2b7cdeddeedc0220683a01ea",
-    "artifact_root": "C:/Users/gensa/Documents/GEML_artifacts",
+    "artifact_root": "<local>/GEML_artifacts",
     "phase_b_package": "Phase_B_GPU_results/phase-b-20260731-53a34d2",
     "phase_b_source_commit": "53a34d2d37e0912bd17feb01c84c97ad35e4455b"
   },

@@ -9,7 +9,7 @@
       "commit": "5de31bf34945fcdaef5dbe10d9df819fa98b1ca5"
     },
     "gpu_runtime_commit": "53a34d2d37e0912bd17feb01c84c97ad35e4455b",
-    "artifact_root": "C:/Users/gensa/Documents/GEML_artifacts",
+    "artifact_root": "<local>/GEML_artifacts",
     "gpu_package": "Phase_B_GPU_results/phase-b-20260731-53a34d2"
   },
   "goals_1_5": {
