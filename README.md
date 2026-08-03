@@ -5,7 +5,7 @@
 ![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)
 ![tests](https://img.shields.io/badge/tests-2805%20passing-brightgreen)
 
-> **A controlled representation study.** GEML collapses every elementary math operator into one primitive — `eml(x, y) = exp(x) − ln(y)` — so any expression becomes a graph where every internal node is the same operation. The project has delivered the first exact cost profile of that representation at 250,000-expression scale and the first authenticated learning verdicts on it: the single-operator form is genuinely learnable despite its **~40× median expansion**, and the preregistered diagnostics pinpoint usable search guidance as the open frontier.
+> **A controlled representation study.** GEML collapses every elementary math operator into one primitive — `eml(x, y) = exp(x) − ln(y)` — so any expression becomes a graph where every internal node is the same operation. The project has delivered the first exact cost profile of that representation at 250,000-expression scale and the first learning verdicts on it: the single-operator form is learnable despite its **~40× median expansion**, and the preregistered diagnostics pinpoint usable search guidance as the open frontier.
 
 **Paper:** [*One Operator, Measured Exactly*](paper/main.pdf) ·
 **Target venue:** [MathNLP 2026](https://sites.google.com/view/mathnlp2026) ·
@@ -111,9 +111,9 @@ labelled as conditional findings, never as universal complex identities.
 
 The structural layer above (Goals 1–5) feeds a four-track learning program. Each track is
 representation-agnostic and ends at an explicit **gate** — a pass/fail rule that decides whether the
-next track proceeds, proceeds narrowed, or stops. **The first authenticated verdicts are in**
+next track proceeds, proceeds narrowed, or stops. **The first verdicts are in**
 (2026-07-31, four-H100 run; full ledger in [`results/`](results/)): the single-operator
-representation is *genuinely learnable* — two of three equivalence seeds clear the operative
+representation is *learnable* — two of three equivalence seeds clear the operative
 chance floor despite the 40× expansion — and the preregistered rank/OOD diagnostics proved
 their worth by catching a value-head guidance signal that error metrics alone would have
 passed. The discriminative EML-vs-AST comparison, symbolic regression, and the capstone
@@ -169,7 +169,7 @@ its full, machine-generated summary.
 (median α 40.66 vs. a ~1.5 bar), and exact sharing — though it shrinks the expanded form ~39× —
 does not close the gap to the ordinary AST. Homogeneity is therefore not free structure, which
 makes the learning verdict the interesting one: despite that cost, the representation is
-genuinely learnable on binary equivalence, and what remains to be won — usable search guidance —
+learnable on binary equivalence, and what remains to be won — usable search guidance —
 is exactly what the frozen tracks in [the framework](#2-framework) are built to measure next.
 
 All numbers above come from clean-committed production runs; the exact commands, config hashes,
@@ -185,7 +185,7 @@ and content hashes are in each goal's summary.
   leaves.
 - Per-goal machine-generated summaries and QA evidence: [`docs/goals/`](docs/goals/); frozen
   contracts: [`docs/specs/`](docs/specs/).
-- The authenticated Goals 1–5 artifact archive (including the graph exports) and the full
+- The Goals 1–5 artifact archive (including the graph exports) and the full
   reproducibility protocol live in [`CONTRIBUTING.md`](CONTRIBUTING.md#reproducibility).
 
 ## License

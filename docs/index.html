@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GEML — one operator, measured exactly</title>
-<meta name="description" content="GEML is a controlled representation study: does collapsing every math operator into eml(x,y) = exp(x) − ln(y) help graph neural networks learn symbolic reasoning? The 250k-expression cost profile is measured exactly, and the first authenticated learning verdicts are in: genuinely learnable despite the 40× expansion.">
+<meta name="description" content="GEML is a controlled representation study: does collapsing every math operator into eml(x,y) = exp(x) − ln(y) help graph neural networks learn symbolic reasoning? The 250k-expression cost profile is measured exactly, and the first learning verdicts are in: learnable despite the 40× expansion.">
 <style>
   :root{
     --paper:#f7f9f8;
@@ -222,7 +222,7 @@
     built from the constant 1 and this single operator. GEML is a controlled study of whether that
     uniformity helps a graph neural network learn symbolic reasoning. <strong>The 250,000-expression
     cost profile is measured exactly (median α = 40.66; lossless sharing recovers 39×), and the
-    first authenticated learning verdicts are in: the representation is genuinely learnable, with
+    first learning verdicts are in: the representation is learnable, with
     two of three equivalence seeds clearing the operative chance floor despite the 40×
     expansion.</strong> What the preregistered diagnostics point at next is usable search guidance;
     the framework and every measured number are below.
@@ -330,7 +330,7 @@
   </p>
   <div class="callout">
     <b>First learning verdicts are in.</b> A four-H100 run (2026-07-31) produced the first
-    authenticated results. The single-operator representation is <em>genuinely learnable</em>: on
+    results, each bound to the committed run ledger. The single-operator representation is <em>learnable</em>: on
     pure EML-DAG cells, two of three seeds reach equivalence validation loss ≈ 0.53 BCE, clearing
     the ≈ 0.58 base-rate floor set by the ~74% positive-pair imbalance (the balanced 0.69 floor is
     not the operative reference), despite the 40× expansion. And the preregistered diagnostics
