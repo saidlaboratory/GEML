@@ -58,11 +58,12 @@ components. On this foundation we release a frozen, leakage-controlled
 learning apparatus and report its first verdicts. The representation is
 learnable despite the $40\times$ expansion: on binary equivalence, two of
 three seeds beat the label-imbalance chance floor of ${\approx}0.58$ by
-$0.04$--$0.05$ nats. The preregistered diagnostics earn their place as well:
-on a goal-conditioned value head whose regression error looks unremarkable,
-the rank and out-of-distribution probes reveal chance-level ranking (test-IID
-Spearman ${\approx}0$) and a constant out-of-distribution predictor, a
-guidance signal that error metrics alone would have certified. The cost
+$0.04$--$0.05$ nats. A second, methodological result comes from the
+preregistered diagnostics: on a goal-conditioned value head whose regression
+error looks unremarkable, the rank and out-of-distribution probes reveal
+chance-level ranking (test-IID Spearman ${\approx}0$) and a constant
+out-of-distribution predictor, a guidance signal that error metrics alone
+would have certified. The cost
 profile, apparatus, and verdicts are released for reuse.
 \end{abstract}
 
@@ -83,9 +84,9 @@ Whether they do is an empirical question that, to our knowledge, has not been
 measured exactly at nontrivial scale. Whether any remaining gap buys something
 as inductive bias is a second question the measurement alone cannot settle. We
 answer the first question exactly and report first learning verdicts on the
-second. The cost is now precisely known; the representation is learnable
-despite it; and the preregistered diagnostics show what remains to be won,
-namely usable guidance.
+second. The cost is now precisely known, the representation proves learnable
+despite it, and the preregistered diagnostics locate what is still missing:
+usable guidance.
 
 This paper is deliberately narrow. It is a structural feasibility study under
 preregistered thresholds and complete denominators, and it reports every
@@ -207,12 +208,13 @@ config hash, seed, and commit.
 
 The held-out split and the OOD family coincide by construction: all $25{,}000$
 OOD-stress rows are assigned to \texttt{test\_ood}. Their profile is a combined
-stress over size, depth, variable count, and composition---not a depth-controlled
-holdout, and we do not report it as one. This study is fixed to this immutable v1 corpus.
+stress over size, depth, variable count, and composition; it is not a
+depth-controlled holdout, and we do not report it as one. This study is fixed to
+this immutable v1 corpus.
 
 \subsection{Predeclared outcome families and hypotheses}
 Outcome families were declared before the production runs and reported
-separately---\emph{structural} (tree/DAG size and depth, pure-EML $\alpha$, macro
+separately: \emph{structural} (tree/DAG size and depth, pure-EML $\alpha$, macro
 size, dictionary-inclusive motif description length~\cite{rissanen1978}),
 \emph{predictive} (the six-arm equivalence grid), \emph{rewrite/proof}, \emph{SR},
 and \emph{grammar-v2 conformance}. No pooled score exists across families or
@@ -466,8 +468,8 @@ $8{,}796/18{,}050$ for the estimated-EML-tree-cost heuristic (and
 $8{,}661/18{,}050$ for the AST-DAG-cost heuristic). Counting is conservative:
 of the $18{,}050$ groups, $10{,}752$ were evaluable, and every unevaluable
 group scores as a miss for every ranker. On these tasks
-the transparent structural baselines remain unbeaten at equal budget---the
-standard any learned component must now clear.
+the transparent structural baselines remain unbeaten at equal budget; that is
+the standard any learned component must now clear.
 
 \subsection{Learning tracks: first verdicts}
 \label{sec:pending}
@@ -506,7 +508,7 @@ metrics alone would miss. Targets are remaining witness steps, bounded above by
 four. \textbf{Left:}
 regression error (validation MAE $0.847/0.838/0.830$, test-IID MAE
 $1.92/1.89/1.87$ across seeds $26/27/28$); the hatched bar is the model's own
-\emph{constant} OOD predictor at MAE $1.91/1.88/1.86$---indistinguishable from
+\emph{constant} OOD predictor at MAE $1.91/1.88/1.86$, indistinguishable from
 the trained test-IID error. \textbf{Right:} the same model ranks at chance
 (test-IID Spearman $-0.014/0.002/-0.009$, ${\approx}0$, grey band), and the
 constant OOD predictor's Spearman is undefined. Error alone would pass it; the
@@ -514,11 +516,12 @@ rank and OOD probes fail it.}
 \label{fig:valuehead}
 \end{figure}
 
-The value-head track is where the preregistered diagnostics prove their value
+The value-head track shows what the preregistered rank and out-of-distribution
+diagnostics catch that error alone does not
 (Figure~\ref{fig:valuehead}). The head predicts \emph{remaining witness
-steps}---for an ordered (current, goal) pair, how many rewrite steps remain on a
-stored, replayable witness---so targets in this run are bounded above by the
-maximum witness length of four. Under a reduced budget ($1{,}500$ optimizer
+steps}: for an ordered (current, goal) pair, how many rewrite steps remain on a
+stored, replayable witness. Targets in this run are therefore bounded above by
+the maximum witness length of four. Under a reduced budget ($1{,}500$ optimizer
 steps, three seeds, $452{,}820$ parameters, family \texttt{exp\_log} held out),
 the goal-conditioned head reaches a validation MAE of $0.830$--$0.847$ and a
 test-IID MAE of $1.87$--$1.92$, numbers a proxy-metric report would pass. The
@@ -534,7 +537,8 @@ heuristic.
 
 \section{Discussion}
 \label{sec:discussion}
-The value-head diagnostics are the paper's most transferable export. In
+Of the three findings, the value-head diagnosis is the one most likely to
+transfer beyond this representation. In
 neural-guided proof and symbolic-regression search, a learned value or cost
 head is routinely selected and reported by a proxy regression
 loss~\cite{polu2020generative,lample2022hypertree}. Ours shows unremarkable
@@ -655,8 +659,9 @@ precisely what the released tracks are frozen to test.
 \end{tabular}
 \caption{Measured encoder parameter counts on the fixture vocabulary (Goal~6
 preflight). Width-64 without a virtual node sits marginally under the
-$\approx\!0.2$M bound---recorded, not padded; production vocabularies will move
-these totals, which is why vocabulary embeddings count toward the match.}
+$\approx\!0.2$M bound, recorded as measured and not padded to it; production
+vocabularies will move these totals, which is why vocabulary embeddings count
+toward the match.}
 \label{tab:params}
 \end{table}
 
@@ -700,7 +705,7 @@ reported (the ``Short'' column) rather than adjusted by resampling or
 augmentation. Each positive pair carries a replayable verifier trace; negative
 pairs are validated by formal refutation at exact rational probe points.
 Converted to the unified graph-channel representation, the build yields
-$18{,}078$ encoded endpoints per channel---two per accepted pair.
+$18{,}078$ encoded endpoints per channel, two per accepted pair.
 
 \begin{table}[h]
 \centering
