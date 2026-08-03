@@ -16,8 +16,9 @@ Status: Phase-A checklist. Unchecked items are blockers, not implied completions
 - [ ] Issue 12-1 fresh-clone verification has run after all workstreams merge.
 - [x] Issue #86 uses the approved attribution
       `Copyright (c) 2026 GEML contributors`.
-- [ ] The canonical MIT text, package metadata, README license link, third-party notice audit,
-      and public license detection agree.
+- [x] The canonical MIT text, package metadata, README license link, third-party notice audit,
+      and public license detection agree (verified 2026-08-03: GitHub license detection reports
+      MIT on the public repository).
 - [x] Integration owns the future manuscript source at `docs/paper/manuscript.tex`; it must
       not be created until authenticated result artifacts exist.
 
@@ -173,15 +174,16 @@ The approved license decision and remaining publication checks are recorded in
 ## License and third-party materials
 
 - [ ] Team supplied the exact MIT holder/year; no one inferred it.
-- [ ] `LICENSE` contains unmodified canonical MIT text with that exact attribution.
-- [ ] `pyproject.toml` declares the agreed SPDX/license metadata without overwriting the
+- [x] `LICENSE` contains unmodified canonical MIT text with that exact attribution.
+- [x] `pyproject.toml` declares the agreed SPDX/license metadata without overwriting the
       Workstream 1 ML dependency edits.
-- [ ] README license link/wording agrees with `LICENSE`.
+- [x] README license link/wording agrees with `LICENSE`.
 - [ ] Dependency, dataset, model, paper, generated asset, and borrowed visual/code attribution
       audit is complete.
 - [ ] Material not owned by the project was not silently relicensed.
-- [ ] Public GitHub license detection was checked after merge and recorded; it is not claimed
-      from a private branch.
+- [x] Public GitHub license detection was checked after merge and recorded (2026-08-03,
+      `spdx_id: MIT` via the repository API on public `main`); it is not claimed from a
+      private branch.
 
 ## Double-blind submission review
 

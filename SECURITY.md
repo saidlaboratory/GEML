@@ -8,9 +8,8 @@ credentials), we want to hear about it.
 
 ## Reporting a vulnerability
 
-- **Preferred:** open a [private security advisory](https://github.com/saidlaboratory/GEML/security/advisories/new)
-  on the repository. GitHub keeps it confidential until we publish a fix.
-- **Alternative:** email the maintainers at **[INSERT CONTACT EMAIL]**.
+Open a [private security advisory](https://github.com/saidlaboratory/GEML/security/advisories/new)
+on the repository. GitHub keeps it confidential until we publish a fix.
 
 Please give us a reasonable window to respond before disclosing publicly. We'll confirm
 receipt, investigate, and credit you in the fix unless you prefer to stay anonymous.

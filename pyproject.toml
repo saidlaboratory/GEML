@@ -14,6 +14,7 @@ authors = [
     {name = "Sibi Gokul"},
     {name = "Daksh Jain"},
     {name = "Sahil Singh"},
+    {name = "Charvik Morampudi"},
 ]
 requires-python = ">=3.12"
 keywords = [
