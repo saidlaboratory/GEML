@@ -1,0 +1,735 @@
+% =====================================================================
+% MathNLP 2026 long paper (8 pp body). Official ACL style
+% (acl.sty + acl_natbib.bst) in [review] mode: anonymized, line-numbered
+% -- the correct mode for double-blind submission.
+%
+% Camera-ready switch: change \usepackage[review]{acl} to
+% \usepackage{acl} and replace \author{Anonymous ACL submission} with
+% the real author block. Nothing else changes.
+%
+% This submission is self-contained: it reports every measured result.
+% The symbolic-regression and Pareto/Gate-G11 tracks were not run and are
+% scoped as future work; every structural result, the apparatus, the nulls,
+% and the Gate G10 fail are real and final.
+%
+% SUBMISSION CHECKLIST (human step): attach the anonymized supplementary
+% bundle (per-goal summaries + manifests); every \anchor{} provenance
+% footnote points into that bundle.
+% =====================================================================
+\documentclass[11pt]{article}
+\usepackage[review]{acl}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{microtype}
+
+\newcommand{\eml}{\ensuremath{\mathrm{eml}}}
+% Provenance footnotes point into the anonymized supplementary bundle
+% (per-goal summaries + manifests). Re-point to camera-ready anchors on
+% acceptance.
+\newcommand{\anchor}[1]{\footnote{#1}}
+
+\title{One Operator, Measured Exactly: Cost, Learnability, and the Guidance
+Frontier in a Single-Operator Representation of Mathematics}
+\author{Anonymous ACL submission}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+One binary operator can, in principle, represent all of elementary mathematics:
+\citet{odrzywolek2026} shows every elementary function is constructible from
+the constant~$1$ and $\eml(x,y)=\exp(x)-\ln(y)$. The resulting single-operator
+form is maximally regular, which makes it a natural candidate for graph
+learning, and we deliver its first exact cost profile at production scale: a
+fixed corpus of
+$250{,}000$ deterministic, quality-audited expressions with frozen splits,
+compiled with the pinned official compiler. The median tree expansion factor
+is $\alpha=40.66$ over the source AST, above the preregistered per-family
+counting thresholds ($1.29$--$1.50$) in every family. Lossless DAG sharing
+recovers a $39.4\times$ mean compression of pure-EML trees (the shared DAG
+averages $8.3\times$ the uncompressed AST tree), and bounded, verified
+equality saturation improves a further $23.9$--$27.6\%$ of costed expressions
+at $2.4$--$2.8\%$ mean savings on $60.7\%$ cost coverage; in two preregistered
+comparisons, equal-budget transparent baselines remain unbeaten by learned
+components. On this foundation we release a frozen, leakage-controlled
+learning apparatus and report its first verdicts. The representation is
+learnable despite the $40\times$ expansion: on binary equivalence, two of
+three seeds beat the label-imbalance chance floor of ${\approx}0.58$ by
+$0.04$--$0.05$ nats. A second, methodological result comes from the
+preregistered diagnostics: on a goal-conditioned value head whose regression
+error looks unremarkable, the rank and out-of-distribution probes reveal
+chance-level ranking (test-IID Spearman ${\approx}0$) and a constant
+out-of-distribution predictor, a guidance signal that error metrics alone
+would have certified. The cost
+profile, apparatus, and verdicts are released for reuse.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+Is one operator enough to represent mathematics for a learning model? Every
+machine encoding of mathematical language must decide how much symbol
+vocabulary to spend for how much structure; the same trade governs formula
+tokenization for sequence models and operator-tree granularity in math-aware
+retrieval~\cite{lample2020deep,mansouri2019tangentcft}. The single-operator
+representation is the limiting case of that trade, and it is maximally regular:
+a graph network reading a pure-EML term never has to learn \emph{what} an
+operator is, only \emph{where} things connect. The objection is size. Lowering
+even $\sin(x)$ to pure EML produces hundreds of nodes, and the standard reply
+is that sharing (DAGs), macros, and semantic rewriting could close the gap.
+Whether they do is an empirical question that, to our knowledge, has not been
+measured exactly at nontrivial scale. Whether any remaining gap buys something
+as inductive bias is a second question the measurement alone cannot settle. We
+answer the first question exactly and report first learning verdicts on the
+second. The cost is now precisely known, the representation proves learnable
+despite it, and the preregistered diagnostics locate what is still missing:
+usable guidance.
+
+This paper is deliberately narrow. It is a structural feasibility study under
+preregistered thresholds and complete denominators, and it reports every
+preregistered outcome exactly. It separates what the representation costs
+structurally, which we measure in full at production scale, from whether that
+cost buys anything for learning, which we answer only in part. We fit no
+scaling law, run no leaderboard, and use no frontier LLM as a controlled
+baseline; every number below matches a committed per-goal summary exactly.
+
+\paragraph{Contributions.}
+\begin{itemize}
+\item The first exact structural cost profile of the single-operator
+representation at production ($250{,}000$-expression) scale: median expansion
+$\alpha=40.66$, the full distribution, exact per-family comparisons against
+preregistered counting thresholds, and content-hashed controlled comparisons
+in which equal-budget transparent baselines remain unbeaten by learned
+components (\S\ref{sec:results}).
+\item The first learning verdicts for the representation: learnability on
+binary equivalence, with two of three seeds clearing the imbalance-adjusted
+${\approx}0.58$ chance floor by $0.04$--$0.05$ nats despite the $40\times$
+expansion (\S\ref{sec:pending}).
+\item A transferable methodological result: preregistered rank and
+out-of-distribution diagnostics that catch a guidance signal error metrics
+alone would certify. This is the classical learning-to-rank
+distinction~\cite{burges2005learning} made operational inside a verifier-gated
+math-search apparatus, which we release for reuse
+(\S\S\ref{sec:models}--\ref{sec:tasks}).
+\end{itemize}
+
+\section{Related work}
+\label{sec:related}
+
+\paragraph{Encoding mathematics for learning.} Mathematical language admits many
+machine encodings: token sequences over prefix or infix
+serializations~\cite{lample2020deep,saxton2019analysing}, operator-tree and
+layout embeddings for formula retrieval~\cite{mansouri2019tangentcft}, and term
+graphs with explicit sharing, over which \citet{allamanis2017learning} learned
+equivalence representations on small hand-designed boolean and polynomial
+corpora; our equivalence task poses the same relation over a
+$250{,}000$-expression corpus under verifier-gated labels.
+Every such choice trades symbol-vocabulary size against form length, as subword
+tokenization does for text. The single-operator
+representation~\cite{odrzywolek2026} is the extreme of that trade, vocabulary
+collapsed to one operation, and to our knowledge it had no measured cost
+profile before this study.
+
+\paragraph{Sharing, rewriting, and compression.} The recovery mechanisms we
+test are classical: hash-consed structural
+sharing~\cite{ershov1958,filliatre2006} over standard term
+graphs~\cite{barendregt1987}, equality saturation for semantic
+rewriting~\cite{tate2009equality,willsey2021egg}, and MDL-scored vocabulary
+induction~\cite{rissanen1978}. H2 and H3 (\S\ref{sec:data}) instantiate each as
+a preregistered recovery hypothesis and measure it exactly rather than assuming
+its benefit.
+
+\paragraph{Learned guidance for symbolic search.} Neural premise
+selection~\cite{irving2016deepmath}, language-model proof search with learned
+value functions~\cite{polu2020generative,lample2022hypertree}, guided synthetic
+geometry~\cite{trinh2024solving}, and symbolic
+regression~\cite{udrescu2020ai} all consume a guidance signal routinely
+validated by proxy regression losses. Ranking research has long separated
+regression error from ranking quality~\cite{burges2005learning}; our value-head
+diagnosis (\S\ref{sec:pending}) is a controlled instance of that gap inside a
+math-search apparatus.
+
+\paragraph{Relation to LLM mathematics.} Benchmark-driven studies of large
+models' mathematical competence~\cite{hendrycks2021measuring} and
+natural-language theorem proving~\cite{welleck2021naturalproofs} evaluate
+end-task reasoning of frontier systems; we work a layer below, on the
+representation itself, with compact fixed-budget models, and no LLM enters any
+controlled comparison.
+
+\section{Representations, immutable data, and hypotheses}
+\label{sec:data}
+
+\subsection{Representations}
+Every representation we compare derives from the same source expression, so
+differences between them are differences of encoding rather than of content. The
+structural study (\S\ref{sec:results}) uses four: the ordered source AST as a
+tree and as a hash-consed DAG~\cite{ershov1958,filliatre2006}, and the
+official-v4 pure-EML term (produced by the pinned version-4 reference compiler)
+as a tree and as a hash-consed DAG. Writing $\alpha$ for the ratio of exact
+pure-EML tree nodes to source AST nodes, the tree pair fixes $\alpha$ and the
+DAG pair determines what maximal sharing recovers from it.
+
+The learning grid uses a different, smaller set of representations, because two
+of the structural objects are too large to encode at production scale. Four graph
+channels enter the six-arm equivalence grid (\S\ref{sec:tasks}): the AST DAG,
+the pure-EML DAG, a macro-derived frequent-motif DAG, and a train-only motif-AST
+fair control. Two non-graph controls complete the grid: a prefix token sequence
+over the same expressions, and a floor of $19$ predeclared surface counts behind
+a single linear layer. The floor measures how much of the task surface counts alone already
+solve; its feature list is frozen in code and asserted by tests.
+
+Macro and motif graphs are lossless DAGs over source constructions admitted to
+the frozen vocabularies, not pure-EML graphs: each macro node carries \texttt{is\_pure\_eml = false}, and its
+pure-EML expansion cost is separate metadata never reported as macro size or
+$\alpha$. All graphs follow the standard term-graph
+model~\cite{barendregt1987}, with retained repeated references (so $f(x,x)$
+carries two child references to one interned node) and a canonical node
+signature; structural identity is
+hash equality on that signature. Semantic equivalence is a separate relation,
+established only by the verifier, and we mark each use.
+
+\subsection{Fixed data foundation}
+\label{sec:corpus}
+The v1 corpus contains $250{,}000$ expressions, unique under the canonical
+\texttt{(domain\_mode, sympy\_srepr)} identity~\cite{meurer2017sympy} rather than
+up to semantic equivalence, with frozen splits of
+$175{,}000\,/\,25{,}000\,/\,25{,}000\,/\,25{,}000$
+(train\,/\,validation\,/\,test\_iid\,/\,test\_ood) and six source families under
+exact quotas: algebraic core ($70{,}000$), exp/log ($40{,}000$),
+powers/division/rationals ($40{,}000$), trig/hyperbolic ($40{,}000$), mixed
+elementary ($35{,}000$), and an OOD-stress family
+($25{,}000$).\anchor{Supplementary bundle: corpus QA report and Goal~2
+summary, ``Corpus and denominators''.}
+Generation is deterministic and QA-gated; manifests carry per-shard checksums,
+config hash, seed, and commit.
+
+The held-out split and the OOD family coincide by construction: all $25{,}000$
+OOD-stress rows are assigned to \texttt{test\_ood}. Their profile is a combined
+stress over size, depth, variable count, and composition; it is not a
+depth-controlled holdout, and we do not report it as one. This study is fixed to
+this immutable v1 corpus.
+
+\subsection{Predeclared outcome families and hypotheses}
+Outcome families were declared before the production runs and reported
+separately: \emph{structural} (tree/DAG size and depth, pure-EML $\alpha$, macro
+size, dictionary-inclusive motif description length~\cite{rissanen1978}),
+\emph{predictive} (the six-arm equivalence grid), \emph{rewrite/proof}, \emph{SR},
+and \emph{grammar-v2 conformance}. No pooled score exists across families or
+across channels within the structural family: every structural metric is named
+per channel, and the plotting code refuses to emit a shared $\alpha$ column.
+
+Three preregistered hypotheses motivate the structural program. \textbf{H1}: raw
+pure-EML expansion stays below the per-family counting thresholds
+$\alpha_{\text{tree}} < 1 + \ln K / \ln(4L)$ (bounded vocabulary $K$, literal
+bound $L$; range $1.2914$--$1.5000$). \textbf{H2}: exact structural sharing closes
+whatever gap H1 leaves, so a shared pure-EML DAG reaches parity with the
+uncompressed AST tree. \textbf{H3}: verified semantic rewriting and learned motif
+vocabularies close the residual. Structural statistics use all $250{,}000$ rows;
+semantic auditing draws on a separate bounded sample and we never extrapolate it
+(\S\ref{sec:limits}).
+
+
+\section{Compact models and fair compute}
+\label{sec:models}
+
+This section and \S\ref{sec:tasks} describe committed, CI-tested apparatus; no
+number in them is a result (the learning verdicts are in \S\ref{sec:pending}).
+We describe the apparatus because its frozen design, not its output, is a
+contribution.
+
+\subsection{A compact GINE-style graph encoder}
+The encoder is a compact variant of GINE~\cite{xu2019powerful,hu2020strategies}:
+three layers, hidden width $64$, and about $0.2$M parameters. It uses residual connections, GraphNorm or LayerNorm (fixed per configuration),
+dropout, a two-layer FFN, and sum pooling.
+For a message edge $u\rightarrow v$ the edge feature and update are
+\begin{equation}
+a_{uv}=E_{\mathrm{dir}}(d_{uv})+E_{\mathrm{slot}}(s_{uv})+E_{\mathrm{role}}(r_{uv}),
+\end{equation}
+\begin{equation}
+\begin{aligned}
+\widetilde h_v^{(\ell+1)}
+&=\operatorname{MLP}_{\ell}\big((1+\epsilon_\ell)\,h_v^{(\ell)}+m_v^{(\ell)}\big),\\
+m_v^{(\ell)}&=\sum_{u\in\mathcal N(v)}
+\operatorname{ReLU}\big(h_u^{(\ell)}+W_\ell\,a_{uv}\big),
+\end{aligned}
+\end{equation}
+with the exact operation order fixed by the frozen implementation. The four
+arms differ only in their input (AST-DAG, pure-EML-DAG, frequent-motif DAG,
+motif-AST). Every compressed graph is required to reconstruct its source
+expression exactly.
+
+\subsection{Task composition and controls}
+For symmetric equivalence classification, the shared endpoint encoders produce
+graph embeddings $g_a,g_b$, combined as
+\begin{equation}
+p(a,b)=\big[\,g_a+g_b,\ \lvert g_a-g_b\rvert,\ g_a\odot g_b\,\big],
+\label{eq:pair}
+\end{equation}
+symmetric in $a,b$ by construction. The transparent floor uses $19$ predeclared
+surface counts that every learned arm must beat: counts of operators,
+primitives, and variables, plus size and depth. Vocabulary embeddings count toward the matched parameter
+budget, since pure-EML label vocabularies differ per channel and shift the
+totals.
+
+\subsection{Compute matching and training}
+\label{sec:compute}
+Because pure-EML graphs are much larger than AST or macro graphs for the same
+expression, equal parameters are \emph{not} equal compute. We therefore report,
+jointly with every quality number, the full compute envelope (parameters, FLOPs,
+wall time, peak memory, GPU-hours, graph/token size, batch and step budgets,
+early-stopping state, precision, and deterministic
+settings). Hidden width and the virtual-node flag are fixed by a measured
+parameter/FLOP preflight on the production vocabularies; until that preflight
+runs, the grid configuration records the choice as pending rather than
+guessing it (Table~\ref{tab:params}, Appendix~\ref{app:params}). We use three seeds and
+publish every seed row; the mean never replaces the raw rows. The default profile
+is $2\times$H100 $80$\,GB.
+
+\section{Bounded tasks and verification}
+\label{sec:tasks}
+
+We evaluate representation quality through bounded, verifier-gated tasks rather
+than a single aggregate score. Every task has frozen identifiers, declared
+budgets, retained failure states, and explicit denominators; unavailable cells are
+reported as missing, not encoded as zero.
+
+\subsection{Equivalence}
+
+The production equivalence specification fixes
+$50{,}000/5{,}000/5{,}000/5{,}000$ accepted pair records
+(train\,/\,validation\,/\,test\_iid\,/\,test\_ood). Each accepted pair is a
+concrete, replayable rewrite trajectory: rule identifier, direction, occurrence
+path, bindings, assumptions, source and successor signatures, and separate
+verifier evidence. Source-, e-class-, and trace-relative grouping prevents
+leakage across partitions, and rejected, invalid, unsupported, and timeout
+candidates are kept in typed ledgers. The build
+aligns every endpoint across the four graph channels and two controls of
+\S\ref{sec:data}; IID, OOD-stress, depth-OOD, and family-OOD views never alter
+the base split totals.
+
+The pipeline has run end-to-end on a $10{,}000$-row pilot corpus (regenerated
+byte-identically twice) using the real rule engine and replay verifier,
+accepting $9{,}039$ records in $34$ CPU minutes ($6{,}867$ replay-verified
+positives, $2{,}172$ exact-rationally refuted negatives) and retaining
+$2{,}824$ rejections and $3{,}133$ typed failures. The run is recorded as
+complete but short of the production pair
+targets, and the shortfall is reported rather than resampled away
+(Table~\ref{tab:pilot}). Its \texttt{test\_ood} split holds a single accepted
+negative, because the stress family offers few same-family size-matched
+neighbors; we retain and report the imbalance.
+
+\subsection{Further bounded tracks (future work)}
+\label{sec:unrun}
+
+The remaining tracks are frozen to the same standard and scheduled as future
+work; we report no numbers from them here. Rewrite-step prediction fixes one
+immutable $6$-arm $\times$ $3$-seed design over the registry-derived
+legal-action mask, reporting demonstration-action and exact-successor top-$k$
+separately with complete attempted/valid/invalid/unsupported/timeout
+denominators; its first GPU run is partial ($13$ of $18$ logical cells,
+\S\ref{sec:pending}) and decides no gate. The proof benchmark
+($256$ frozen problems) and simplification benchmark ($1{,}000$ frozen
+identifiers) count success only for a replayed, verifier-confirmed trace reaching
+the exact target signature, with every unsuccessful row charged at least its
+expanded-node budget. The symbolic-regression benchmark ($256$ frozen synthetic
+tasks plus a restricted $32$-task Feynman-style subset~\cite{udrescu2020ai})
+takes verifier-confirmed recovery as its sole criterion; its manifests reproduced
+identically across three independent CPU builds. A capstone Pareto/Gate-G11
+synthesis is specified to compose the track outcomes into a single frozen
+verdict without retraining; it has not run. These specifications ship with the
+apparatus.
+
+\section{Results at fixed scale}
+\label{sec:results}
+
+Table~\ref{tab:main} collects every headline structural number; each row names its
+committed provenance document. All values come from real CPU production runs
+recorded in those documents; none is estimated. We organize by outcome rather
+than by a single leaderboard.
+
+\begin{table*}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}p{0.45\textwidth}rl@{}}
+\toprule
+\textbf{Quantity} & \textbf{Value} & \textbf{Provenance} \\
+\midrule
+Rows processed / exact-count successes & $250{,}000\,/\,250{,}000$ & Goal 2 \\
+Median tree $\alpha$ (EML tree / AST tree) & $\mathbf{40.6602}$ & Goal 2 \\
+Mean tree $\alpha$ & $952.1371$ ($\sigma=23{,}155.56$) & Goal 2 \\
+p90 / p99 / max $\alpha$ & $385.07\,/\,10{,}448.60\,/\,6{,}481{,}679.31$ & Goal 2 \\
+Preregistered per-family thresholds $1.2914$--$1.5000$: strict passes & $\mathbf{0\,/\,250{,}000}$ & Goal 2 \\
+Worst family median $\alpha$ (trig/hyperbolic, $40{,}000$ rows) & $270.4602$ & Goal 2 \\
+\midrule
+Mean EML self-compression, tree$\to$DAG & $39.3750\times$ & Goal 3 \\
+Mean EML DAG / AST tree & $\mathbf{8.3344}$ & Goal 3 \\
+Mean EML DAG / AST DAG & $10.4750$ & Goal 3 \\
+Expressions with EML DAG $\le$ AST tree & $\mathbf{0\,/\,250{,}000}$ (best exactly $8/7$) & Goal 3 \\
+Largest single self-compression (remaining ratio) & $28{,}087{,}277/180$ ($540/13$) & Goal 3 \\
+\midrule
+E-graph cost coverage & $18{,}210\,/\,30{,}000$ ($60.700\%$) & Goal 4 \\
+Improved / costed, \texttt{safe\_real} & $4{,}349\,/\,18{,}210$ ($23.882\%$) & Goal 4 \\
+Improved / costed, \texttt{positive\_real\_formal} & $5{,}026\,/\,18{,}210$ ($27.600\%$) & Goal 4 \\
+Mean relative savings over costed rows (incl.\ unchanged) & $2.361\%\,/\,2.849\%$ & Goal 4 \\
+Unsupported-operator / validation-failure / timeout rows per mode & $11{,}566\,/\,224\,/\,0$ & Goal 4 \\
+\midrule
+Null: learned motif vocab.\ vs.\ equal-budget frequent (MDL bits, test\_iid) & $324{,}485{,}346$ vs.\ $\mathbf{317{,}678{,}264}$ & Goal 5 \\
+Null: neural ranker vs.\ structural heuristic (exact-best of $18{,}050$) & $8{,}349$ vs.\ $\mathbf{8{,}796}$ & Goal 5 \\
+\bottomrule
+\end{tabular}
+\caption{All measured structural results at production scale. Bold marks the
+winning side or the decisive count. Each row's provenance is the corresponding
+per-goal summary in the supplementary bundle; production artifacts are stored
+off-repository under recorded SHA-256 digests.}
+\label{tab:main}
+\end{table*}
+
+\subsection{Raw expansion at production scale}
+Compiling all $250{,}000$ expressions with the pinned official-v4 compiler
+succeeded on every row and produced a median tree expansion factor
+$\alpha=40.6602$ over the source AST (mean $952.1371$; full distribution in
+Appendix~\ref{app:dist}).\anchor{Supplementary bundle: Goal~2 summary,
+``Result'' and ``Expansion distribution''.} The
+mean/median gap is a heavy right tail dominated by the trig/hyperbolic family
+(median $270.46$), not a typical $952$-fold expansion. Against the six
+preregistered per-family thresholds $1+\ln K/\ln(4L)$ ($1.2914$--$1.5000$) and a
+whole-grammar counting break-even of $\approx\!1.56$, the strict pass count is
+$0/250{,}000$: no expression in any family is close to the regime where a reduced
+operator vocabulary pays for its node count (Table~\ref{tab:families}). These
+thresholds are descriptive combinatorial references, not performance laws. The
+informative content of the zero is therefore the size of the miss, one to two
+orders of magnitude in every family, not the pass count itself.
+
+\begin{table}[t]
+\centering
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Family} & \textbf{Rows} & \textbf{Median} $\alpha$ & \textbf{Thr.} \\
+\midrule
+algebraic core             & $70{,}000$ & $25.5778$  & $1.3010$ \\
+exp/log                    & $40{,}000$ & $32.7872$  & $1.3382$ \\
+powers/div/rationals       & $40{,}000$ & $44.1579$  & $1.2914$ \\
+OOD stress                 & $25{,}000$ & $45.7377$  & $1.3382$ \\
+mixed elementary           & $35{,}000$ & $133.9289$ & $1.4292$ \\
+trig/hyperbolic            & $40{,}000$ & $270.4602$ & $1.5000$ \\
+\bottomrule
+\end{tabular}
+\caption{Per-family median expansion $\alpha$ against the preregistered strict
+threshold. Every family misses by one to two orders of magnitude; the strict pass
+count is $0$ in each ($0/250{,}000$ overall).}
+\label{tab:families}
+\end{table}
+
+\subsection{Lossless sharing and the remaining gap}
+Lossless hash-consed sharing compresses expanded EML trees by a mean factor of
+$39.3750$, yet the shared EML DAG remains larger than the \emph{uncompressed} AST
+tree for every one of the $250{,}000$ expressions; the best remaining ratio is
+exactly $8/7$.\anchor{Supplementary bundle: Goal~3 summary, ``Structural
+verdict''.} The most compressible
+expression shrinks by $28{,}087{,}277/180$ and still ends $540/13$ times larger
+than its AST (mean EML-DAG/AST-tree $8.3344$, EML-DAG/AST-DAG $10.4750$).
+``Compresses well'' and ``becomes structurally competitive'' are different claims,
+and only the first is true here.
+
+\subsection{Verified rewriting adds conditional savings}
+On a frozen, stratified $30{,}000$-expression selection, we run bounded
+equality saturation~\cite{tate2009equality,willsey2021egg} with complete
+application provenance and independent candidate verification. It improves
+$4{,}349/18{,}210$ costed rows ($23.882\%$) under branch-insensitive real
+rewrites (\texttt{safe\_real}) and $5{,}026/18{,}210$ ($27.600\%$) with guarded
+positive-real rules (\texttt{positive\_real\_formal}), at mean relative savings
+of $2.361\%$ and $2.849\%$ over costed rows and a largest single reduction of
+$302$ exact EML-DAG nodes.\anchor{Supplementary bundle: Goal~4 summary,
+``Production result''.} Coverage is the binding
+caveat: $11{,}566$ rows per mode ($38.553\%$) contain operators outside the closed
+rewrite vocabulary (including \emph{all} trig/hyperbolic and mixed-elementary
+rows), so these results hold on $60.700\%$ cost coverage and are conditional on
+it. Each mode retains $224$ validation failures ($0.747\%$) and zero timeouts; the
+source form is always a costed safety anchor, so improvement rates cannot be
+inflated by dropped rows.
+
+\subsection{Learned components do not yet beat transparent baselines}
+Both Goal~5 comparisons were published in the frozen null-before-positive
+order.\anchor{Supplementary bundle: Goal~5 summary, ``Learned and neural
+comparisons''.} First, a learned motif vocabulary did not beat the equal-budget frequent-motif
+vocabulary on \texttt{test\_iid} dictionary-inclusive MDL:
+$324{,}485{,}346$ vs.\ $317{,}678{,}264$ bits over $25{,}000$ expressions (it did
+beat the uncompressed macro baseline and the median of $30$ fixed random
+vocabularies). Second, a neural cost ranker did not beat every structural heuristic under the
+frozen comparison order: $8{,}349/18{,}050$ exact-best rankings vs.\
+$8{,}796/18{,}050$ for the estimated-EML-tree-cost heuristic (and
+$8{,}661/18{,}050$ for the AST-DAG-cost heuristic). Counting is conservative:
+of the $18{,}050$ groups, $10{,}752$ were evaluable, and every unevaluable
+group scores as a miss for every ranker. On these tasks
+the transparent structural baselines remain unbeaten at equal budget; that is
+the standard any learned component must now clear.
+
+\subsection{Learning tracks: first verdicts}
+\label{sec:pending}
+The frozen apparatus has now produced its first verdicts: every
+number in this subsection binds to the committed, digest-verified GPU run
+ledger. Of the five tracks, two are measured (equivalence and the value head,
+below); rewrite-step prediction is partial, at $13$ of $18$ logical cells ($5$
+invalid and retained; retrieval grid $15/15$); symbolic regression and the
+Pareto/Gate-G11 synthesis were not run and are scoped as future work
+(\S\ref{sec:unrun}). The two measured tracks yield one viability verdict and
+one methodological verdict.
+
+The equivalence track is a viability result, and we bound it carefully. Trained
+purely on single-operator EML-DAG source cells (three seeds, no AST comparison
+arm), two seeds reach validation BCE losses of $0.5267$ and $0.5387$ while the
+third diverges to $2.3914$. The operative chance floor is not the balanced
+$\ln 2\approx0.693$: accepted pairs are label-imbalanced by construction and
+never resampled (the pilot build's validation split is $73.6\%$ positive;
+Table~\ref{tab:pilot}), and a constant majority-rate predictor already attains
+${\approx}0.577$ BCE on that composition. Against the imbalance-adjusted floor,
+the converged seeds clear it by $0.04$--$0.05$ nats: learning, though modest.
+The frozen cell schema retains the loss alone (no accuracy or AUC), so we can
+state \emph{that} the cells learn, not how well they classify; we record the gap
+rather than backfill it. That a $40\times$-expanded, maximally
+regular graph admits any learning shows homogeneity is not by itself an obstacle
+to a graph model. It is not evidence that EML helps: the discriminative six-arm
+EML-vs-AST grid was not run, and the encoder width and virtual-node choice
+remain pending the measured preflight. The viability question is answered in
+this weak sense; the comparison stays open.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{fig_valuehead}
+\caption{The value-head diagnostics: the rank and OOD probes expose what error
+metrics alone would miss. Targets are remaining witness steps, bounded above by
+four. \textbf{Left:}
+regression error (validation MAE $0.847/0.838/0.830$, test-IID MAE
+$1.92/1.89/1.87$ across seeds $26/27/28$); the hatched bar is the model's own
+\emph{constant} OOD predictor at MAE $1.91/1.88/1.86$, indistinguishable from
+the trained test-IID error. \textbf{Right:} the same model ranks at chance
+(test-IID Spearman $-0.014/0.002/-0.009$, ${\approx}0$, grey band), and the
+constant OOD predictor's Spearman is undefined. Error alone would pass it; the
+rank and OOD probes fail it.}
+\label{fig:valuehead}
+\end{figure}
+
+The value-head track shows what the preregistered rank and out-of-distribution
+diagnostics catch that error alone does not
+(Figure~\ref{fig:valuehead}). The head predicts \emph{remaining witness
+steps}: for an ordered (current, goal) pair, how many rewrite steps remain on a
+stored, replayable witness. Targets in this run are therefore bounded above by
+the maximum witness length of four. Under a reduced budget ($1{,}500$ optimizer
+steps, three seeds, $452{,}820$ parameters, family \texttt{exp\_log} held out),
+the goal-conditioned head reaches a validation MAE of $0.830$--$0.847$ and a
+test-IID MAE of $1.87$--$1.92$, numbers a proxy-metric report would pass. The
+diagnostics fail it: test-IID Spearman is $-0.014$, $0.002$, and $-0.009$
+across seeds, indistinguishable from zero, and the out-of-distribution predictor is
+\emph{constant} (Spearman undefined), with the constant attaining MAE
+$1.86$--$1.91$, indistinguishable from the trained head's own test-IID error. On
+this task, error magnitude cannot even separate the trained head from a constant
+one; the rank and OOD probes can. The run is recorded as a null, a collapsed
+value head: a guidance signal that error metrics alone would have passed. We
+report it as the methodological finding it is, not a working proof-search
+heuristic.
+
+\section{Discussion}
+\label{sec:discussion}
+Of the three findings, the value-head diagnosis is the one most likely to
+transfer beyond this representation. In
+neural-guided proof and symbolic-regression search, a learned value or cost
+head is routinely selected and reported by a proxy regression
+loss~\cite{polu2020generative,lample2022hypertree}. Ours shows unremarkable
+regression error yet ranks its own held-out states at chance and degenerates to
+a constant out of distribution. The constant is no strawman: its error matches
+the trained head's own test-IID error. Judged by the usual proxy
+metric it would have shipped as a working heuristic. It was caught only because
+rank and out-of-distribution diagnostics were preregistered alongside the error
+metric; both ship with the released apparatus. The
+three findings compose into one account: the structural cost is now exactly
+mapped, the representation is learnable on binary equivalence
+despite it, and usable guidance is the open frontier. Under bounded compute,
+regularity has bought learnability before guidance; closing that gap is where
+single-operator work should look next, and the released apparatus is frozen to
+test exactly that.
+
+\section{Limitations, integrity, and reproducibility}
+\label{sec:limits}
+
+\paragraph{One scale.} Everything is measured at one fixed scale, the
+$250{,}000$-expression v1 corpus; we fit no scaling law and extrapolate to no
+other corpus, budget, or grammar. The
+expressions are synthetic and generated, and the downstream benchmarks are
+bounded, which limits external validity. With three seeds, learning effects are
+descriptive; we make no statistical-significance claims.
+
+\paragraph{Bounded semantic audit.} Numeric semantic verification covers a
+deterministic sample, not the whole corpus. Across the original Goal~2 audit
+($273$ rows) and a widened pilot audit ($2{,}988$ rows), the combined evidence
+base is $3{,}261$ rows with $6$ retained mismatches
+(${\approx}0.1\%$).\anchor{Supplementary bundle: Goal~2 summary, ``Semantic
+audit and retained issues''.} The widened audit also hit one row whose numeric
+materialization deterministically hung (reproduced twice), a correctness
+finding that motivates a per-row timeout. We claim structural
+determinism corpus-wide but numeric verification only for the audited sample; no
+mismatch is relabeled or resampled away.
+
+\paragraph{Conditional coverage and equal-compute.} The e-graph results hold on
+$60.7\%$ cost coverage, and the excluded families include trig/hyperbolic, the
+worst-expansion family, so the semantic-compression numbers are not corpus-wide.
+Because pure-EML expansion changes input size, equal parameters are not equal
+compute in the learning tracks, and we report both sides.
+
+\paragraph{Weak learning margins.} The equivalence verdict rests on two of three
+seeds clearing an imbalance-adjusted floor by $0.04$--$0.05$ nats, on
+pilot-scale pairs; the frozen record retains only the loss, and we do not
+manufacture accuracy post hoc. The
+value-head verdict rests on one reduced-budget configuration; a larger budget
+could in principle train past the collapse, and we claim only what the measured
+run shows.
+
+\paragraph{Grammar-v2 conformance (Gate G10) and external context.} The
+grammar-v2 workstream adds opt-in
+\texttt{asin}/\texttt{acos}/\texttt{atan}/$\pi$/$e$ compiler support with the
+v1 default untouched. Its preregistered bounded conformance audit ($74$
+retained rows, all quotas met, no dropped denominators) records a fail: zero
+integrity, coverage, or v1-drift failures, but the eight preregistered
+\texttt{asin}/\texttt{acos} endpoint cells are nonfinite at $100$-digit
+precision under the predeclared $10^{-60}$ tolerances, byte-identical across
+three executions.\anchor{Supplementary bundle: Goal~10 summary, ``Published
+verdict''.} Endpoint cases are required valid inputs under
+the preregistration, so the gate records the miss rather than lowering
+precision until they appear finite (no criteria revision is pre-authorized).
+The verdict bounds only the grammar-v2 surface, stays unresolved by design,
+and neither enables nor blocks any corpus or learning result. A frontier-LLM
+reference panel is implemented with full provenance capture but remains
+external context: proprietary data, nondeterminism, and model drift keep it
+out of every controlled gate.
+
+\paragraph{Artifacts and regeneration.} Production artifacts are stored
+off-repository; the repository commits their SHA-256 digests, per-goal manifests,
+exact CPU reproduction commands, and a single frozen lock file verified by a
+CPU-only CI. Generation reproduces on commodity hardware (the $10{,}000$-row pilot
+regenerated byte-identically twice under a recorded corpus hash), and the
+$250{,}000$-row stage refuses a machine below a twofold memory margin.
+Artifact authentication is staged: the structural (Goals~1--5) archive is held
+off-repository, so its per-claim digest index is committed ahead of final
+authentication, while the learning verdicts of \S\ref{sec:pending} are
+authenticated directly against the committed GPU run ledger.
+
+\section{Conclusion}
+
+At one fixed $250{,}000$-expression scale, this study delivers the
+single-operator representation's first exact cost profile, its first
+learning verdicts, and a frozen apparatus for the work ahead.
+The map is exact: median $40.66\times$ tree expansion, $39.4\times$ mean
+recovery from lossless sharing, and a further $2.4$--$2.8\%$ from verified
+rewriting on $60.7\%$ coverage, every number bound to committed provenance.
+The verdicts answer the viability question: despite the expansion, two of
+three equivalence seeds clear the imbalance-adjusted ${\approx}0.58$ chance
+floor, and the preregistered rank and out-of-distribution diagnostics pinpoint
+what remains to be learned, namely usable search guidance. That frontier is
+precisely what the released tracks are frozen to test.
+
+% -------- Camera-ready: de-anonymize and add acknowledgments here. --------
+
+% acl.sty already sets \bibliographystyle{acl_natbib}; do not repeat it.
+\bibliography{refs}
+
+\appendix
+
+\section{Preflight encoder parameter counts}
+\label{app:params}
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{@{}rlrl@{}}
+\toprule
+\textbf{Width} & \textbf{Virt.\ node} & \textbf{Params} & \textbf{Target} \\
+\midrule
+64 & no  & $185{,}732$ & below \\
+64 & yes & $210{,}692$ & within \\
+96 & no  & $343{,}044$ & within \\
+96 & yes & $398{,}916$ & within \\
+\bottomrule
+\end{tabular}
+\caption{Measured encoder parameter counts on the fixture vocabulary (Goal~6
+preflight). Width-64 without a virtual node sits marginally under the
+$\approx\!0.2$M bound, recorded as measured and not padded to it; production
+vocabularies will move these totals, which is why vocabulary embeddings count
+toward the match.}
+\label{tab:params}
+\end{table}
+
+\section{Distribution of EML Tree Expansion Factors}
+\label{app:dist}
+Table~\ref{tab:dist} summarizes the distribution of the tree expansion factor $\alpha$ across all $250{,}000$ expressions in the Goal~2 production run (a clean pinned commit, recorded in the committed summary; eight workers, $2{,}557.26$\,s wall time). The largest observed expansion occurred for an expression with 13 AST nodes, which compiled to $84{,}261{,}831$ EML nodes, corresponding to $\alpha = 6{,}481{,}679.31$.
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Statistic} & \textbf{Tree} $\alpha$ \\
+\midrule
+minimum & $1.5000$ \\
+p10 & $21.0338$ \\
+p25 & $26.3800$ \\
+median & $40.6602$ \\
+p75 & $75.2550$ \\
+p90 & $385.0723$ \\
+p95 & $1{,}187.8240$ \\
+p99 & $10{,}448.5978$ \\
+maximum & $6{,}481{,}679.3077$ \\
+mean & $952.1371$ \\
+std.\ dev. & $23{,}155.5594$ \\
+\bottomrule
+\end{tabular}
+\caption{Expansion factor $\alpha=$ (exact EML tree nodes)/(source AST nodes) over
+all $250{,}000$ rows (Goal~2).}
+\label{tab:dist}
+\end{table}
+
+\section{Pilot pair build}
+\label{app:pilot}
+Table~\ref{tab:pilot} summarizes the pilot pair build of \S\ref{sec:tasks} per
+split. The run is recorded under a frozen, hash-identified configuration as
+complete but short: accepted counts fall short of the
+production targets of $50{,}000/5{,}000/5{,}000/5{,}000$, and the shortfall is
+reported (the ``Short'' column) rather than adjusted by resampling or
+augmentation. Each positive pair carries a replayable verifier trace; negative
+pairs are validated by formal refutation at exact rational probe points.
+Converted to the unified graph-channel representation, the build yields
+$18{,}078$ encoded endpoints per channel, two per accepted pair.
+
+\begin{table}[h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Split} & \textbf{Acc.\ (pos+neg)} & \textbf{Rej.} & \textbf{Fail} & \textbf{Short} \\
+\midrule
+train      & $6{,}281$ ($4{,}568{+}1{,}713$) & $1{,}786$ & $2{,}432$ & $43{,}719$ \\
+validation & $893$ ($657{+}236$)             & $263$     & $343$     & $4{,}107$ \\
+test\_iid  & $864$ ($642{+}222$)             & $276$     & $358$     & $4{,}136$ \\
+test\_ood  & $1{,}001$ ($1{,}000{+}1$)       & $499$     & $0$       & $3{,}999$ \\
+\midrule
+total      & $9{,}039$ ($6{,}867{+}2{,}172$) & $2{,}824$ & $3{,}133$ & --- \\
+\bottomrule
+\end{tabular}
+\caption{Pilot pair build (Goal~6 pipeline). Accepted $=$ positives $+$ negatives;
+rejected and failed rows are retained with typed reasons; ``Short'' is the
+shortfall against the production split targets. The lone \texttt{test\_ood}
+negative reflects few same-family size-matched neighbors in the stress family and
+is reported, not patched.}
+\label{tab:pilot}
+\end{table}
+
+\end{document}

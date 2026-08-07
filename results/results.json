@@ -1,0 +1,116 @@
+{
+  "schema_version": "geml-results-ledger-v1",
+  "as_of": "2026-08-02",
+  "scope": "Goals 1-5 and authenticated Phase-B GPU evidence; compact numerical results only",
+  "source": {
+    "repository": {
+      "remote": null,
+      "snapshot": "ANON-CURRENT-SNAPSHOT",
+      "snapshot_label": "ANON-CURRENT-SNAPSHOT"
+    },
+    "gpu_runtime_snapshot": "ANON-PHASE-B-SNAPSHOT",
+    "artifact_root": "<local>/GEML_artifacts",
+    "gpu_package": "Phase_B_GPU_results/phase-b-20260731-anonymous"
+  },
+  "goals_1_5": {
+    "goal1": {
+      "status": "complete",
+      "corpus_id": "geml-goal1-final",
+      "schema": "geml-corpus-v1",
+      "seed": 20260721,
+      "rows": 250000,
+      "errors": 0,
+      "splits": {"train": 175000, "validation": 25000, "test_iid": 25000, "test_ood": 25000},
+      "attempted": 286413,
+      "accepted": 250000,
+      "duplicates": 35768,
+      "triviality_rejections": 645,
+      "unsupported": 0,
+      "identity_conflicts": 0,
+      "throughput_rows_per_second": 403.0354544966034,
+      "generation_throughput_rows_per_second": 461.7383745149426,
+      "elapsed_seconds": 620.2928234,
+      "peak_rss_bytes": 2193186816,
+      "acceptance_rate": 0.8728654076456027,
+      "domain_counts": {"nonzero_real": 68345, "positive_real": 84843, "safe_real": 96812},
+      "family_counts": {"algebraic_core": 70000, "exp_log": 40000, "mixed_elementary": 35000, "ood_stress": 25000, "powers_division_rationals": 40000, "trig_hyperbolic": 40000},
+      "variable_counts": {"1": 68934, "2": 61244, "3": 46743, "4": 34511, "5": 24095, "6": 14473},
+      "policy": {
+        "all_trig_operators_covered": true,
+        "approved_operator_domain_check": true,
+        "blanket_log_exp_wrapping": false,
+        "certified_log_arguments": 196656,
+        "certified_tan_arguments": 28648,
+        "lowered_reciprocal_candidates": 257698,
+        "negative_power_arguments": 292783,
+        "latex_parser_unavailable_roundtrip_checks": 64
+      },
+      "qa": {"authoritative_srepr_unique": 250000, "expression_ids_unique": 250000, "structural_identities_unique": 250000, "cross_split_id_collisions": 0, "parse_ast_latex_roundtrip_failures": 0, "retained_error_rows": 645}
+    },
+    "goal2": {
+      "status": "complete",
+      "compiler_mode": "official_v4",
+      "rows": 250000,
+      "success": 250000,
+      "failures": 0,
+      "elapsed_seconds": 2557.2617339999997,
+      "processing_throughput_rows_per_second": 99.16671338859994,
+      "aggregation_throughput_rows_per_second": 97.76081840827327,
+      "peak_rss_bytes": 1617088512,
+      "semantic_audit": {"selected": 280, "materialized_and_audited": 273, "passed": 203, "mismatch": 3, "nonfinite": 45, "overflow": 22, "node_limit_exceeded_before_materialization": 7, "not_selected": 249720},
+      "raw_pure_eml_alpha": {"median": 40.6602, "mean": 952.1371, "p99_approx": 10448.6, "rows_below_preregistered_1_29_to_1_50_threshold": 0}
+    },
+    "goal3": {
+      "status": "complete",
+      "compiler_mode": "official_v4",
+      "rows": 250000,
+      "failures": 0,
+      "audit_gate_ready": true,
+      "runtime_seconds": 1568.0315,
+      "throughput_rows_per_second": 159.4356,
+      "cumulative_throughput_rows_per_second": 162.7917,
+      "peak_rss_bytes": 1444044800,
+      "ast_dag": {"max_indegree": 63, "mean_reused_nodes": 3.430812, "mean_reused_references": 13.759432, "mean_excess_references": 10.32862, "mean_reuse_depth": 4.6421511875, "sharing_concentration": 0.5698556037, "reused_nodes": 857703, "reused_references": 3439858, "excess_references": 2582155},
+      "eml_dag": {"max_indegree": 1939, "mean_reused_nodes": 18.130736, "mean_reused_references": 276.193548, "mean_excess_references": 258.062812, "mean_reuse_depth": 27.7799859862, "sharing_concentration": 0.7978003017, "reused_nodes": 4532684, "reused_references": 69048387, "excess_references": 64515703},
+      "ratios": {"raw_tree_alpha": 952.1371252900141, "dag_alpha_vs_ast_tree": 8.334401271758448, "dag_alpha_vs_ast_dag": 10.474953890182578, "ast_compression": 1.361707663394114, "eml_compression": 39.37500771693145},
+      "structurally_competitive_rows": 0
+    },
+    "goal4": {
+      "status": "complete",
+      "run_id": "9c26ec3036c45bd3bf24256d9a57fa4e1e48d016cd2cee446a47918667cf2536",
+      "rows": 60000,
+      "selected_expressions": 30000,
+      "modes": ["safe_real", "positive_real_formal"],
+      "costed_rows_per_mode": 18210,
+      "failures_per_mode": 11790,
+      "timeouts_per_mode": 0,
+      "safe_real": {"improved": 4349, "improved_over_costed": 0.2388248215, "improved_over_processed": 0.1449666667, "mean_signed_node_improvement": 5.2496430533, "mean_relative_improvement": 0.0236117313},
+      "positive_real_formal": {"improved": 5026, "improved_over_costed": 0.2760021966, "improved_over_processed": 0.1675333333, "mean_signed_node_improvement": 5.7658429434, "mean_relative_improvement": 0.02848704193},
+      "failure_note": "Failures are principally unsupported trig/hyperbolic operators or independent-validation rejection; no timeouts."
+    },
+    "goal5": {
+      "status": "complete",
+      "frequent_motif": {"vocabulary_size": 1024, "motif_sizes": [2, 3, 4], "min_support": 32, "train_mdl_bits": 2180887611, "validation_mdl_bits": 318470750, "test_iid_mdl_bits": 317678264, "test_iid_baseline_bits": 572524716, "test_iid_savings_bits": 254846452, "test_iid_savings_fraction": 0.44512742398, "test_iid_selected_occurrences": 95970, "test_ood_mdl_bits": 818099441, "test_ood_baseline_bits": 1453062331, "test_ood_savings_bits": 634962890, "test_ood_savings_fraction": 0.436982555, "test_ood_selected_occurrences": 232143, "reconstruction_failures": 0},
+      "learned_motif": {"vocabulary_size": 1024, "motif_sizes": [2, 3, 4], "min_support": 32, "selection_budget": 1024, "candidate_source": 21621, "prefiltered_candidates": 4096, "training_examples": 4096, "ridge_lambda": 100, "validation_mdl_bits": 325199669, "test_iid_mdl_bits": 324485346, "test_iid_equal_budget_frequent_bits": 317678264, "test_iid_random_median_bits": 368943015, "test_ood_mdl_bits": 821843999, "test_ood_equal_budget_frequent_bits": 818099441, "source_and_reconstruction_failures": 0},
+      "neural_ranker": {"expressions": 30000, "groups": 60000, "candidates": 299645, "valid_candidates": 298211, "failed_candidates": 1434, "empty_groups": 23132, "replay_mismatches": 0, "test_iid": {"groups": 18050, "evaluable": 10752, "unevaluable": 7298, "neural_exact": 8349, "neural_exact_fraction": 0.7765067, "neural_mean_regret": 2.9454055, "neural_total_regret": 31669, "neural_speedup": 15.0162, "estimated_eml_tree_exact": 8796, "estimated_eml_tree_mean_regret": 2.6928013, "ast_dag_exact": 8661, "ast_dag_mean_regret": 2.18740699, "random_exact": 2158, "random_mean_regret": 53.4677}, "test_ood": {"groups": 2214, "evaluable": 2034, "unevaluable": 180, "neural_exact": 1499, "neural_exact_fraction": 0.7369715, "neural_mean_regret": 3.09636185, "neural_total_regret": 6298, "neural_speedup": 5.15466, "estimated_eml_tree_exact": 1555, "estimated_eml_tree_mean_regret": 4.51917, "ast_dag_exact": 1565, "ast_dag_mean_regret": 2.6007866, "random_exact": 1078, "random_mean_regret": 10.9941}, "runtime_seconds": {"candidate_scoring": 7102.153, "replay": 10721.489, "model_fit_and_eval": 24.532}, "peak_rss_bytes": 1700249600, "four_worker_run": true},
+      "production_export": {"expressions": 250000, "graphs": 1250000, "hierarchies": 250000, "batches": 2500, "validation_failures": 0, "reconstruction_failures": 0},
+      "claims": {"learned_vs_equal_budget_frequent_test_iid": "null", "neural_vs_structural_heuristics_test_iid_and_ood": "null", "learned_vs_random_and_uncompressed_macro": "positive"}
+    }
+  },
+  "phase_b_gpu": {
+    "package_status": "operational_completion_complete",
+    "hardware": "4x NVIDIA H100 80GB HBM3",
+    "python": "3.12.12",
+    "torch": "2.7.1+cu128",
+    "full_pytest": "2833 passed",
+    "ruff_check": "passed",
+    "ruff_format": "passed",
+    "goal6": {"status": "complete_source_refresh_only", "seeds": [{"seed": 20260726, "validation_loss": 2.391449174101672, "wall_seconds": 2883.607450513169, "checkpoint_sha256": "4d5d5a899b51f2d886fe1201cb73443c0776944d8f158591a8e9bdcfa1118507"}, {"seed": 20260727, "validation_loss": 0.5267228093910907, "wall_seconds": 2890.861278101802, "checkpoint_sha256": "69fcd7e336653fe14fad062c9144cd902d1357261ec904592109c69260f7f608"}, {"seed": 20260728, "validation_loss": 0.5386937659200733, "wall_seconds": 2888.853075893596, "checkpoint_sha256": "01d2385d3a33a3f1ed61c00e852a09e747050abdb6ccb00ddfaacb75760af751"}], "note": "The original Goal 6 artifact is retained; this is a three-cell current-commit source refresh, not a claim that every release gate is complete."},
+    "goal7": {"status": "incomplete_with_retained_invalids", "logical_cells": 18, "complete_cells": 13, "invalid_cells": 5, "raw_status_records": 26, "retained_failed_attempt_records": 8, "attempt_status_failed": 5, "auth_errors": 0, "gpu_indices": [0, 1, 2, 3], "interrupted": false, "run_id": "5ad0f28779709c2c3efb5c6eb614a3c1f1017422dc6fde92b952bac1e42c81c0", "summary_sha256": "da792d92216ddfc9f7506f1fabf5085ff4196964ab3e604bc09aff7616e86a90", "scheduler_state": "incomplete"},
+    "retrieval": {"logical_cells": 15, "complete_cells": 15, "auth_errors": 0, "gpu_indices": [0, 1, 2, 3], "interrupted": false, "summary_sha256": "464fb5bbd353239007408a71dba4a01cc0c26bd42ba66478a3a4603e7edba4ee", "status_schema": "geml-phase-b-retrieval-gpu-status-v1"},
+    "goal8": {"status": "complete_runs_null_scientific_result", "runs": 3, "optimizer_steps_per_run": 1500, "failed_epochs": 0, "parameter_count": 452820, "preparation": {"training_expressions": 35811, "train": 25342, "validation": 2540, "eval": 22570, "excluded_family": 21435, "excluded_length": 72431, "held_out_family": "exp_log", "maximum_witness_length": 4, "vocabulary_sha256": "88d709a7db1cd5e7982d32d6030633fafca605423791d0b5e7039afceadc3626"}, "seeds": [{"seed": 20260726, "validation_mae": 0.8471730067035345, "test_iid_mae": 1.9161517538686852, "test_iid_spearman": -0.014220334119549668, "test_ood_mae": 1.9076318031805681, "test_ood_spearman": null, "test_iid_n": 11218, "test_ood_n": 11352, "wall_seconds": 4560.555865}, {"seed": 20260727, "validation_mae": 0.8375518081695076, "test_iid_mae": 1.8886932196262622, "test_iid_spearman": 0.002107999223893429, "test_ood_mae": 1.8804192692566455, "test_ood_spearman": null, "test_iid_n": 11218, "test_ood_n": 11352, "wall_seconds": 4512.926949}, {"seed": 20260728, "validation_mae": 0.8295553917021263, "test_iid_mae": 1.8684729886344036, "test_iid_spearman": -0.008904859511000642, "test_ood_mae": 1.8600275619001436, "test_ood_spearman": null, "test_iid_n": 11218, "test_ood_n": 11352, "wall_seconds": 4490.525827}], "selected_seed": 20260728, "selected_checkpoint_sha256": "a0aa9e78a5b11624e4fc58475d77000aef15ddd2dd1fb8b2816692faec34e9d9", "selected_source_encoder_sha256": "69fcd7e336653fe14fad062c9144cd902d1357261ec904592109c69260f7f608", "selected_source_encoder_validation_loss": 0.5267228093910907, "scientific_review": "null_or_collapsed_value_head"}
+  },
+  "artifact_integrity": {"phase_b_final_validation_sha256": "7d949c3b69d1baffa6903b1c23eb376e37607fddced345cc1f259d3b00e2e758", "phase_b_readme_sha256": "d1c18000001cfabef601f7b3985ee0ef3687a8afc581621d580dcfb1579e46a6", "archives": {"cache": "e0e14f3a79bd924a8ac682e8da9941b977ccdfeefb0f156ada1e7f6a71209e83", "results": "6ac3a7df8171baa4997848272d5e963f7885a437567d20fef7f009a6fc4da483", "runtime_provenance": "d139c2ff5027acb21b46ceb72c378f761c1f3510b635216324ade3258d75cd17", "state": "aea058c234d94080f2dac8cf2a9f9ff78d7c6b622c17da14015cfe4d0a79e490"}},
+  "goals_6_12": {"goal9": "not_authenticated", "goal10": "not_complete; published endpoint issue remains for 8 asin/acos cells", "goal11": "not_authenticated", "goal12": "not_authenticated"},
+  "warnings": ["GPU bitwise reproducibility across hardware is not claimed.", "cuBLAS deterministic-algorithm warnings were retained; 38 log files contain cublas warnings and 2 contain traceback text.", "The 5 invalid Goal 7 cells remain in the denominator.", "A null or collapsed Goal 8 value head must not be presented as a useful ranking model."]
+}

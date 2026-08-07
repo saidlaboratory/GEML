@@ -1,0 +1,43 @@
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Environments and packaging
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Production-generated data and artifacts
+/outputs/
+/artifacts/
+/checkpoints/
+/data/corpus/
+/data/generated/
+
+# Internal working drafts and strategy docs — not part of the public repo
+# Paper: track the source (.tex/.bib/.sty/.bst/.pdf); ignore LaTeX build artifacts
+/paper/*.aux
+/paper/*.bbl
+/paper/*.blg
+/paper/*.log
+/paper/*.out
+/paper/*.fls
+/paper/*.fdb_latexmk
+/paper/*.synctex.gz
+/paper/*.png
+/build.out

@@ -1,0 +1,50 @@
+# Goal 5 learned motif-selection protocol.
+# Set frequent_sweep_run_dir, or supply it as an execution override, only after
+# the issue 5-5 run.complete.json and selection.lock.json are frozen.
+schema_version: geml-goal5-learned-motifs-config-v1
+frequent_sweep_run_dir: null
+output_root: outputs/final/goal5/learned_motifs
+graph_family: macro
+representation_mode: macro:official_v4:is_pure_eml=false
+
+selector:
+  method: geml-deterministic-ridge-mdl-v1
+  target_definition: exact-singleton-two-part-mdl-gain-v1
+  # This deterministic sub-partition is wholly inside TRAIN. Candidate mining,
+  # feature counts, exact target construction, and fitting never read
+  # validation or held-out rows.
+  train_fit_fraction: 0.8
+  partition_method: geml-train-partition-sha256-v1
+  # Both caps are fixed from TRAIN-only evidence before validation is opened.
+  # The 4,096-motif pool is four times the largest 5-5 vocabulary budget.
+  maximum_target_graphs: 4096
+  candidate_prefilter: train-frequency-rank-v1
+  maximum_candidate_motifs: 4096
+  ridge_lambdas: [0.0, 0.000001, 0.0001, 0.01, 1.0, 100.0]
+  singular_value_rcond: 1.0e-12
+
+baselines:
+  frequent: true
+  random: true
+  macro_without_motifs: true
+  equal_motif_budget: true
+  random_seed: 20260723
+  random_repetitions: 30
+  random_method: geml-motif-random-baseline-v1
+
+evaluation:
+  codec: geml-motif-mdl-v1
+  occurrence_policy: deterministic_safe_greedy_v1
+  require_exact_reconstruction: true
+  failure_fallback: encode_original_graph
+  validation_selects_hyperparameters: true
+  evaluate_tests_once_after_lock: true
+  # This is post-hoc reporting only. Held-out results never replace or mutate
+  # the validation-locked selector or vocabulary.
+  posthoc_claim_rule: report_only_if_learned_beats_frequent_random_median_and_macro_on_test_iid
+  report_ood_independently: true
+
+runtime:
+  seed: 20260723
+  resume: true
+  atomic_finalization: true

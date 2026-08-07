@@ -1,0 +1,101 @@
+schema_version: geml-goal1-integration-v1
+default_stage: development
+run_seed: 20260721
+output_root: outputs/final/goal1/
+corpus_id_prefix: geml-goal1
+
+upstream:
+  generator_config: configs/goal1_generator_final.yaml
+  corpus_config: configs/goal1_corpus_final.yaml
+
+# Development and pilot scale the exact six-family final policy. They exercise every
+# production family before the final gate without changing the 250k quotas below.
+stages:
+  development:
+    count: 1000
+    family_counts:
+      algebraic_core: 280
+      powers_division_rationals: 160
+      exp_log: 160
+      trig_hyperbolic: 160
+      mixed_elementary: 140
+      ood_stress: 100
+    split_counts:
+      train: 700
+      validation: 100
+      test_iid: 100
+      test_ood: 100
+    deterministic_runs: 1
+    allow_small_fixture_shards: true
+
+  pilot:
+    count: 10000
+    family_counts:
+      algebraic_core: 2800
+      powers_division_rationals: 1600
+      exp_log: 1600
+      trig_hyperbolic: 1600
+      mixed_elementary: 1400
+      ood_stress: 1000
+    split_counts:
+      train: 7000
+      validation: 1000
+      test_iid: 1000
+      test_ood: 1000
+    deterministic_runs: 2
+    allow_small_fixture_shards: true
+
+  final:
+    count: 250000
+    family_counts:
+      algebraic_core: 70000
+      powers_division_rationals: 40000
+      exp_log: 40000
+      trig_hyperbolic: 40000
+      mixed_elementary: 35000
+      ood_stress: 25000
+    split_counts:
+      train: 175000
+      validation: 25000
+      test_iid: 25000
+      test_ood: 25000
+    deterministic_runs: 1
+    allow_small_fixture_shards: false
+
+shards:
+  primary_format: parquet
+  minimum_rows: 10000
+  maximum_rows: 25000
+  resume: true
+  atomic_finalization: true
+
+quality:
+  parse_every_record: true
+  render_display_every_record: true
+  render_latex_every_record: true
+  require_multiple_actual_depths: true
+  require_multiple_actual_sizes: true
+  forbid_blanket_log_exp: true
+  triviality_rate_gate_minimum_rows: 1000
+  audit:
+    sample_size: 64
+    sample_seed: 20260721
+    source_roundtrip: true
+    latex_roundtrip: true
+    require_latex_parser: false
+
+telemetry:
+  enabled: true
+  peak_resident_memory: true
+  stage_timings: true
+  rejection_reasons: true
+
+maximum_candidate_multiplier: 10
+package_versions:
+  - geml
+  - mpmath
+  - numpy
+  - pyarrow
+  - pydantic
+  - sympy
+  - psutil

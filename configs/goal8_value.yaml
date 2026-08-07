@@ -1,0 +1,89 @@
+schema_version: geml-goal8-value-config-v1
+stage: production
+
+target:
+  name: remaining_witness_steps
+  interpretation: verified_steps_left_in_stored_witness_trace
+  shortest_path_claim: false
+  maximum_witness_steps: 16
+  clipping_policy: right_censor_at_maximum
+
+architecture:
+  shared_encoder: goal6_compact_gnn
+  shared_encoder_digest: null
+  embedding_dimension: null
+  encoder_copy_allowed: false
+  goal_conditioned: true
+  composition:
+    - current_embedding
+    - goal_embedding
+    - current_minus_goal
+    - current_times_goal
+  hidden_dimension: 32
+  ordinal_thresholds: 16
+  maximum_trainable_parameters: 20000
+  maximum_total_trainable_parameters: 1000000
+
+loss:
+  regression: one_sided_huber_for_right_censored_targets
+  huber_delta: 1.0
+  regression_weight: 1.0
+  ordinal: binary_cross_entropy_over_remaining_distance_thresholds
+  ordinal_weight: 0.25
+
+training:
+  seeds:
+    - 20260726
+    - 20260727
+    - 20260728
+  maximum_epochs: 100
+  early_stopping_patience: 10
+  batch_size: 64
+  selection_metric: validation_mae
+  checkpoint_resume: true
+  common_goal6_harness_required: true
+  step_dataset_sha256: null
+  split_manifest_sha256: null
+  shared_encoder_checkpoint_sha256: null
+  shared_training_harness_sha256: null
+  environment_identity_required:
+    - git_commit
+    - python_version
+    - package_versions
+    - hardware
+    - exact_command
+
+leakage:
+  inherit_goal7_groups_and_splits: true
+  authenticated_goal8_benchmark_manifest_required: true
+  benchmark_manifest_file_sha256_required_for_production: true
+  benchmark_manifest_file_sha256: null
+  benchmark_manifest_content_sha256: null
+  exclude_group_relations:
+    - group_id
+    - lineage_group_ids
+    - eclass_relative_ids
+  exclude_benchmark_groups_from:
+    - training
+    - validation
+    - model_selection
+
+reporting:
+  calibration_interpretation: valid_predictions_with_attempted_unsupported_and_failure_denominators_per_witness_tier
+  metrics:
+    - mean_absolute_error
+    - spearman_rank_correlation
+    - calibration_by_witness_tier
+    - unstratified_missing_target_count
+  retain_statuses:
+    - accepted
+    - unsupported
+    - invalid
+    - replay_failed
+    - scoring_error
+  retain_training_input_exclusion_ledger: true
+
+phase_a:
+  production_training: false
+  fixture_harness_injection: true
+  status: phase_a_implemented

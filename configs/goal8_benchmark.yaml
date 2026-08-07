@@ -1,0 +1,89 @@
+# Phase-A preregistration for issue 8-2. This file does not freeze task IDs.
+# Production must replace every null checksum/path only after Workstreams 1-3
+# are integrated, then curate before policy/value model selection.
+schema_version: geml-proof-benchmark-v1
+benchmark_id: geml-goal8-proof-benchmark-256-v1
+manifest_kind: production
+target_count: 256
+selection_seed: 20260726
+selection_algorithm: geml-proof-benchmark-selection-v1
+output_root: outputs/final/goal8/benchmark
+frozen_manifest_sha256: null
+
+tier_policy:
+  # Must be authenticated against the largest witness length exposed to model
+  # training or validation. Length-OOD begins at 9.
+  short_witness_max: 2
+  medium_witness_max: 4
+  in_distribution_witness_max: 8
+  moderate_rule_diversity_max: 2
+  # score = witness length + 2*(distinct rules - 1) + ceil(max state size / 8)
+  easy_difficulty_max: 8
+  medium_difficulty_max: 16
+  state_size_divisor: 8
+
+# exp_log may be called family-OOD only if the authenticated leakage ledger
+# proves it is absent from every train/validation/policy/value development scope.
+held_out_families: [exp_log]
+
+# Thirty-two nonoverlapping composite cells x eight tasks = exactly 256.
+# Goal 1 test_ood remains a combined stress split; the ood_tier below describes
+# only strict witness-length and family support, never a renamed depth-OOD split.
+quota_cells:
+  # algebraic_core: 64
+  - {quota_id: alg-short-single-easy, family: algebraic_core, split: test_iid, witness_length_tier: short, rule_diversity_tier: single, difficulty_tier: easy, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: alg-short-moderate-medium, family: algebraic_core, split: test_iid, witness_length_tier: short, rule_diversity_tier: moderate, difficulty_tier: medium, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: alg-medium-single-easy, family: algebraic_core, split: test_iid, witness_length_tier: medium, rule_diversity_tier: single, difficulty_tier: easy, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: alg-medium-moderate-medium, family: algebraic_core, split: test_iid, witness_length_tier: medium, rule_diversity_tier: moderate, difficulty_tier: medium, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: alg-long-high-medium, family: algebraic_core, split: test_ood, witness_length_tier: long, rule_diversity_tier: high, difficulty_tier: medium, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: alg-long-high-hard, family: algebraic_core, split: test_ood, witness_length_tier: long, rule_diversity_tier: high, difficulty_tier: hard, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: alg-length-ood-single-medium, family: algebraic_core, split: test_ood, witness_length_tier: length_ood, rule_diversity_tier: single, difficulty_tier: medium, ood_tier: length_ood, required_count: 8}
+  - {quota_id: alg-length-ood-high-hard, family: algebraic_core, split: test_ood, witness_length_tier: length_ood, rule_diversity_tier: high, difficulty_tier: hard, ood_tier: length_ood, required_count: 8}
+
+  # powers_division_rationals: 64
+  - {quota_id: pdr-short-single-easy, family: powers_division_rationals, split: test_iid, witness_length_tier: short, rule_diversity_tier: single, difficulty_tier: easy, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: pdr-short-moderate-medium, family: powers_division_rationals, split: test_iid, witness_length_tier: short, rule_diversity_tier: moderate, difficulty_tier: medium, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: pdr-medium-single-easy, family: powers_division_rationals, split: test_iid, witness_length_tier: medium, rule_diversity_tier: single, difficulty_tier: easy, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: pdr-medium-moderate-medium, family: powers_division_rationals, split: test_iid, witness_length_tier: medium, rule_diversity_tier: moderate, difficulty_tier: medium, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: pdr-long-high-medium, family: powers_division_rationals, split: test_ood, witness_length_tier: long, rule_diversity_tier: high, difficulty_tier: medium, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: pdr-long-high-hard, family: powers_division_rationals, split: test_ood, witness_length_tier: long, rule_diversity_tier: high, difficulty_tier: hard, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: pdr-length-ood-single-medium, family: powers_division_rationals, split: test_ood, witness_length_tier: length_ood, rule_diversity_tier: single, difficulty_tier: medium, ood_tier: length_ood, required_count: 8}
+  - {quota_id: pdr-length-ood-high-hard, family: powers_division_rationals, split: test_ood, witness_length_tier: length_ood, rule_diversity_tier: high, difficulty_tier: hard, ood_tier: length_ood, required_count: 8}
+
+  # exp_log held out from all model development: 64
+  - {quota_id: explog-short-single-easy, family: exp_log, split: test_iid, witness_length_tier: short, rule_diversity_tier: single, difficulty_tier: easy, ood_tier: family_ood, required_count: 8}
+  - {quota_id: explog-short-moderate-medium, family: exp_log, split: test_iid, witness_length_tier: short, rule_diversity_tier: moderate, difficulty_tier: medium, ood_tier: family_ood, required_count: 8}
+  - {quota_id: explog-medium-single-easy, family: exp_log, split: test_iid, witness_length_tier: medium, rule_diversity_tier: single, difficulty_tier: easy, ood_tier: family_ood, required_count: 8}
+  - {quota_id: explog-medium-moderate-medium, family: exp_log, split: test_iid, witness_length_tier: medium, rule_diversity_tier: moderate, difficulty_tier: medium, ood_tier: family_ood, required_count: 8}
+  - {quota_id: explog-long-single-medium, family: exp_log, split: test_ood, witness_length_tier: long, rule_diversity_tier: single, difficulty_tier: medium, ood_tier: family_ood, required_count: 8}
+  - {quota_id: explog-long-high-hard, family: exp_log, split: test_ood, witness_length_tier: long, rule_diversity_tier: high, difficulty_tier: hard, ood_tier: family_ood, required_count: 8}
+  - {quota_id: explog-length-ood-single-medium, family: exp_log, split: test_ood, witness_length_tier: length_ood, rule_diversity_tier: single, difficulty_tier: medium, ood_tier: length_and_family_ood, required_count: 8}
+  - {quota_id: explog-length-ood-high-hard, family: exp_log, split: test_ood, witness_length_tier: length_ood, rule_diversity_tier: high, difficulty_tier: hard, ood_tier: length_and_family_ood, required_count: 8}
+
+  # Additional supported algebraic/power cells complete 256 without presenting
+  # Goal 4-unsupported trig/hyperbolic candidates as benchmark coverage.
+  - {quota_id: alg-short-single-medium, family: algebraic_core, split: test_iid, witness_length_tier: short, rule_diversity_tier: single, difficulty_tier: medium, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: alg-medium-high-medium, family: algebraic_core, split: test_iid, witness_length_tier: medium, rule_diversity_tier: high, difficulty_tier: medium, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: alg-long-moderate-hard, family: algebraic_core, split: test_ood, witness_length_tier: long, rule_diversity_tier: moderate, difficulty_tier: hard, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: alg-length-ood-moderate-hard, family: algebraic_core, split: test_ood, witness_length_tier: length_ood, rule_diversity_tier: moderate, difficulty_tier: hard, ood_tier: length_ood, required_count: 8}
+  - {quota_id: pdr-short-single-medium, family: powers_division_rationals, split: test_iid, witness_length_tier: short, rule_diversity_tier: single, difficulty_tier: medium, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: pdr-medium-high-medium, family: powers_division_rationals, split: test_iid, witness_length_tier: medium, rule_diversity_tier: high, difficulty_tier: medium, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: pdr-long-moderate-hard, family: powers_division_rationals, split: test_ood, witness_length_tier: long, rule_diversity_tier: moderate, difficulty_tier: hard, ood_tier: length_family_in_distribution, required_count: 8}
+  - {quota_id: pdr-length-ood-moderate-hard, family: powers_division_rationals, split: test_ood, witness_length_tier: length_ood, rule_diversity_tier: moderate, difficulty_tier: hard, ood_tier: length_ood, required_count: 8}
+
+# All five roles and hashes are mandatory before production curation. Null means
+# deliberately unresolved, not "skip validation".
+source_artifacts:
+  - {artifact_id: goal6-pairs, role: pair_manifest, path: null, sha256: null, schema_version: null}
+  - {artifact_id: goal6-traces, role: trace_manifest, path: null, sha256: null, schema_version: null}
+  - {artifact_id: goal6-splits, role: split_manifest, path: null, sha256: null, schema_version: null}
+  - {artifact_id: goal8-leakage, role: leakage_manifest, path: null, sha256: null, schema_version: null}
+  - {artifact_id: goal4-rules, role: rule_registry, path: null, sha256: null, schema_version: null}
+
+immutability:
+  first_publish: atomic_create_without_replacement
+  frozen_rerun: verify_only
+  checksum_algorithm: sha256
+  schema_change_required_for_task_change: true
+
+production_status: production_pending

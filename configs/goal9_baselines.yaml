@@ -1,0 +1,37 @@
+# Goal 9 matched-budget SR baselines (issue 9-2 / #73).
+#
+# The budget itself is NOT defined here. Baselines consume the single `budget` object in
+# configs/goal9_sr.yaml so that the controlled arms and the baselines cannot drift apart;
+# `assert_matched_budgets` refuses to start a sweep otherwise. This file only carries
+# backend-side settings and the derived native-budget mapping parameters.
+schema_version: geml-goal9-baselines-config-v1
+output_root: outputs/final/goal9/baselines
+
+# PySR is version pinned. A missing package, an unimportable package, or any other installed
+# version produces an explicit `dependency_unavailable` row recording exactly what was found.
+# Verified against the official PySR PyPI project page on 2026-07-26.
+pysr_pinned_version: "1.5.10"
+
+# Native PySR budget parameters. `niterations` is derived from the shared expansion budget
+# as max_expansions // populations; wall time, maxsize, and maxdepth are matched exactly.
+# The residual mismatch is recorded verbatim on every emitted row.
+pysr_populations: 15
+pysr_population_size: 33
+
+# PySR's own documentation states that fixing random_state alone has no effect while
+# multiprocessing is active, so determinism requires serial parallelism.
+pysr_parallelism: serial
+pysr_deterministic: true
+
+# The in-repository genetic-programming fallback. It is a separate method
+# (`gp_fallback`) with its own backend name and is never labelled PySR. Enable it only when
+# the pinned PySR path is genuinely unavailable, and report it as itself.
+gp_fallback_enabled: true
+gp_population_size: 32
+gp_generations: 8
+gp_tournament_size: 3
+
+# Compact transformer-SR. The model is Workstream 2's prefix backbone, injected through the
+# TransformerProposer protocol; this issue implements no second transformer stack. A
+# proposer that declares training on benchmark test targets is refused outright.
+transformer_samples: 32

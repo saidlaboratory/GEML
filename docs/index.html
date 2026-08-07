@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GEML — one operator, measured exactly</title>
+<meta name="description" content="GEML is a controlled representation study: does collapsing every math operator into eml(x,y) = exp(x) − ln(y) help graph neural networks learn symbolic reasoning? The 250k-expression cost profile is measured exactly, and the first learning verdicts are in: learnable despite the 40× expansion.">
+<style>
+  :root{
+    --paper:#f7f9f8;
+    --grid:rgba(27,36,55,.055);
+    --ink:#1b2437;
+    --ink-soft:#4a5468;
+    --rule:#c9cfd9;
+    --red:#c03b2d;        /* correction pen */
+    --red-soft:rgba(192,59,45,.08);
+    --blue:#2b5bb8;       /* links, structure */
+    --green:#2f7d4f;      /* done / gates */
+    --card:#ffffff;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"URW Palladio L","Book Antiqua",Georgia,serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --paper:#101520;
+      --grid:rgba(232,236,242,.045);
+      --ink:#e8ecf2;
+      --ink-soft:#a3adc2;
+      --rule:#323c50;
+      --red:#e06055;
+      --red-soft:rgba(224,96,85,.12);
+      --blue:#7ba3e8;
+      --green:#5faf7f;
+      --card:#161d2c;
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto} }
+  body{
+    margin:0;
+    font-family:var(--serif);
+    font-size:1.0625rem;
+    line-height:1.65;
+    color:var(--ink);
+    background:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+      var(--paper);
+    background-size:28px 28px, 28px 28px, auto;
+  }
+  a{color:var(--blue)}
+  a:hover{text-decoration-thickness:2px}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:3px;border-radius:2px}
+  .wrap{max-width:46rem;margin:0 auto;padding:0 1.25rem}
+  .mono{font-family:var(--mono)}
+
+  /* ---------- header ---------- */
+  header.site{padding:1.1rem 0 0}
+  .masthead{
+    display:flex;justify-content:space-between;align-items:baseline;gap:1rem;
+    border-bottom:1px solid var(--rule);padding-bottom:.7rem;
+    font-family:var(--mono);font-size:.78rem;letter-spacing:.04em;color:var(--ink-soft);
+  }
+  .masthead a{color:inherit;text-decoration:none}
+  .masthead a:hover{color:var(--blue)}
+
+  /* ---------- hero ---------- */
+  .hero{padding:4.5rem 0 3.2rem;text-align:left}
+  .hero h1{
+    font-size:clamp(2rem, 5.4vw, 3.15rem);
+    line-height:1.12;font-weight:600;letter-spacing:-.01em;margin:0 0 1.4rem;
+    text-wrap:balance;
+  }
+  .hero h1 em{font-style:italic;color:var(--red)}
+  /* displayed equation, TeX-style: centered, roman functions, italic variables */
+  .eqn{
+    font-family:var(--serif);
+    font-size:clamp(1.2rem, 3.4vw, 1.75rem);
+    text-align:center;
+    padding:.9rem 0;margin:.4rem 0 1.6rem;
+    overflow-x:auto;white-space:nowrap;
+  }
+  .eqn i{font-style:italic}
+  .eqn .rm{font-style:normal}
+  .hero p.dek{font-size:1.15rem;color:var(--ink-soft);max-width:38rem;margin:0}
+  .hero p.dek strong{color:var(--ink)}
+
+  /* ---------- status strip ---------- */
+  .status{display:flex;flex-wrap:wrap;gap:.55rem;margin:1.7rem 0 0}
+  .status span{
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.03em;
+    border:1px solid var(--rule);border-radius:2px;padding:.28rem .55rem;
+    color:var(--ink-soft);background:var(--card);
+  }
+  .status span b{color:var(--ink);font-weight:600}
+  .status .fail b{color:var(--red)}
+  .status .done b{color:var(--green)}
+
+  /* ---------- sections ---------- */
+  section{padding:2.6rem 0 1rem}
+  h2{font-size:1.65rem;font-weight:600;letter-spacing:-.005em;margin:0 0 1rem;line-height:1.2}
+  h2 .no{font-weight:400;color:var(--red);margin-right:.6rem;font-variant-numeric:oldstyle-nums}
+  h3{font-size:1.12rem;margin:1.8rem 0 .5rem}
+  p{margin:.85rem 0}
+  .note{color:var(--ink-soft);font-size:.95rem}
+
+  /* ---------- corrections (signature) ---------- */
+  ol.corrections{list-style:none;margin:1.6rem 0;padding:0;counter-reset:corr}
+  ol.corrections li{
+    counter-increment:corr;
+    margin:0 0 1.35rem;padding:0 0 1.35rem 2.4rem;position:relative;
+    border-bottom:1px dashed var(--rule);
+  }
+  ol.corrections li:last-child{border-bottom:none}
+  ol.corrections li::before{
+    content:counter(corr);
+    position:absolute;left:0;top:.15rem;
+    font-family:var(--mono);font-size:.8rem;color:var(--red);
+    border:1px solid var(--red);border-radius:50%;
+    width:1.5rem;height:1.5rem;display:flex;align-items:center;justify-content:center;
+  }
+  .was{display:block;color:var(--ink-soft)}
+  .was del{text-decoration-color:var(--red);text-decoration-thickness:1.5px}
+  .now{display:block;margin-top:.3rem;color:var(--red);font-weight:600}
+  .now::before{content:"→ ";font-family:var(--mono);font-weight:400}
+  .why{display:block;margin-top:.3rem;font-size:.9rem;color:var(--ink-soft);font-family:var(--mono)}
+
+  /* ---------- figure ---------- */
+  figure{margin:2rem 0;background:var(--card);border:1px solid var(--rule);padding:1.2rem 1.2rem .9rem}
+  figure svg,figure img{width:100%;height:auto;display:block}
+  @media (prefers-color-scheme: dark){figure img{background:#fff;padding:.4rem;border-radius:2px}}
+  figcaption{font-size:.88rem;color:var(--ink-soft);margin-top:.8rem;line-height:1.5}
+
+  /* ---------- tables ---------- */
+  .tblwrap{overflow-x:auto;margin:1.4rem 0;border:1px solid var(--rule);background:var(--card)}
+  table{border-collapse:collapse;width:100%;font-size:.92rem;min-width:34rem}
+  th,td{padding:.55rem .8rem;text-align:left;vertical-align:top;border-bottom:1px solid var(--rule)}
+  tr:last-child td{border-bottom:none}
+  th{font-family:var(--mono);font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);font-weight:500}
+  td.num{font-family:var(--mono);white-space:nowrap}
+  .win{color:var(--green);font-weight:600}
+  .null{color:var(--red)}
+
+  /* ---------- timeline ---------- */
+  .timeline{margin:2rem 0 0;padding:0;list-style:none;position:relative}
+  .timeline::before{
+    content:"";position:absolute;left:.55rem;top:.4rem;bottom:.4rem;
+    width:1px;background:var(--rule);
+  }
+  .timeline li{position:relative;padding:0 0 2rem 2.2rem}
+  .timeline li::before{
+    content:"";position:absolute;left:.22rem;top:.42rem;
+    width:.7rem;height:.7rem;border-radius:50%;
+    background:var(--paper);border:2px solid var(--blue);
+  }
+  .timeline li.done::before{background:var(--green);border-color:var(--green)}
+  .timeline li.fail::before{background:var(--red);border-color:var(--red)}
+  .timeline .g{
+    font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--blue);
+  }
+  .timeline li.done .g{color:var(--green)}
+  .timeline li.fail .g{color:var(--red)}
+  .timeline h3{margin:.15rem 0 .35rem;font-size:1.15rem}
+  .timeline p{margin:.3rem 0;font-size:.97rem;color:var(--ink-soft)}
+  /* gate set like a theorem statement */
+  .gate{display:block;margin-top:.55rem;font-size:.92rem;color:var(--ink);font-style:italic}
+  .gate b{font-style:normal;font-variant:small-caps;letter-spacing:.05em;color:var(--red);font-weight:600}
+
+  /* ---------- channels ---------- */
+  .channels{display:grid;grid-template-columns:repeat(3,1fr);gap:.8rem;margin:1.5rem 0}
+  .channels div{background:var(--card);border:1px solid var(--rule);padding:.9rem 1rem;font-size:.9rem}
+  .channels b{display:block;font-family:var(--mono);font-size:.76rem;letter-spacing:.06em;text-transform:uppercase;margin-bottom:.35rem;color:var(--blue)}
+  .channels div:nth-child(2) b{color:var(--green)}
+  .channels div:nth-child(3) b{color:var(--ink-soft)}
+  .channels p{margin:0;color:var(--ink-soft);line-height:1.5}
+  @media (max-width:38rem){.channels{grid-template-columns:1fr}}
+
+  /* ---------- team ---------- */
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin:1.4rem 0}
+  .twocol>div{background:var(--card);border:1px solid var(--rule);padding:1rem 1.1rem;font-size:.95rem}
+  .twocol b.tag{font-family:var(--mono);font-size:.76rem;letter-spacing:.08em;text-transform:uppercase;color:var(--blue)}
+  @media (max-width:38rem){.twocol{grid-template-columns:1fr}}
+  ul.plain{padding-left:1.1rem;margin:.6rem 0}
+  ul.plain li{margin:.4rem 0}
+
+  .callout{
+    background:var(--red-soft);border:1px solid var(--red);border-radius:2px;
+    padding:.85rem 1.1rem;margin:1.6rem 0;font-size:.97rem;
+  }
+  .callout b{color:var(--red)}
+
+  footer{
+    margin-top:3.5rem;border-top:1px solid var(--rule);
+    padding:1.6rem 0 2.6rem;font-family:var(--mono);font-size:.82rem;color:var(--ink-soft);
+  }
+  footer p{margin:.35rem 0}
+
+  /* ---------- reveal ---------- */
+  .reveal{opacity:0;transform:translateY(14px);transition:opacity .6s ease,transform .6s ease}
+  .reveal.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion: reduce){
+    .reveal{opacity:1;transform:none;transition:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap masthead">
+    <span>Anonymous GEML review snapshot</span>
+    <span>target · <a href="https://sites.google.com/view/mathnlp2026">MathNLP 2026</a></span>
+  </div>
+</header>
+
+<div class="wrap hero">
+  <h1>Every operation in mathematics, replaced by one. <em>Does that help a neural network?</em></h1>
+  <p class="eqn">eml(<i>x</i>, <i>y</i>) = exp(<i>x</i>) − ln(<i>y</i>)</p>
+  <p class="dek">
+    Odrzywołek (2026) proved that every elementary function, and the constants π, e, and i, can be
+    built from the constant 1 and this single operator. GEML is a controlled study of whether that
+    uniformity helps a graph neural network learn symbolic reasoning. <strong>The 250,000-expression
+    cost profile is measured exactly (median α = 40.66; lossless sharing recovers 39×), and the
+    first learning verdicts are in: the representation is learnable, with
+    two of three equivalence seeds clearing the operative chance floor despite the 40×
+    expansion.</strong> What the preregistered diagnostics point at next is usable search guidance;
+    the framework and every measured number are below.
+  </p>
+  <div class="status" aria-label="Project status at a glance">
+    <span class="done">Goals 1–5 · <b>complete (250k)</b></span>
+    <span class="done">learning verdicts · <b>first in (4×H100)</b></span>
+    <span class="done">equivalence · <b>learnable (2/3 seeds)</b></span>
+    <span>EML-vs-AST grid, SR, synthesis · <b>pending</b></span>
+  </div>
+</div>
+
+<main class="wrap">
+
+<section id="idea" class="reveal">
+  <h2><span class="no">§1</span>Topology instead of vocabulary</h2>
+  <p>
+    Language models read mathematics as a flat token sequence like
+    <span class="mono">[sin, (, x, +, 1, )]</span>, and must memorize precedence rules and
+    distinct behaviors for dozens of operators. In EML form, any continuous expression becomes a
+    strict binary tree where <strong>every internal node is the exact same gate</strong>. A graph
+    neural network reading that tree never has to learn <em>what</em> an operator is, only
+    <em>where things connect</em>: purely topological routing, three token types
+    (<span class="mono">eml</span>, <span class="mono">1</span>, variables) instead of an open
+    vocabulary. Whether that homogeneity actually helps is the hypothesis, not a result yet.
+  </p>
+</section>
+
+<section id="evidence" class="reveal">
+  <h2><span class="no">§2</span>The α threshold, and how far raw EML overshoots it</h2>
+  <p>
+    Let <span class="mono">α = |T<sub>EML</sub>| / |T<sub>AST</sub>|</span>, the factor by which the
+    tree grows when rewritten in pure EML. Counting representable expressions
+    (Catalan shapes × operator labels × leaf choices) gives a break-even point: the single-operator
+    representation wins only if
+  </p>
+  <p class="eqn">α &lt; 1 + log<sub>4<i>L</i></sub>(<i>K</i>) ≈ 1.56&ensp;<span style="font-size:.6em;color:var(--ink-soft)">(current grammar)</span></p>
+  <p>
+    Raw EML misses that by well over an order of magnitude. On the production corpus (250,000
+    expressions, compiled with the official-v4 EML compiler, no abbreviations, no hidden leaves)
+    the median α is 40.66 and the mean is 952.1, a heavy right tail rather than a typical 952× blow-up.
+    Under the six preregistered per-family thresholds (1.29–1.50), <strong>0 of 250,000
+    expressions</strong> fall below the line. The compression program measures exactly how far
+    that gap narrows; the learning program tests whether what remains is worth it.
+  </p>
+
+  <div class="tblwrap"><table>
+    <thead><tr><th>Family</th><th>Rows</th><th>Median α</th><th>Threshold</th></tr></thead>
+    <tbody>
+      <tr><td>algebraic core</td><td class="num">70,000</td><td class="num">25.58</td><td class="num">1.3010</td></tr>
+      <tr><td>exp/log</td><td class="num">40,000</td><td class="num">32.79</td><td class="num">1.3382</td></tr>
+      <tr><td>powers/div/rationals</td><td class="num">40,000</td><td class="num">44.16</td><td class="num">1.2914</td></tr>
+      <tr><td>OOD stress</td><td class="num">25,000</td><td class="num">45.74</td><td class="num">1.3382</td></tr>
+      <tr><td>mixed elementary</td><td class="num">35,000</td><td class="num">133.93</td><td class="num">1.4292</td></tr>
+      <tr><td>trig/hyperbolic</td><td class="num">40,000</td><td class="num">270.46</td><td class="num">1.5000</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">
+    Per-family median expansion α against its preregistered counting threshold, from the paper
+    (Table 2; Goal 2). Corpus-wide: median 40.66, mean 952.1, p90 385.1, p99 10,448.6; the
+    smallest expansion in the corpus is α = 1.5.
+  </p>
+
+  <h3>Compression narrows the gap, but never closes it</h3>
+  <p>
+    Three families of compression were run over the same 250k corpus. Each stage is lossless or
+    verifier-gated, and each result traces to an authenticated artifact. The headline: exact
+    sharing shrinks EML dramatically (a 39× mean recovery), and the remaining gap to the source
+    AST is measured exactly.
+  </p>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Stage</th><th>What it does</th><th>Production result</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Raw pure EML-DAG</td><td>expand every op into <span class="mono">eml</span></td><td class="num">median α 40.66 · mean 952.1</td><td>0/250k below threshold (Goal 2)</td></tr>
+      <tr><td>EML-DAG (exact sharing)</td><td>exact subtree sharing</td><td class="num">39.4× mean EML shrink</td><td>lossless control; EML-DAG/AST-tree mean 8.33 (Goal 3)</td></tr>
+      <tr><td>vs source AST</td><td>the fairness question</td><td class="num">0 / 250,000</td><td class="null">EML-DAG never beats the AST tree; best remaining ratio 8/7 (Goal 3)</td></tr>
+      <tr><td>E-graph, positive-real</td><td>semantic rewrites + extract</td><td class="num">23.9% / 27.6% of costed rows</td><td>improves a minority; mean 2.4–2.8% smaller; needs positivity (Goal 4)</td></tr>
+      <tr><td>Frequent motif</td><td>dictionary of common subgraphs</td><td class="num win">strongest simple</td><td class="win">the practical lossless channel, reconstruction-verified (Goal 5)</td></tr>
+      <tr><td>Learned motif</td><td>scored dictionary</td><td class="num null">324.5M vs 317.7M bits</td><td class="null">null result: loses to equal-budget frequency, dropped (Goal 5)</td></tr>
+      <tr><td>Neural e-graph ranker</td><td>fast candidate scoring</td><td class="num null">loses to heuristic</td><td class="null">null result: a scoring-speed baseline, not a compression win (Goal 5)</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">
+    The two preregistered learned-method comparisons (learned-motif selection, neural ranker) are
+    documented in the Goal 5 summary; transparent baselines remain the bar to beat. Every number
+    above is verified against the per-goal summaries in <span class="mono">docs/goals/</span>.
+  </p>
+
+  <h3>Three channels carry forward into every learning experiment</h3>
+  <div class="channels">
+    <div><b>pure EML-DAG</b><p>The canonical, assumption-free control. Non-negotiable; every EML claim traces back to it.</p></div>
+    <div><b>motif-EML-DAG</b><p>The practical channel: the strongest simple lossless compressor, cheap to compute.</p></div>
+    <div><b>AST-DAG</b><p>The fairness baseline: separates “graph sharing helps” from “EML helps.”</p></div>
+  </div>
+</section>
+
+<section id="plan" class="reveal">
+  <h2><span class="no">§3</span>The experimental program, one gate per track</h2>
+  <p>
+    Each learning claim GEML intends to make is isolated in its own track, and every track ends at a
+    <strong>gate</strong>: an explicit, preregistered pass/fail criterion that decides whether the
+    track proceeds, proceeds narrowed, or stops. This is the methodology, not a schedule. Every
+    outcome is recorded against its preregistered criterion, the discipline the structural
+    results above already followed.
+  </p>
+  <div class="callout">
+    <b>First learning verdicts are in.</b> A four-H100 run (2026-07-31) produced the first
+    results, each bound to the committed run ledger. The single-operator representation is <em>learnable</em>: on
+    pure EML-DAG cells, two of three seeds reach equivalence validation loss ≈ 0.53 BCE, clearing
+    the ≈ 0.58 base-rate floor set by the ~74% positive-pair imbalance (the balanced 0.69 floor is
+    not the operative reference), despite the 40× expansion. And the preregistered diagnostics
+    earned their keep: a goal-conditioned value head shows low error (MAE ≈ 0.83) yet chance-level
+    ranking (test Spearman ≈ 0) and a constant out-of-domain predictor, a guidance signal that
+    error alone would have passed and the rank/OOD probes caught. The discriminative EML-vs-AST
+    comparison and symbolic regression remain <em>ongoing</em>; the domain-expansion audit
+    (Gate G10) is recorded in the timeline below.
+  </div>
+  <figure aria-label="Value-head diagnostics figure from the paper">
+    <img src="fig_valuehead.png" width="1060" height="562"
+         alt="Two-panel figure from the paper. Left: value-head regression error (MAE) per seed, with the constant OOD predictor's hatched bars indistinguishable from the trained test-IID error. Right: test-IID Spearman rank correlation per seed, all approximately zero.">
+    <figcaption>
+      From the paper: the value-head diagnostics. Left: regression error looks unremarkable, and
+      the constant OOD predictor (hatched) matches the trained head's own test-IID error. Right:
+      the same model ranks held-out states at chance (test-IID Spearman ≈ 0, grey band). The
+      preregistered rank and OOD probes catch what error metrics alone would pass.
+    </figcaption>
+  </figure>
+  <ol class="timeline">
+    <li>
+      <span class="g">Goal 6</span>
+      <h3>Equivalence learning grid</h3>
+      <p>Can a GNN learn E₁ ≡ E₂, and under which representation? Trace-rich pair dataset (≥50k pairs with rule provenance), GIN + compute-matched transformer + trivial baseline, 6-arm grid, depth- and family-OOD.</p>
+      <span class="gate"><b>Gate G6.</b> All GNN arms beat the trivial baseline, else stop and fix the dataset; the EML-vs-AST verdict is recorded either way.</span>
+    </li>
+    <li>
+      <span class="g">Goal 7</span>
+      <h3>Rewrite-step prediction</h3>
+      <p>From a state graph, predict (rule, application site). The sharpest EML test: does homogeneous topology help rule application transfer across contexts?</p>
+      <span class="gate"><b>Gate G7.</b> Learned policy beats uniform-random valid steps by a wide margin; no dead rules.</span>
+    </li>
+    <li>
+      <span class="g">Goal 8</span>
+      <h3>Verified proof-path generation</h3>
+      <p>Best-first search over rewrites with a verifier on every step; value head guides search; simplification mode reuses exact-cost machinery; frontier LLMs run as a reference ceiling through the same verifier.</p>
+      <span class="gate"><b>Gate G8.</b> Guided search beats uniform on nodes-expanded at equal success; zero invalid steps emitted.</span>
+    </li>
+    <li>
+      <span class="g">Goal 9</span>
+      <h3>Symbolic regression track</h3>
+      <p>EML’s predicted native home: recover f(x) from samples. EML-space vs AST-space search, against PySR/GP and transformer-SR baselines.</p>
+      <span class="gate"><b>Gate G9.</b> Exact recovery above the GP baseline at matched budget, or a documented negative.</span>
+    </li>
+    <li class="fail">
+      <span class="g">Goal 10 · gate published</span>
+      <h3>Domain expansion: trig grammar-v2</h3>
+      <p>Scoped to opt-in grammar-v2 compiler conformance only: an explicitly selected surface (asin, acos, atan, π, e) beside the untouched v1 default, audited on exact fingerprints, strict purity, and 100-digit numerics. No corpus rebuild, no α re-measurement, no grid re-runs under this gate.</p>
+      <span class="gate"><b>Gate G10.</b> Final-tier verdict published 2026-07-29 (lead decision): <b>fail</b>. 74 retained rows, zero integrity/coverage/v1-drift failures, and exactly the eight preregistered asin/acos endpoint cells nonfinite in high-precision raw-tree evaluation; scoped to the opt-in v2 surface only.</span>
+    </li>
+    <li>
+      <span class="g">Goal 11</span>
+      <h3>Scale-up &amp; final comparison</h3>
+      <p>Corpus at 10–100×, scaling curves per channel, the parameter-efficiency hypothesis tested explicitly, frontier-LLM comparison normalized by the verifier.</p>
+      <span class="gate"><b>Gate G11.</b> Every headline number ships with denominators, multi-seed variance, and scaling caveats resolved or stated.</span>
+    </li>
+    <li>
+      <span class="g">Goal 12</span>
+      <h3>Consolidation &amp; release</h3>
+      <p>Findings report (positive or null, equal prominence), one-command reproducibility package, paper under the agreed claim discipline.</p>
+    </li>
+  </ol>
+
+  <h3>Predictions on record</h3>
+  <p class="note">Falsifiable, made before the learning runs, kept here so they can be checked against results, not quietly revised after.</p>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Task</th><th>Prediction (falsifiable)</th></tr></thead>
+    <tbody>
+      <tr><td>Direct expression evaluation</td><td class="null">weak: nested exp/ln trees explode</td></tr>
+      <tr><td>Equivalence classification</td><td>decent at depths 1–6, degrading beyond</td></tr>
+      <tr><td>Symbolic regression</td><td class="win">strongest track, EML’s native home</td></tr>
+      <tr><td>Proof generation</td><td>needs a different architecture for complex proofs; weakest in geometry</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>GEML · anonymous double-blind review snapshot</p>
+    <p>
+      <span>anonymous repository link supplied with the submission</span> ·
+      <a href="../paper/main.pdf">paper (PDF)</a> ·
+      <a href="https://sites.google.com/view/mathnlp2026">MathNLP 2026</a>
+    </p>
+    <p>Authors are intentionally omitted for double-blind review. This repo is clean-room; read <a href="../AGENTS.md">AGENTS.md</a> and <a href="CLEANROOM_RULES.md">CLEANROOM_RULES.md</a> before contributing.</p>
+    <p>eml(x, y) = exp(x) − ln(y). Odrzywołek, 2026. Every number verified against docs/goals/.</p>
+  </div>
+</footer>
+
+<script>
+  const els = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const io = new IntersectionObserver(entries => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    }, { rootMargin: '0px 0px -8% 0px' });
+    els.forEach(el => io.observe(el));
+  } else {
+    els.forEach(el => el.classList.add('in'));
+  }
+</script>
+</body>
+</html>

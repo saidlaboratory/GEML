@@ -1,0 +1,61 @@
+schema_version: geml-goal6-channels-config-v1
+graph_tensor_schema_version: geml-graph-tensor-v1
+input_pair_schema_version: geml-pair-record-v1
+output_root: outputs/final/goal6/channels
+channels:
+  - name: ast_dag
+    state: available
+    source: immutable Goal 5 AST-DAG export
+  - name: pure_eml_dag
+    state: available
+    source: immutable Goal 5 strict pure-EML-DAG export
+  - name: frequent_macro_motif_dag
+    state: available
+    source: immutable Goal 5 frequent motif graph over official-v4 macro representation; not strict EML
+  - name: motif_ast_fair_control
+    state: available
+    source: train-only exact motif compression over AST-DAG with the frequent macro-motif dictionary count and MDL-bit budget
+alignment:
+  require_identical_pair_ids_labels_and_splits: true
+  retain_failure_ledger: true
+  silently_drop_channel_failures: false
+materialization:
+  preserve_logical_child_edges: true
+  materialize_forward_and_reverse_message_edges: true
+  preserve_repeated_references: true
+  resumable_shards: true
+  atomic_finalization: true
+  shard_contract:
+    schema_version: geml-goal6-channel-shard-manifest-v1
+    records: canonical_jsonl_sorted_by_pair_id_and_endpoint_role
+    sidecar: immutable_completion_manifest
+    resume: exact_bytes_only
+motif_ast_control:
+  discovery_split: train
+  source_family: ast
+  reference_vocabulary: immutable Goal 5 frequent macro-motif vocabulary
+  equal_vocabulary_entry_limit: true
+  equal_dictionary_mdl_bit_budget: true
+  ranking: canonical_train_frequency
+  require_exact_reconstruction: true
+derived_endpoints:
+  required_provenance:
+    - expression_id
+    - structural_signature
+    - source_expression_id
+    - source_builder
+    - source_builder_version
+    - source_mode
+    - vocabulary_digest_when_relevant
+    - reconstruction_status
+    - payload_digest
+  require_reconstruction_status: passed
+categorical_vocabulary:
+  schema_version: geml-goal6-categorical-vocabulary-v1
+  fit_split: train_only
+  values: canonical_json_encoded
+batching:
+  schema_version: geml-goal6-dynamic-batch-plan-v1
+  unit: graph_tensor_envelope
+  max_nodes: production_pilot_required
+  max_message_edges: production_pilot_required

@@ -1,0 +1,70 @@
+schema_version: geml-goal10-conformance-v1
+seed: 1001
+maximum_records: 1000
+precision_digits: 100
+case_timeout_seconds: 10
+absolute_tolerance: "1e-60"
+relative_tolerance: "1e-60"
+imaginary_tolerance: "1e-60"
+compiler_modes:
+  - official_v4
+  - clean_negation
+# Blinded source token, not a Git commit: first 40 lowercase hex characters of
+# SHA-256(UTF-8("geml-anonymous-snapshot-v1\0ANON-PREPHASE-B-SNAPSHOT")).
+base_commit: 41e0dc8cc6315fcc5593355a38c7e317d88eeafe
+cases:
+  - {case_name: e_constant, constructor: e, input_text: null, region: constant, expected_status: valid}
+  - {case_name: pi_constant, constructor: pi, input_text: null, region: constant, expected_status: valid}
+  - {case_name: atan_large_negative, constructor: atan, input_text: "-100", region: large_magnitude, expected_status: valid}
+  - {case_name: atan_negative, constructor: atan, input_text: "-1", region: interior, expected_status: valid}
+  - {case_name: atan_negative_zero, constructor: atan, input_text: "-0.0", region: signed_zero, expected_status: valid}
+  - {case_name: atan_positive_zero, constructor: atan, input_text: "0.0", region: signed_zero, expected_status: valid}
+  - {case_name: atan_positive, constructor: atan, input_text: "1", region: interior, expected_status: valid}
+  - {case_name: atan_large_positive, constructor: atan, input_text: "100", region: large_magnitude, expected_status: valid}
+  - {case_name: atan_negative_infinity, constructor: atan, input_text: "-inf", region: nonfinite, expected_status: nonfinite}
+  - {case_name: atan_positive_infinity, constructor: atan, input_text: "inf", region: nonfinite, expected_status: nonfinite}
+  - {case_name: atan_nan, constructor: atan, input_text: "nan", region: nonfinite, expected_status: nonfinite}
+  - {case_name: asin_below_domain, constructor: asin, input_text: "-1.00000000000000000001", region: invalid, expected_status: invalid_domain}
+  - {case_name: asin_negative_endpoint, constructor: asin, input_text: "-1", region: endpoint, expected_status: valid}
+  - {case_name: asin_near_negative_endpoint, constructor: asin, input_text: "-0.99999999999999999999", region: near_boundary, expected_status: valid}
+  - {case_name: asin_negative_interior, constructor: asin, input_text: "-0.5", region: interior, expected_status: valid}
+  - {case_name: asin_negative_zero, constructor: asin, input_text: "-0.0", region: signed_zero, expected_status: valid}
+  - {case_name: asin_positive_zero, constructor: asin, input_text: "0.0", region: signed_zero, expected_status: valid}
+  - {case_name: asin_positive_interior, constructor: asin, input_text: "0.5", region: interior, expected_status: valid}
+  - {case_name: asin_near_positive_endpoint, constructor: asin, input_text: "0.99999999999999999999", region: near_boundary, expected_status: valid}
+  - {case_name: asin_positive_endpoint, constructor: asin, input_text: "1", region: endpoint, expected_status: valid}
+  - {case_name: asin_above_domain, constructor: asin, input_text: "1.00000000000000000001", region: invalid, expected_status: invalid_domain}
+  - {case_name: asin_nan, constructor: asin, input_text: "nan", region: nonfinite, expected_status: nonfinite}
+  - {case_name: asin_infinity, constructor: asin, input_text: "inf", region: nonfinite, expected_status: nonfinite}
+  - {case_name: acos_below_domain, constructor: acos, input_text: "-1.00000000000000000001", region: invalid, expected_status: invalid_domain}
+  - {case_name: acos_negative_endpoint, constructor: acos, input_text: "-1", region: endpoint, expected_status: valid}
+  - {case_name: acos_near_negative_endpoint, constructor: acos, input_text: "-0.99999999999999999999", region: near_boundary, expected_status: valid}
+  - {case_name: acos_negative_interior, constructor: acos, input_text: "-0.5", region: interior, expected_status: valid}
+  - {case_name: acos_negative_zero, constructor: acos, input_text: "-0.0", region: signed_zero, expected_status: valid}
+  - {case_name: acos_positive_zero, constructor: acos, input_text: "0.0", region: signed_zero, expected_status: valid}
+  - {case_name: acos_positive_interior, constructor: acos, input_text: "0.5", region: interior, expected_status: valid}
+  - {case_name: acos_near_positive_endpoint, constructor: acos, input_text: "0.99999999999999999999", region: near_boundary, expected_status: valid}
+  - {case_name: acos_positive_endpoint, constructor: acos, input_text: "1", region: endpoint, expected_status: valid}
+  - {case_name: acos_above_domain, constructor: acos, input_text: "1.00000000000000000001", region: invalid, expected_status: invalid_domain}
+  - {case_name: acos_nan, constructor: acos, input_text: "nan", region: nonfinite, expected_status: nonfinite}
+  - {case_name: acos_infinity, constructor: acos, input_text: "inf", region: nonfinite, expected_status: nonfinite}
+  - {case_name: atan_of_asin, constructor: atan_asin, input_text: "0.5", region: composition, expected_status: valid}
+  - {case_name: acos_of_atan, constructor: acos_atan, input_text: "0.25", region: composition, expected_status: valid}
+operator_quotas:
+  acos: 24
+  acos_atan: 2
+  asin: 24
+  atan: 18
+  atan_asin: 2
+  e: 2
+  pi: 2
+region_quotas:
+  composition: 4
+  constant: 4
+  endpoint: 8
+  interior: 12
+  invalid: 8
+  large_magnitude: 4
+  near_boundary: 8
+  nonfinite: 14
+  signed_zero: 12

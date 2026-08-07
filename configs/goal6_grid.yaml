@@ -1,0 +1,98 @@
+# Issue 6-5: the frozen six-arm Goal 6 equivalence grid.
+#
+# Six arms x three seeds = 18 independent, resumable, content-addressed cells.
+# One frozen configuration per backbone family. No per-channel architecture changes, no sweep.
+
+schema_version: geml-goal6-grid-v1
+
+output_root: outputs/final/goal6/grid
+
+# Exactly the three preregistered production seeds. A technical rerun reuses the same seed and
+# records the failure cause; a seed is never replaced because its result is unfavorable.
+seeds:
+  - 20260726
+  - 20260727
+  - 20260728
+
+# Channel identities are NOT listed here.
+#
+# The integrated #56 decision approves four honestly labeled channels. The runner consumes
+# their identities from the registry so the macro-derived channel cannot be relabeled strict
+# EML and the train-only motif-AST control cannot be replaced by a plain AST proxy.
+channels:
+  source: registry
+  required_count: 4
+  refuse_if_unavailable: true
+
+arms:
+  # The four graph arms differ ONLY by input channel. They share one encoder implementation, one
+  # weight-initialization policy, one optimizer, one epoch budget, and one task head.
+  graph:
+    backbone: compact_graph_encoder
+    # Width and virtual-node choice are deliberately NOT frozen here. Issue 6-3 requires the freeze
+    # to follow a measured parameter/FLOP comparison, and the fair measurement needs production
+    # channel vocabularies that do not exist yet. This is a Phase-B preflight decision.
+    hidden_width: pending_preflight_freeze
+    use_virtual_node: pending_preflight_freeze
+    permitted_widths: [64, 96]
+  prefix_transformer:
+    backbone: prefix_sequence_encoder
+    tokenization_version: geml-goal6-prefix-tokens-v1
+    # A real control, compute-matched under the frozen policy - never a deliberately weak baseline.
+    max_length: 512
+  trivial_floor:
+    backbone: trivial_count_floor
+    feature_schema_version: geml-goal6-trivial-floor-v1
+
+evaluation_views:
+  # Model selection uses validation only. Test and OOD views are evaluated once after the freeze.
+  - name: test_iid
+    required: true
+  - name: test_ood_stress
+    required: true
+    note: >-
+      Goal 1's stored test_ood is one combined stress profile across size, depth, variable count,
+      and composition. It is reported under its own name and is NOT relabelled strict depth-OOD.
+  - name: test_depth_ood
+    required: false
+    note: >-
+      Reportable only with predeclared, disjoint depth support between training and evaluation.
+      Otherwise the runner records unsupported_not_disjoint rather than emitting the view.
+  - name: test_family_ood
+    required: false
+    note: >-
+      Reportable only when at least one family is genuinely excluded from training, not merely
+      filtered out of a test table. Otherwise the runner records unsupported_not_excluded.
+
+metrics:
+  quality:
+    - accuracy
+    - macro_f1
+  # Calibration is reported only if it is already supported and frozen upstream; it is not
+  # invented here.
+  calibration_if_supported: true
+  efficiency:
+    - parameters
+    - forward_flops
+    - wall_seconds
+    - peak_host_memory_bytes
+    - peak_device_memory_bytes
+  structural:
+    # There is deliberately no single cross-channel "alpha" column. Pure-EML alpha, ordinary
+    # node/edge size, macro size, and dictionary-inclusive motif MDL are different quantities.
+    # Each is emitted under its own name with an explicit comparable_across_channels flag.
+    per_channel_named_metrics: true
+    forbid_universal_alpha: true
+
+reporting:
+  # Every aggregate must be able to reconstruct its own denominator.
+  require_denominators: true
+  retain_failures: true
+  retain_timeouts: true
+  retain_incomplete_cells: true
+
+smoke:
+  # The Phase-A fixture smoke: 25 pairs, tiny model, no production artifact required.
+  pair_count: 25
+  tiny_model: true
+  requires_production_artifacts: false

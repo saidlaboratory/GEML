@@ -1,0 +1,62 @@
+GEML — Graph Learning over a Single-Operator Representation of Mathematics
+Copyright (c) 2026 GEML contributors
+
+This product is licensed under the MIT License. See the LICENSE file for the
+full text.
+
+This NOTICE records third-party software GEML depends on and the authoritative
+public sources GEML was implemented against. It distinguishes clearly between
+code that is USED (installed as a dependency) and sources that are only
+REFERENCED (read as authoritative evidence, never copied into this repository).
+
+
+================================================================================
+Software dependencies (USED — installed via pyproject.toml)
+================================================================================
+
+These are not vendored into GEML; they are installed as dependencies and used
+under their own licenses. See each project for its full license text.
+
+  - SymPy 1.14.0 (BSD-3-Clause) — https://www.sympy.org
+      Symbolic expression construction and structural representation.
+  - NumPy (BSD-3-Clause) — https://numpy.org
+  - pandas (BSD-3-Clause) — https://pandas.pydata.org
+  - PyArrow / Apache Arrow (Apache-2.0) — https://arrow.apache.org
+  - matplotlib (matplotlib/PSF-based license) — https://matplotlib.org
+  - mpmath 1.3.0 (BSD-3-Clause) — https://mpmath.org
+  - pydantic (MIT) — https://pydantic.dev
+  - PyYAML (MIT) — https://pyyaml.org
+  - psutil (BSD-3-Clause) — https://github.com/giampaolo/psutil
+
+Optional learning extra ([ml], Goals 6-12), pinned for training reproducibility:
+
+  - PyTorch 2.5.1 (BSD-3-Clause) — https://pytorch.org
+  - PyTorch Geometric 2.6.1 (MIT) — https://pyg.org
+
+
+================================================================================
+Authoritative sources (REFERENCED — read as evidence, not copied)
+================================================================================
+
+Under GEML's clean-room rules, the pure-EML construction is implemented from
+public authoritative sources, independently expressed in GEML's own IR. No code
+from these sources is vendored or copied. Provenance and approval metadata for
+each is recorded in docs/specs/EML_SOURCE_LEDGER.md.
+
+  - Andrzej Odrzywołek, "All elementary functions from a single operator."
+    arXiv:2603.21852. https://arxiv.org/abs/2603.21852
+      The single-operator eml(x, y) = exp(x) - ln(y) construction that GEML is
+      built on. Used as a scientific source (grammar, construction coverage,
+      domain caveats) — not as code.
+
+  - Official EML reference compiler: eml_compiler_v4.py in
+    VA00/SymbolicRegressionPackage, commit b3da148261199b46247306dfd92068f589778260.
+    https://github.com/VA00/SymbolicRegressionPackage
+      Authoritative implementation evidence for operator constructions and
+      domain behavior. Read for corroboration only; no upstream code is copied.
+      GEML's formulas are independently expressed and checked against exact
+      offline fingerprints.
+
+The v0 GEML prototype is historical motivation only and is explicitly NOT a
+source: its code, tests, and
+schemas are forbidden implementation inputs under docs/CLEANROOM_RULES.md.

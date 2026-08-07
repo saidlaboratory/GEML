@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use GEML in your research, please cite it as below."
+title: "GEML: Graph Learning over a Single-Operator Representation of Mathematics"
+abstract: >-
+  GEML is a controlled representation study asking whether collapsing every
+  elementary math operator into the single primitive eml(x, y) = exp(x) - ln(y)
+  helps graph neural networks learn symbolic reasoning, given that the reduction
+  inflates tree size. It is a clean-room production rebuild with preregistered
+  gates, published null results, and one published gate failure. Prepared for
+  submission to MathNLP 2026.
+type: software
+version: 0.1.0
+date-released: 2026-07-31
+license: MIT
+keywords:
+  - graph neural networks
+  - symbolic mathematics
+  - representation learning
+  - EML
+  - reproducibility
+authors:
+  - name: Anonymous
+references:
+  - type: article
+    title: "All elementary functions from a single operator"
+    authors:
+      - given-names: Andrzej
+        family-names: Odrzywołek
+    year: 2026
+    url: "https://arxiv.org/abs/2603.21852"
+    notes: "arXiv:2603.21852 — the single-operator (EML) construction GEML is built on."

@@ -1,0 +1,81 @@
+schema_version: geml-goal10-audit-v1
+conformance_schema_version: geml-goal10-conformance-v1
+conformance_config_sha256: a3f1493c33b971e020ffc6f352dca2790e4012783ba725ee2f0ae985fbd49a8f
+precision_digits: 100
+absolute_tolerance: "1e-60"
+relative_tolerance: "1e-60"
+imaginary_tolerance: "1e-60"
+required_constructors: [e, pi, atan, asin, acos]
+required_modes: [official_v4, clean_negation]
+expected_structures:
+  - constructor: e
+    compiler_mode: official_v4
+    fingerprint: f126a91c1429594f4cf1aa70d70f97c267859d06df9fab7c6904598826a2574c
+    node_count: 3
+    depth: 1
+  - constructor: pi
+    compiler_mode: official_v4
+    fingerprint: 81a8cea02c08ae4dbc33f273bebe54337f61769688eccb801ab889c5e8218cd9
+    node_count: 193
+    depth: 34
+  - constructor: atan
+    compiler_mode: official_v4
+    fingerprint: af8a08abb86f2944434462a404bd11db30090d60f65c033027fafd318bd65bea
+    node_count: 659
+    depth: 57
+  - constructor: asin
+    compiler_mode: official_v4
+    fingerprint: 965217ec5f3a7ea923d5a057b177af2c95c8954d90e1bfb80d540c1779874e38
+    node_count: 1969
+    depth: 75
+  - constructor: acos
+    compiler_mode: official_v4
+    fingerprint: 302e4cd1a3de8849fafc5a98f0906a398781a772a06013988b34946aa2764160
+    node_count: 2301
+    depth: 77
+  - constructor: e
+    compiler_mode: clean_negation
+    fingerprint: f126a91c1429594f4cf1aa70d70f97c267859d06df9fab7c6904598826a2574c
+    node_count: 3
+    depth: 1
+  - constructor: pi
+    compiler_mode: clean_negation
+    fingerprint: 05b4e284e85c0aba4aa1f69bdef398ded48a96d415e34285560880b7b2f8931d
+    node_count: 389
+    depth: 52
+  - constructor: atan
+    compiler_mode: clean_negation
+    fingerprint: 726f4f48a0c0f381b2f289ca4c2faa29c3856a95ad3bb49112a6cb67973c917e
+    node_count: 1331
+    depth: 95
+  - constructor: asin
+    compiler_mode: clean_negation
+    fingerprint: 3464c3900691933037f8d268453c9c7bfea5c65e4e69a3ac3f094835f7d070d5
+    node_count: 3677
+    depth: 117
+  - constructor: acos
+    compiler_mode: clean_negation
+    fingerprint: 2fd2d8b9c9149575b573857b601372b9162d300de93c501cb51c890977b538e3
+    node_count: 4317
+    depth: 119
+expected_v1:
+  operators_sha256: 2fcf9b2efed56014c26f5b45549377adb563e39dc62d88b28ff47ac9ee3546a3
+  domains_sha256: a812376613429aec30bef4e17ff76890151ffb0ef5ec8f1c5f472d72a4f7a1c6
+  domain_rule_ids_sha256: 53f4c2b56f8ddb650e906a01d8da3109cbe4190810a070fcbd4f161d041710db
+  transcendental_fingerprints:
+    official_v4:sin: d9fa0e691922aee5a0c57ac75e101e63abf9b9ee7f56841ff1820a4aa8cd6571
+    official_v4:cos: 1a0c5493b625c1fda4d4e4436e7e4c677eff304e01af1119e5c1c4fca530695f
+    official_v4:tan: 20c4f5fa49f4f62955d507c1da34cd5d898e61bda5155f5c3a3e61982dcf45b1
+    clean_negation:sin: d834c494688fdbfa764964a3762c02803afe3d76e26476d20b64d0ef545130a0
+    clean_negation:cos: d3b861ffd36f2c027eab1f6be6b7cbe8b3721e767b263f83894f00f7e7ba98b1
+    clean_negation:tan: 7597f6360dcec6f277eb807fdd88dbab0868320afde639051a35ed1a7541938b
+    official_v4:sinh: 888c44fb76f939795e4943b500ad32c8cb223f903abc18bd008eede550213aa2
+    official_v4:cosh: f40e6f5e9d6bc3db56f7b0ebc20df2e747b107acf6a06b83874cf10b8ec2609e
+    official_v4:tanh: 03aa8d0795c63db5c86c202342ce4f130a5b6858198fd76ec889cb3f79e0a943
+    clean_negation:sinh: 2f079ef578337e7fafb1a2633cbcbbfa691688bb6ea647fb92763939f8c50e95
+    clean_negation:cosh: 33ead62ee5d3a657df52ca36e387561b59f78de1cfc3cb95c46652a8595a04ac
+    clean_negation:tanh: 3d7ca7a475154e7ed9c8b8139dad855c92666867d101fb9938294830cc91b36a
+known_ownership_blockers:
+  - Signed-zero verification needs a backend/contract that retains the zero sign bit.
+  - Endpoint sqrt witnesses need nonnegative-radicand certification in the unowned domain verifier.
+  - Executable inverse-trig e-graph rules need the unowned Goal 4 operator IR and interval assumptions.
